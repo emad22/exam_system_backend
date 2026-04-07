@@ -1,0 +1,31 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::table('students', function (Blueprint $table) {
+            // Remove redundant auth fields as they now live in the 'users' table
+            $table->dropColumn(['email', 'password', 'username']);
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::table('students', function (Blueprint $table) {
+            $table->string('username')->nullable();
+            $table->string('email')->unique();
+            $table->string('password');
+        });
+    }
+};
