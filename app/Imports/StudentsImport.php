@@ -32,7 +32,6 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             // 1. Prepare Identity (User)
             $password = $data['password'] ?? Str::random(10);
             $user = User::create([
-                'name' => ($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? ''),
                 'first_name' => $data['first_name'] ?? '',
                 'last_name' => $data['last_name'] ?? '',
                 'username' => ($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? ''),
@@ -46,6 +45,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 'religion' => $data['religion'] ?? null,
                 'occupation' => $data['occupation'] ?? null,
                 'password' => Hash::make($password),
+                'is_active' => $this->parseBoolean($data['is_active'] ?? true),
                 'role' => 'student',
             ]);
 
@@ -60,6 +60,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             $student = Student::create([
                 'user_id' => $user->id,
                 'student_code' => $data['student_code'] ?? null,
+                'partner_id' => $data['partner_id'] ?? null,
                 'come_from' => $data['come_from'] ?? null,
                 'student_type' => $data['student_type'] ?? null,
                 'year_of_arabic' => $data['year_of_arabic'] ?? null,
@@ -84,5 +85,14 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             'last_name' => 'required|string',
             'exam_type' => 'nullable|in:adult,children',
         ];
+    }
+
+    private function parseBoolean($value)
+    {
+        if (is_null($value)) return true;
+
+        $value = strtolower(trim($value));
+
+        return in_array($value, ['1', 'true', 'yes', 'active']);
     }
 }
