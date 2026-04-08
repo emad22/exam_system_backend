@@ -15,6 +15,8 @@ return new class extends Migration
             $table->id();
             $table->unsignedBigInteger('user_id')->nullable();
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
+            $table->unsignedBigInteger('partner_id')->nullable();
+            $table->foreign('partner_id')->references('id')->on('partners')->onDelete('cascade');
             $table->string('student_code')->nullable();                  // S_id القديم (كود داخلي)
 
             // ── بيانات التسجيل والإحالة ─────────────────────────────

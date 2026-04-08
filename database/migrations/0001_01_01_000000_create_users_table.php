@@ -19,10 +19,10 @@ return new class extends Migration
             $table->string('username')->nullable(); // username
             $table->string('email')->unique(); // email
             $table->string('password'); // password  
+            $table->boolean('is_active')->default(true);
 
             $table->string('first_name')->nullable(); // first name
             $table->string('last_name')->nullable(); // last name
-
             
             $table->date('birth_date')->nullable(); // birth date
             $table->string('phone')->nullable(); // phone
@@ -33,10 +33,7 @@ return new class extends Migration
             $table->string('gender', 10)->nullable(); // gender
             $table->string('religion')->nullable(); // religion
             $table->string('occupation')->nullable(); // occupation
-
-
             $table->timestamp('email_verified_at')->nullable();
-  
             $table->rememberToken();
             $table->timestamps();
         });

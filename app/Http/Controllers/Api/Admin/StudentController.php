@@ -194,9 +194,9 @@ class StudentController extends Controller
      */
     public function batchImport(Request $request)
     {
-        $request->validate([
-            'file' => 'required|mimes:xlsx,csv,xls|max:5120',
-        ]);
+        // $request->validate([
+        //     'file' => 'required|mimes:xlsx,csv,xls',
+        // ]);
 
         try {
             Excel::import(new StudentsImport, $request->file('file'));
@@ -234,7 +234,7 @@ class StudentController extends Controller
                 'John', 'Doe', 'john.doe@example.com', '123456789', 'male', '2005-05-15',
                 '123 Street', 'Cairo', 'Egypt', 'None', 'Student',
                 'STU-101', 'Direct', 'Standard', '2024',
-                '1', '1', 'adult', 'pass123'
+                '1', '1', 'adult', 'pass123',
             ]);
             
             fclose($file);
