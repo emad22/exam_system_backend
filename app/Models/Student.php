@@ -12,29 +12,15 @@ class Student extends Model
     
     protected $fillable = [
         'user_id',
-        'first_name',
-        'last_name',
-        'a_name',
-        'birth_date',
-        'phone',
-        'address',
-        'city',
-        'state',
-        'country',
-        'gender',
-        'religion',
-        'occupation',
-        'universty',
-        'univ_year',
-        'academic_year',
-        'student_unique_id',
+        'student_code',
         'come_from',
-        'language_level',
-        'course_currently_in',
+        'registration_date',
+        'from_promotion',
+        'student_type',
+        'parent_code',
         'year_of_arabic',
         'not_adaptive',
         'num_of_login',
-        'parent_code',
         'package_id',
         'exam_type',
         'assigned_skills',
@@ -56,8 +42,8 @@ class Student extends Model
             if (empty($student->parent_code)) {
                 $student->parent_code = 'PRNT-' . strtoupper(substr(uniqid(), -6));
             }
-            if (empty($student->student_unique_id)) {
-                $student->student_unique_id = 'STU-' . strtoupper(substr(uniqid(), -6));
+            if (empty($student->student_code)) {
+                $student->student_code = 'STU-' . strtoupper(substr(uniqid(), -6));
             }
         });
     }
@@ -85,5 +71,37 @@ class Student extends Model
     public function package(): BelongsTo
     {
         return $this->belongsTo(Package::class);
+    }
+
+    /**
+     * Automatically assign the latest matching exam based on category (Adult/Children)
+     * and filter skills to only those assigned to the student.
+     */
+    public static function assignDefaultExam(Student $student)
+    {
+        // 1. Find the latest exam matching the student's exam_type
+        $exam = Exam::where('exam_type', $student->exam_type)
+                    ->latest()
+                    ->first();
+
+        if (!$exam) return null;
+
+        // 2. Map assigned_skills IDs to Skill names
+        $assignedSkillIds = (array) $student->assigned_skills;
+        $skillNames = Skill::whereIn('id', $assignedSkillIds)
+                          ->pluck('name')
+                          ->map(fn($v) => strtolower($v))
+                          ->toArray();
+
+        // 3. Create the configuration
+        return StudentExamConfig::create([
+            'student_id'      => $student->id,
+            'exam_id'         => $exam->id,
+            'want_listening'  => in_array('listening', $skillNames),
+            'want_reading'    => in_array('reading comprehension', $skillNames) || in_array('reading', $skillNames),
+            'want_grammar'    => in_array('structure', $skillNames) || in_array('grammar', $skillNames),
+            'want_writing'    => in_array('writing', $skillNames),
+            'want_speaking'   => in_array('speaking', $skillNames),
+        ]);
     }
 }

@@ -25,30 +25,32 @@ class AuthController extends Controller
 
         $user = User::create([
             'name' => $validated['first_name'] . ' ' . $validated['last_name'],
+            'first_name' => $validated['first_name'],
+            'last_name' => $validated['last_name'],
             'email' => $validated['email'],
+            'phone' => $validated['phone'] ?? null,
+            'birth_date' => $validated['birth_date'] ?? null,
+            'gender' => $validated['gender'] ?? null,
             'password' => Hash::make($validated['password']),
             'role' => 'student',
         ]);
 
         $student = Student::create([
             'user_id' => $user->id,
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'phone' => $validated['phone'] ?? null,
-            'birth_date' => $validated['birth_date'] ?? null,
-            'gender' => $validated['gender'] ?? null,
             'exam_type' => $validated['exam_type'],
             'registration_source' => 'website',
-            'student_unique_id' => 'STU-' . strtoupper(substr(uniqid(), -6)),
+            'registration_date' => now(),
         ]);
+
+        // Automated Exam Enrollment & Skill Filtering
+        Student::assignDefaultExam($student);
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'message' => 'Registered successfully',
             'token' => $token,
-            'user' => $user,
-            'student' => $student
+            'user' => $user->load('student')
         ], 201);
     }
 

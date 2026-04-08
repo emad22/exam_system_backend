@@ -23,8 +23,8 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
     {
         $data = $row->toArray();
 
-        // Check if user already exists by email to avoid fatal crashes during import
-        if (User::where('email', $data['email'])->exists()) {
+        // Email is the unique identifier for identities
+        if (empty($data['email']) || User::where('email', $data['email'])->exists()) {
             return; 
         }
 
@@ -33,7 +33,18 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             $password = $data['password'] ?? Str::random(10);
             $user = User::create([
                 'name' => ($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? ''),
+                'first_name' => $data['first_name'] ?? '',
+                'last_name' => $data['last_name'] ?? '',
+                'username' => ($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? ''),
                 'email' => $data['email'],
+                'phone' => $data['phone'] ?? null,
+                'gender' => $data['gender'] ?? null,
+                'birth_date' => $data['birth_date'] ?? null,
+                'address' => $data['address'] ?? null,
+                'city' => $data['city'] ?? null,
+                'country' => $data['country'] ?? null,
+                'religion' => $data['religion'] ?? null,
+                'occupation' => $data['occupation'] ?? null,
                 'password' => Hash::make($password),
                 'role' => 'student',
             ]);
@@ -46,17 +57,22 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             }
 
             // 3. Create Profile (Student)
-            Student::create([
+            $student = Student::create([
                 'user_id' => $user->id,
-                'first_name' => $data['first_name'] ?? '',
-                'last_name' => $data['last_name'] ?? '',
-                'phone' => $data['phone'] ?? null,
-                'gender' => $data['gender'] ?? null,
+                'student_code' => $data['student_code'] ?? null,
+                'come_from' => $data['come_from'] ?? null,
+                'student_type' => $data['student_type'] ?? null,
+                'year_of_arabic' => $data['year_of_arabic'] ?? null,
+                'not_adaptive' => isset($data['not_adaptive']) ? (bool)$data['not_adaptive'] : true,
                 'package_id' => $data['package_id'] ?? null,
                 'exam_type' => $data['exam_type'] ?? 'adult',
                 'assigned_skills' => $assignedSkills,
                 'registration_source' => 'batch',
+                'registration_date' => now(),
             ]);
+
+            // 4. Automated Exam Enrollment & Skill Filtering
+            Student::assignDefaultExam($student);
         });
     }
 

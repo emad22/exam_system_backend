@@ -16,6 +16,7 @@ return new class extends Migration
             $table->string('name');
             $table->integer('skills_count');
             $table->text('description')->nullable();
+            $table->string('wp_package_id')->nullable()->unique();
             $table->timestamps();
         });
     }

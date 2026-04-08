@@ -22,8 +22,9 @@ class DatabaseSeeder extends Seeder
         ]);
 
         User::factory()->create([
-            'name' => 'Admin User',
+
             'email' => 'admin@arabacademy.com',
+            'role' => 'admin',
         ]);
     }
 }

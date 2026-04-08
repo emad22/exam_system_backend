@@ -45,6 +45,8 @@ class WordPressWebhookController extends Controller
             $password = Str::random(10);
             $user = User::create([
                 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
+                'first_name' => $validated['first_name'],
+                'last_name' => $validated['last_name'],
                 'email' => $validated['email'],
                 'password' => Hash::make($password),
                 'role' => 'student',
@@ -53,14 +55,16 @@ class WordPressWebhookController extends Controller
             // 3. Create Profile (Student)
             $student = Student::create([
                 'user_id' => $user->id,
-                'first_name' => $validated['first_name'],
-                'last_name' => $validated['last_name'],
                 'package_id' => $finalPackageId, // Resolved mapping
                 'wordpress_user_id' => $validated['wp_user_id'],
                 'registration_source' => 'wordpress',
                 'exam_type' => $validated['exam_type'] ?? 'adult',
                 'assigned_skills' => $assignedSkills,
+                'registration_date' => now(),
             ]);
+
+            // Automated Exam Enrollment & Skill Filtering
+            Student::assignDefaultExam($student);
 
             return response()->json([
                 'message' => 'Student and User account created from WordPress successfully',

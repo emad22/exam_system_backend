@@ -11,6 +11,7 @@ return new class extends Migration
         Schema::create('questions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('skill_id')->constrained();
+            $table->string('group_tag')->nullable()->index();
             $table->enum('type', ['mcq', 'true_false', 'short_answer', 'writing', 'speaking'])->default('mcq');
             $table->text('content'); // The question stem
             $table->string('media_path')->nullable(); // Audio/Image for the question

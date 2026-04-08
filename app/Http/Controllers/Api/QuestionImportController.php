@@ -111,15 +111,13 @@ class QuestionImportController extends Controller
             $defaultLang = \App\Models\Language::first()->id ?? null;
 
             foreach ($structuredData as $examTitle => $skillsConfig) {
-                // Create or find Exam
+                // Create or find Exam (Remove missing columns)
                 $exam = \App\Models\Exam::firstOrCreate(
                     ['title' => $examTitle],
                     [
                         'description' => "Legacy import: $examTitle",
                         'exam_type' => 'adult',
                         'passing_score' => 50,
-                        'is_adaptive' => false,
-                        'language_id' => $defaultLang,
                     ]
                 );
                 $examsCreatedCount++;
@@ -135,30 +133,50 @@ class QuestionImportController extends Controller
                         ]);
                     }
 
+                    // Pre-parse the 'count' file if it exists
+                    $quantitiesByLevel = [];
+                    if (isset($levelFiles['count'])) {
+                        $countLines = explode("\n", str_replace("\r\n", "\n", $levelFiles['count']));
+                        foreach ($countLines as $idx => $line) {
+                            $q = intval(trim($line));
+                            if ($q > 0) $quantitiesByLevel[$idx + 1] = $q;
+                        }
+                        unset($levelFiles['count']); // Don't treat count as a question file
+                    }
+
+                    $importedCountInFile = 0;
                     foreach ($levelFiles as $fileName => $content) {
                         $levelNum = filter_var($fileName, FILTER_SANITIZE_NUMBER_INT);
                         $difficultyLevel = intval($levelNum) > 0 ? intval($levelNum) : 1;
+                        $isInstructionFile = strpos($fileName, '_inst') !== false;
 
-                        // Ensure the Level record exists for the UI
-                        \App\Models\Level::firstOrCreate([
+                        // Ensure the Level record exists
+                        $levelModel = \App\Models\Level::firstOrCreate([
                             'skill_id' => $skill->id,
                             'level_number' => $difficultyLevel,
                         ], [
+                            'name' => "Level $difficultyLevel",
                             'min_score' => 0,
                             'max_score' => 100,
                         ]);
 
+                        if ($isInstructionFile) {
+                            $levelModel->update(['instructions' => trim($content)]);
+                            continue;
+                        }
+
+                        // Parse Questions with flexible delimiter (Tab or 4+ spaces)
                         $content = str_replace("\r\n", "\n", $content);
                         $lines = explode("\n", $content);
-
                         $questionsInFile = 0;
 
                         foreach ($lines as $line) {
                             $line = trim($line);
                             if (empty($line)) continue;
 
-                            $cols = explode("\t", $line);
-                            if (count($cols) < 2) continue; // Must have question and 1 answer
+                            // Robust matching: Split by Tab or 3+ spaces
+                            $cols = preg_split('/\t|\s{3,}/', $line);
+                            if (count($cols) < 2) continue;
 
                             $questionText = trim($cols[0]);
                             if (empty($questionText)) continue;
@@ -187,18 +205,17 @@ class QuestionImportController extends Controller
                             $questionsInFile++;
                         }
 
-                        // Create Exam Rules to pull exactly the amount of imported questions
-                        if ($questionsInFile > 0) {
+                        // Create Exam Rules
+                        $ruleQuantity = $quantitiesByLevel[$difficultyLevel] ?? $questionsInFile;
+                        if ($ruleQuantity > 0) {
                             \App\Models\ExamQuestionRule::updateOrCreate(
                                 [
                                     'exam_id' => $exam->id,
                                     'skill_id' => $skill->id,
                                     'difficulty_level' => $difficultyLevel,
-                                    'group_tag' => $examTitle,
+                                    'group_tag' => trim($examTitle),
                                 ],
-                                [
-                                    'quantity' => $questionsInFile
-                                ]
+                                ['quantity' => $ruleQuantity]
                             );
                         }
                     }
@@ -208,9 +225,11 @@ class QuestionImportController extends Controller
             DB::commit();
 
             return response()->json([
-                'message' => "Successfully imported $examsCreatedCount exams with $importedQuestions questions.",
-                'imported_exams' => $examsCreatedCount,
-                'imported_questions' => $importedQuestions,
+                'message' => "Import Successful: $importedQuestions questions added to $examsCreatedCount exams.",
+                'details' => [
+                    'exams' => $examsCreatedCount,
+                    'questions' => $importedQuestions
+                ]
             ], 200);
 
         } catch (Exception $e) {

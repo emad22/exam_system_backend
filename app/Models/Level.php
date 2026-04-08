@@ -7,7 +7,23 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Level extends Model
 {
-    protected $fillable = ['skill_id', 'name', 'level_number', 'min_score', 'max_score', 'pass_threshold'];
+    protected $fillable = [
+        'skill_id', 
+        'name', 
+        'level_number', 
+        'instructions', 
+        'instructions_audio', 
+        'min_score', 
+        'max_score', 
+        'pass_threshold'
+    ];
+
+    protected $appends = ['instructions_audio_url'];
+
+    public function getInstructionsAudioUrlAttribute()
+    {
+        return $this->instructions_audio ? asset('storage/' . $this->instructions_audio) : null;
+    }
 
     public function skill(): BelongsTo
     {

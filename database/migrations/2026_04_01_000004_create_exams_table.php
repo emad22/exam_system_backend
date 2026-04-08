@@ -12,10 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('title');
             $table->text('description')->nullable();
-            $table->foreignId('language_id')->constrained();
-            
-            $table->boolean('is_adaptive')->default(false);
-            $table->integer('adaptive_threshold')->default(60); // Percentage to pass level
+            $table->enum('exam_type', ['adult', 'children']);
             
             $table->enum('timer_type', ['none', 'global', 'per_skill'])->default('none');
             $table->integer('duration')->nullable(); // Total minutes if global
@@ -25,13 +22,6 @@ return new class extends Migration
             
             $table->integer('passing_score')->default(0);
             
-            // Skills included by default
-            $table->boolean('default_want_reading')->default(true);
-            $table->boolean('default_want_listening')->default(true);
-            $table->boolean('default_want_grammar')->default(true);
-            $table->boolean('default_want_writing')->default(false);
-            $table->boolean('default_want_speaking')->default(false);
-
             $table->timestamps();
         });
     }

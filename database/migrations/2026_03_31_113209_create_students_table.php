@@ -13,38 +13,27 @@ return new class extends Migration
     {
         Schema::create('students', function (Blueprint $table) {
             $table->id();
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
+            $table->string('student_code')->nullable();                  // S_id القديم (كود داخلي)
 
-            $table->string('username')->nullable(); // username
-            $table->string('email')->unique(); // email
-            $table->string('password'); // password  
-
-            $table->string('first_name')->nullable(); // first name
-            $table->string('last_name')->nullable(); // last name
-            $table->string('a_name')->nullable(); // Arabic name
+            // ── بيانات التسجيل والإحالة ─────────────────────────────
+            $table->string('come_from')->nullable();                     // S_come_from (Referral)
+            $table->date('registration_date')->nullable();               // r_date
+            $table->string('from_promotion')->nullable();                // from_promotion
+            $table->string('student_type')->nullable();                  // S_type / type2
             
-            $table->date('birth_date')->nullable(); // birth date
-            $table->string('phone')->nullable(); // phone
-            $table->string('address')->nullable(); // address
-            $table->string('city')->nullable(); // city
-            $table->string('state')->nullable(); // us_state
-            $table->string('country')->nullable(); // country
-            $table->string('gender', 10)->nullable(); // gender
-            $table->string('religion')->nullable(); // religion
-            $table->string('occupation')->nullable(); // occupation
-            
-            $table->string('universty')->nullable(); // university
-            $table->string('univ_year')->nullable(); // university year
-            $table->string('academic_year')->nullable(); // academic year
-            
-            $table->string('come_from')->nullable(); // Referral
+        
             $table->string('parent_code')->unique()->nullable(); // 🔥 الكود الخاص بولي الأمر
-            
-            $table->string('language_level')->nullable();
-            $table->string('course_currently_in')->nullable();
+            $table->json('assigned_skills')->nullable(); // Stores which skills (e.g. [1,2,3]) a student can take
             $table->integer('year_of_arabic')->nullable();
-            
             $table->boolean('not_adaptive')->default(true);
             $table->integer('num_of_login')->default(0);
+
+            $table->unsignedBigInteger('package_id')->nullable();
+            $table->enum('exam_type', ['adult', 'children'])->nullable();
+            $table->enum('registration_source', ['wordpress', 'manual', 'batch'])->default('manual');
+            $table->string('wordpress_user_id')->nullable();
             
             $table->timestamps();
         });

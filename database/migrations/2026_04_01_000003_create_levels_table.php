@@ -11,6 +11,10 @@ return new class extends Migration
         Schema::create('levels', function (Blueprint $table) {
             $table->id();
             $table->foreignId('skill_id')->nullable()->constrained()->onDelete('cascade');
+            $table->string('name')->nullable();
+            $table->integer('pass_threshold')->default(70); // Add passing percentage for adaptive leveling
+            $table->text('instructions')->nullable();
+            $table->string('instructions_audio')->nullable();
             $table->integer('level_number'); // 1-9
             $table->integer('min_score');
             $table->integer('max_score');

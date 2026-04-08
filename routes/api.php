@@ -5,65 +5,85 @@ use App\Http\Controllers\Api\QuestionImportController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
-use App\Http\Controllers\Api\AdminController;
+use App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Api\ParentController;
+use App\Http\Middleware\AdminRole;
+use App\Http\Middleware\StaffRole;
+use App\Http\Middleware\StudentOrDemoRole;
 
 Route::middleware('auth:sanctum')->group(function () {
+    // Current User Info
     Route::get('/user', function (Request $request) {
-        $user = $request->user();
-        if ($user->role === 'student' && $user->student) {
-            return $user->load('student');
-        }
-        return $user;
+        return $request->user()->load('student');
     });
-    Route::get('/exams', [\App\Http\Controllers\Api\ExamController::class, 'index']);
+
+    // Student Routes
+    Route::middleware(StudentOrDemoRole::class)->group(function () {
+        Route::get('/exams', [\App\Http\Controllers\Api\ExamController::class, 'index']);
+        Route::post('/exams/{exam}/start', [\App\Http\Controllers\Api\ExamController::class, 'start']);
+        Route::get('/attempts/{attempt}/next-batch', [\App\Http\Controllers\Api\ExamController::class, 'getNextBatch']);
+        Route::post('/attempts/{attempt}/submit-batch', [\App\Http\Controllers\Api\ExamController::class, 'submitBatch']);
+        Route::get('/attempts/{attempt}', function (\App\Models\ExamAttempt $attempt) {
+            return $attempt->load(['exam', 'student']);
+        });
+    });
 
     // Admin/Teacher/Supervisor Routes
-    Route::prefix('admin')->group(function () {
-        Route::get('/stats', [AdminController::class, 'stats']);
-        Route::get('/students', [AdminController::class, 'students']);
-        Route::patch('/students/{student}', [AdminController::class, 'updateStudent']);
-        Route::post('/students/batch', [AdminController::class, 'batchImport']);
-        Route::post('/students', [AdminController::class, 'storeStudent']);
-        Route::get('/exams', [AdminController::class, 'exams']);
-        Route::post('/exams', [AdminController::class, 'storeExam']);
-        Route::get('/exams/{exam}', [AdminController::class, 'getExam']);
-        Route::patch('/exams/{exam}', [AdminController::class, 'updateExam']);
-        Route::post('/exams/import-folder', [QuestionImportController::class, 'importFolder']);
-        Route::get('/skills', [AdminController::class, 'skills']);
-        Route::post('/skills', [AdminController::class, 'storeSkill']);
-        Route::delete('/skills/{skill}', [AdminController::class, 'deleteSkill']);
-        Route::get('/questions', [AdminController::class, 'questions']);
-        Route::post('/questions', [AdminController::class, 'storeQuestion']);
-        Route::get('/questions/{question}', [AdminController::class, 'getQuestion']);
-        Route::patch('/questions/{question}', [AdminController::class, 'updateQuestion']);
-        Route::delete('/questions/{question}', [AdminController::class, 'deleteQuestion']);
-        Route::get('/languages', [AdminController::class, 'languages']);
-        Route::post('/attempts/{attempt}/reset', [AdminController::class, 'resetAttempt']);
-        Route::get('/reports', [AdminController::class, 'reports']);
+    Route::prefix('admin')->middleware(StaffRole::class)->group(function () {
+        Route::get('/stats', [Admin\DashboardController::class, 'stats']);
         
-        // Level Management (Phase 11)
-        Route::get('/skills-with-levels', [AdminController::class, 'getSkillsWithLevels']);
-        Route::get('/skills/{skill}/levels', [AdminController::class, 'getSkillWithLevels']);
-        Route::patch('/levels/{level}', [AdminController::class, 'updateLevel']);
+        // Student Management
+        Route::get('/students', [Admin\StudentController::class, 'index']);
+        Route::get('/students/template', [Admin\StudentController::class, 'downloadTemplate']);
+        Route::post('/students', [Admin\StudentController::class, 'store']);
+        Route::get('/students/{student}', [Admin\StudentController::class, 'show']);
+        Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
+        Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
+        Route::post('/students/batch', [Admin\StudentController::class, 'batchImport']);
 
-        // Staff & Role Management (Phase 22)
-        Route::get('/staff', [AdminController::class, 'getStaff']);
-        Route::post('/staff', [AdminController::class, 'storeStaff']);
-        Route::patch('/staff/{user}', [AdminController::class, 'updateStaff']);
-        Route::delete('/staff/{user}', [AdminController::class, 'deleteStaff']);
+        // Exam Management
+        Route::get('/exams', [Admin\ExamController::class, 'index']);
+
+        Route::post('/exams', [Admin\ExamController::class, 'store']);
+        Route::get('/exams/{exam}', [Admin\ExamController::class, 'show']);
+        Route::patch('/exams/{exam}', [Admin\ExamController::class, 'update']);
+        Route::delete('/exams/{exam}', [Admin\ExamController::class, 'destroy']);
+        Route::post('/exams/import-folder', [QuestionImportController::class, 'importFolder']);
+
+        // Skill & Level Management
+        Route::get('/skills', [Admin\SkillController::class, 'index']);
+        Route::post('/skills', [Admin\SkillController::class, 'store']);
+        Route::delete('/skills/{skill}', [Admin\SkillController::class, 'destroy']);
+        Route::get('/skills-with-levels', [Admin\SkillController::class, 'getSkillsWithLevels']);
+        Route::get('/skills/{skill}/levels', [Admin\SkillController::class, 'getSkillWithLevels']);
+        Route::patch('/levels/{level}', [Admin\LevelController::class, 'update']);
+
+        // Question Management
+        Route::get('/questions', [Admin\QuestionController::class, 'index']);
+        Route::post('/questions', [Admin\QuestionController::class, 'store']);
+        Route::get('/questions/{question}', [Admin\QuestionController::class, 'show']);
+        Route::patch('/questions/{question}', [Admin\QuestionController::class, 'update']);
+        Route::delete('/questions/{question}', [Admin\QuestionController::class, 'destroy']);
+
+        // Reports & Attempts
+        Route::get('/reports', [Admin\ReportController::class, 'index']);
+        Route::post('/attempts/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt']);
+
+        // Staff Management (Admin Only)
+        Route::middleware(AdminRole::class)->group(function () {
+            Route::get('/staff', [Admin\StaffController::class, 'index']);
+            Route::post('/staff', [Admin\StaffController::class, 'store']);
+            Route::patch('/staff/{user}', [Admin\StaffController::class, 'update']);
+            Route::delete('/staff/{user}', [Admin\StaffController::class, 'destroy']);
+        });
+
+        // Utilities
+        Route::get('/languages', [Admin\LanguageController::class, 'index']);
+        Route::get('/packages', [Admin\PackageController::class, 'index']);
     });
 
-    // Admin-only (simplified)
-    Route::post('/questions/import', [QuestionImportController::class, 'import']);
-    
-    // Adaptive Exam Engine Routes
-    Route::post('/exams/{exam}/start', [\App\Http\Controllers\Api\ExamController::class, 'start']);
-    Route::get('/attempts/{attempt}/next-batch', [\App\Http\Controllers\Api\ExamController::class, 'getNextBatch']);
-    Route::post('/attempts/{attempt}/submit-batch', [\App\Http\Controllers\Api\ExamController::class, 'submitBatch']);
-    Route::get('/attempts/{attempt}', function (\App\Models\ExamAttempt $attempt) {
-        return $attempt->load(['exam', 'student']);
-    });
+    // Global Question Import (Legacy/Admin)
+    Route::post('/questions/import', [QuestionImportController::class, 'import'])->middleware(AdminRole::class);
 });
 
 Route::post('/parent/results', [ParentController::class, 'viewResults']);

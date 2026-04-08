@@ -16,6 +16,7 @@ return new class extends Migration
             $table->string('group_tag')->nullable(); // If null, picks from the entire skill pool
             $table->integer('quantity')->default(1); // How many questions to pick from this rule
             $table->boolean('randomize')->default(true);
+            $table->integer('difficulty_level')->nullable();
             
             $table->timestamps();
         });

@@ -11,9 +11,9 @@ class Exam extends Model
     protected $fillable = [
         'title', 
         'description', 
-        'language_id', 
         'exam_type',
-        'is_adaptive', 
+        'timer_type',
+        'duration',
         'as_demo', 
         'play_in_real_player', 
         'passing_score',
@@ -25,7 +25,6 @@ class Exam extends Model
     ];
 
     protected $casts = [
-        'is_adaptive' => 'boolean',
         'as_demo' => 'boolean',
         'play_in_real_player' => 'boolean',
         'default_want_reading' => 'boolean',
