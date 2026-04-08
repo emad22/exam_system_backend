@@ -19,6 +19,13 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
      * Handle each row of the excel import individually
      * This allows for dual-model creation (User + Student) in an atomic transaction
      */
+
+    protected $partnerId;
+
+    public function __construct($partnerId)
+    {
+        $this->partnerId = $partnerId;
+    }
     public function onRow(Row $row)
     {
         $data = $row->toArray();
@@ -60,7 +67,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             $student = Student::create([
                 'user_id' => $user->id,
                 'student_code' => $data['student_code'] ?? null,
-                'partner_id' => $data['partner_id'] ?? null,
+                'partner_id' => $this->partnerId,
                 'come_from' => $data['come_from'] ?? null,
                 'student_type' => $data['student_type'] ?? null,
                 'year_of_arabic' => $data['year_of_arabic'] ?? null,

@@ -13,7 +13,7 @@ use App\Http\Middleware\StaffRole;
 use App\Http\Middleware\StudentOrDemoRole;
 
 
-// Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth:sanctum')->group(function () {
     // Current User Info
     Route::get('/user', function (Request $request) {
         return $request->user()->load('student');
@@ -31,7 +31,7 @@ use App\Http\Middleware\StudentOrDemoRole;
     });
 
     // Admin/Teacher/Supervisor Routes
-    // Route::prefix('admin')->middleware(StaffRole::class)->group(function () {
+    Route::prefix('admin')->middleware(StaffRole::class)->group(function () {
         Route::get('/stats', [Admin\DashboardController::class, 'stats']);
         
         // Student Management
@@ -46,7 +46,19 @@ use App\Http\Middleware\StudentOrDemoRole;
         // Exam Management
         Route::get('/exams', [Admin\ExamController::class, 'index']);
 
-        Route::apiResource('admin/partners', PartnerController::class);
+        // Route::apiResource('/partners', PartnerController::class);
+
+        // partner Management
+        Route::get('/partners', [PartnerController::class, 'index']);
+        Route::post('/partners', [PartnerController::class, 'store']);
+        Route::get('/partners/active', [PartnerController::class, 'getActivePartners']);
+        Route::get('/partners/{partner}', [PartnerController::class, 'show']);
+        Route::patch('/partners/{partner}', [PartnerController::class, 'update']);
+        Route::delete('/partners/{partner}', [PartnerController::class, 'destroy']);
+        Route::post('/partners/{partner}/hold', [PartnerController::class, 'deactivatePartnerStudents']);
+        Route::post('/partners/{partner}/unhold', [PartnerController::class, 'unholdPartner']);
+        
+
         
         Route::post('/exams', [Admin\ExamController::class, 'store']);
         Route::get('/exams/{exam}', [Admin\ExamController::class, 'show']);
@@ -84,11 +96,11 @@ use App\Http\Middleware\StudentOrDemoRole;
         // Utilities
         Route::get('/languages', [Admin\LanguageController::class, 'index']);
         Route::get('/packages', [Admin\PackageController::class, 'index']);
-    // });
+    });
 
     // Global Question Import (Legacy/Admin)
     Route::post('/questions/import', [QuestionImportController::class, 'import'])->middleware(AdminRole::class);
-// });
+});
 
 Route::post('/parent/results', [ParentController::class, 'viewResults']);
 

@@ -26,6 +26,7 @@ class Student extends Model
         'assigned_skills',
         'registration_source',
         'wordpress_user_id',
+        'partner_id', 
     ];
 
     protected $casts = [

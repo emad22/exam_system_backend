@@ -199,7 +199,7 @@ class StudentController extends Controller
         // ]);
 
         try {
-            Excel::import(new StudentsImport, $request->file('file'));
+            Excel::import(new StudentsImport($request->input('partner_id')), $request->file('file'));
             return response()->json(['message' => 'Students imported successfully.']);
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
             $failures = $e->failures();

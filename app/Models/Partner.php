@@ -21,4 +21,6 @@ class Partner extends Model
     ];
 
 
+    
+
 }

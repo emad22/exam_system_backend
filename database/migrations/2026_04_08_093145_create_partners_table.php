@@ -11,24 +11,22 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Schema::create('partners', function (Blueprint $table) {
-        //     $table->id();
-        //     $table->timestamps();
+        
         Schema::create('partners', function (Blueprint $table) {
-        $table->id();
-        $table->string('partner_name');
-        $table->string('fName_contact');
-        $table->string('lName_contact');
-        $table->string('email')->nullable();
-        $table->string('phone')->nullable();
-        $table->string('website')->nullable();
-        $table->string('country');
-        $table->string('r_date');
-        $table->boolean('is_active')->default(true);
-        $table->string('note');
-        $table->timestamps();
-    });
-        // });
+            $table->id();
+            $table->string('partner_name')->nullable(); 
+            $table->string('fName_contact')->nullable(); 
+            $table->string('lName_contact')->nullable(); 
+            $table->string('email')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('website')->nullable();
+            $table->string('country')->nullable();
+            $table->date('r_date')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->string('note')->nullable();
+            $table->timestamps();
+        });
+
     }
 
     /**
