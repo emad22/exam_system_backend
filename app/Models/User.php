@@ -16,6 +16,7 @@ class User extends Authenticatable
     use HasApiTokens;
 
     /**
+     * 
      * The attributes that are mass assignable.
      *
      * @var list<string>
@@ -36,7 +37,8 @@ class User extends Authenticatable
         'country',
         'religion',
         'occupation',
-        'role'
+        'role',
+        'is_active',
     ];
 
     /**

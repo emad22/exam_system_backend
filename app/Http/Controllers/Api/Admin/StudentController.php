@@ -119,12 +119,12 @@ class StudentController extends Controller
             'country' => 'sometimes|nullable|string|max:255',
             'religion' => 'sometimes|nullable|string|max:255',
             'occupation' => 'sometimes|nullable|string|max:255',
-            
             'student_code' => 'sometimes|nullable|string|max:50|unique:students,student_code,' . $student->id,
             'come_from' => 'sometimes|nullable|string|max:255',
             'student_type' => 'sometimes|nullable|string|max:50',
             'year_of_arabic' => 'sometimes|nullable|integer',
             'not_adaptive' => 'sometimes|nullable|boolean',
+            'is_active' => 'sometimes|boolean',
 
             'package_id' => 'sometimes|nullable|exists:packages,id',
             'exam_type' => 'sometimes|required|in:adult,children',
@@ -135,7 +135,7 @@ class StudentController extends Controller
         // 1. Update Profile (Student)
         $student->update($request->only([
             'package_id', 'exam_type', 'assigned_skills', 'student_type', 'student_code',
-            'come_from', 'year_of_arabic', 'not_adaptive'
+            'come_from', 'year_of_arabic', 'not_adaptive', 
         ]));
 
         // 2. Update Identity (User)
@@ -144,11 +144,12 @@ class StudentController extends Controller
             if ($user) {
                 $userUpdate = $request->only([
                     'first_name', 'last_name', 'email', 'phone', 'gender', 
-                    'birth_date', 'address', 'city', 'country', 'religion', 'occupation'
+                    'birth_date', 'address', 'city', 'country', 'religion', 'occupation',
+                    'is_active'
                 ]);
 
                 if (isset($validated['first_name']) || isset($validated['last_name'])) {
-                    $userUpdate['name'] = ($validated['first_name'] ?? $user->first_name) . ' ' . ($validated['last_name'] ?? $user->last_name);
+                    $userUpdate['username'] = ($validated['first_name'] ?? $user->first_name) . ' ' . ($validated['last_name'] ?? $user->last_name);
                 }
 
                 if (!empty($validated['password'])) {

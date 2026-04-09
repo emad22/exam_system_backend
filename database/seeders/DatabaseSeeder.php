@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             LanguageSeeder::class,
             SkillSeeder::class,
             LevelSeeder::class,
+            PartnerSeeder::class,
         ]);
 
         User::factory()->create([
