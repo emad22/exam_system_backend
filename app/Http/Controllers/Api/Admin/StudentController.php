@@ -181,13 +181,42 @@ class StudentController extends Controller
      */
     public function destroy(Student $student)
     {
-        if ($student->user_id) {
-            User::destroy($student->user_id); // This will cascade delete the student
-        } else {
+        $userId = $student->user_id;
+        // Delete the student profile first
+        $student->delete();
+
+        // Then explicitly delete the associated user to ensure both are removed
+        if ($userId) {
+            User::destroy($userId);
+        }    
+        return response()->json(['message' => 'Student record deleted successfully.']);
+    }
+
+    /**
+     * Remove multiple students.
+     */
+    public function bulkDestroy(Request $request)
+    {
+        $request->validate([
+            'ids'   => 'required|array',
+            'ids.*' => 'integer|exists:students,id',
+        ]);
+
+        $students = Student::whereIn('id', $request->ids)->get();
+        $userIds = [];
+
+        foreach ($students as $student) {
+            if ($student->user_id) {
+                $userIds[] = $student->user_id;
+            }
             $student->delete();
         }
-        
-        return response()->json(['message' => 'Student record deleted successfully.']);
+
+        if (!empty($userIds)) {
+            User::destroy($userIds);
+        }
+
+        return response()->json(['message' => 'Selected student records deleted successfully.']);
     }
 
     /**

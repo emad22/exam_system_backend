@@ -41,6 +41,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/students/{student}', [Admin\StudentController::class, 'show']);
         Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
         Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
+        Route::post('/students/bulk-delete', [Admin\StudentController::class, 'bulkDestroy']);
         Route::post('/students/batch', [Admin\StudentController::class, 'batchImport']);
 
         // Exam Management
