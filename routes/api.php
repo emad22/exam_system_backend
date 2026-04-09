@@ -70,10 +70,14 @@ Route::middleware('auth:sanctum')->group(function () {
         // Skill & Level Management
         Route::get('/skills', [Admin\SkillController::class, 'index']);
         Route::post('/skills', [Admin\SkillController::class, 'store']);
+        Route::patch('/skills/{skill}', [Admin\SkillController::class, 'update']);
         Route::delete('/skills/{skill}', [Admin\SkillController::class, 'destroy']);
         Route::get('/skills-with-levels', [Admin\SkillController::class, 'getSkillsWithLevels']);
         Route::get('/skills/{skill}/levels', [Admin\SkillController::class, 'getSkillWithLevels']);
+        Route::post('/skills/{skill}/levels/bulk', [Admin\SkillController::class, 'bulkUpdateLevels']);
+        Route::post('/levels', [Admin\LevelController::class, 'store']);
         Route::patch('/levels/{level}', [Admin\LevelController::class, 'update']);
+        Route::delete('/levels/{level}', [Admin\LevelController::class, 'destroy']);
 
         // Question Management
         Route::get('/questions', [Admin\QuestionController::class, 'index']);
@@ -81,6 +85,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/questions/{question}', [Admin\QuestionController::class, 'show']);
         Route::patch('/questions/{question}', [Admin\QuestionController::class, 'update']);
         Route::delete('/questions/{question}', [Admin\QuestionController::class, 'destroy']);
+        Route::get('/skills/{skill}/questions', [Admin\QuestionController::class, 'indexBySkill']);
+        Route::get('/skills/{skill}/tags', [Admin\QuestionController::class, 'getTagsBySkill']);
+        Route::post('/questions/bulk-level', [Admin\QuestionController::class, 'bulkUpdateLevel']);
 
         // Reports & Attempts
         Route::get('/reports', [Admin\ReportController::class, 'index']);
@@ -90,6 +97,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware(AdminRole::class)->group(function () {
             Route::get('/staff', [Admin\StaffController::class, 'index']);
             Route::post('/staff', [Admin\StaffController::class, 'store']);
+            Route::get('/staff/{user}', [Admin\StaffController::class, 'show']);
             Route::patch('/staff/{user}', [Admin\StaffController::class, 'update']);
             Route::delete('/staff/{user}', [Admin\StaffController::class, 'destroy']);
         });

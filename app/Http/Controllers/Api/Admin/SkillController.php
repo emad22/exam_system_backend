@@ -18,18 +18,16 @@ class SkillController extends Controller
      */
     public function index()
     {
-        return response()->json(Skill::withCount('questions')->orderBy('name')->get());
+        return response()->json(Skill::withCount(['questions', 'levels'])->orderBy('name')->get());
     }
 
     /**
-     * Store new Skill (Phase 5)
+     * Store new Skill
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255|unique:skills',
-            'description' => 'nullable|string',
-            'icon' => 'nullable|string|max:255'
+            'name' => 'required|string|max:255|unique:skills'
         ]);
 
         $skill = Skill::create($validated);
@@ -38,6 +36,23 @@ class SkillController extends Controller
             'message' => 'Skill created successfully.',
             'skill' => $skill
         ], 201);
+    }
+
+    /**
+     * Update existing Skill
+     */
+    public function update(Request $request, Skill $skill)
+    {
+        $validated = $request->validate([
+            'name' => 'sometimes|required|string|max:255|unique:skills,name,' . $skill->id
+        ]);
+
+        $skill->update($validated);
+
+        return response()->json([
+            'message' => 'Skill updated successfully.',
+            'skill' => $skill
+        ]);
     }
 
     /**
@@ -85,5 +100,41 @@ class SkillController extends Controller
     public function getSkillWithLevels(Skill $skill)
     {
         return response()->json($skill->load('levels'));
+    }
+
+    /**
+     * Bulk update levels for a skill
+     */
+    public function bulkUpdateLevels(Request $request, Skill $skill)
+    {
+        $validated = $request->validate([
+            'levels' => 'required|array',
+            'levels.*.id' => 'required|exists:levels,id',
+            'levels.*.name' => 'required|string|max:255',
+            'levels.*.level_number' => 'required|integer',
+            'levels.*.min_score' => 'required|integer',
+            'levels.*.max_score' => 'required|integer',
+            'levels.*.pass_threshold' => 'required|integer|min:0|max:100',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            foreach ($validated['levels'] as $levelData) {
+                Level::where('id', $levelData['id'])
+                    ->where('skill_id', $skill->id) // Security check
+                    ->update([
+                        'name' => $levelData['name'],
+                        'level_number' => $levelData['level_number'],
+                        'min_score' => $levelData['min_score'],
+                        'max_score' => $levelData['max_score'],
+                        'pass_threshold' => $levelData['pass_threshold'],
+                    ]);
+            }
+            DB::commit();
+            return response()->json(['message' => 'Levels updated successfully.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Failed to update levels: ' . $e->getMessage()], 500);
+        }
     }
 }

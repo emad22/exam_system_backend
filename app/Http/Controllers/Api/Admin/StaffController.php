@@ -21,22 +21,37 @@ class StaffController extends Controller
     }
 
     /**
+     * Get a specific staff member
+     */
+    public function show(User $user)
+    {
+        if ($user->role === 'student') {
+            return response()->json(['error' => 'Not a staff member.'], 422);
+        }
+        return response()->json($user);
+    }
+
+    /**
      * Provision a new staff identity
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
-            'role' => 'required|in:admin,teacher,supervisor'
+            'role' => 'required|in:admin,teacher,supervisor',
+            'is_active' => 'sometimes|boolean'
         ]);
 
         $staff = User::create([
-            'name' => $validated['name'],
+            'first_name' => $validated['first_name'],
+            'last_name' => $validated['last_name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'role' => $validated['role'],
+            'is_active' => $validated['is_active'] ?? true,
         ]);
 
         return response()->json([
@@ -55,15 +70,19 @@ class StaffController extends Controller
         }
 
         $validated = $request->validate([
-            'name' => 'sometimes|required|string|max:255',
+            'first_name' => 'sometimes|required|string|max:255',
+            'last_name' => 'sometimes|required|string|max:255',
             'email' => 'sometimes|required|email|unique:users,email,' . $user->id,
             'role' => 'sometimes|required|in:admin,teacher,supervisor',
-            'password' => 'sometimes|nullable|string|min:6'
+            'password' => 'sometimes|nullable|string|min:6',
+            'is_active' => 'sometimes|boolean'
         ]);
 
-        if (isset($validated['name'])) $user->name = $validated['name'];
+        if (isset($validated['first_name'])) $user->first_name = $validated['first_name'];
+        if (isset($validated['last_name'])) $user->last_name = $validated['last_name'];
         if (isset($validated['email'])) $user->email = $validated['email'];
         if (isset($validated['role'])) $user->role = $validated['role'];
+        if (isset($validated['is_active'])) $user->is_active = $validated['is_active'];
         if (!empty($validated['password'])) {
             $user->password = Hash::make($validated['password']);
         }

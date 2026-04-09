@@ -15,7 +15,12 @@ class Level extends Model
         'instructions_audio', 
         'min_score', 
         'max_score', 
-        'pass_threshold'
+        'pass_threshold',
+        'is_active'
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean'
     ];
 
     protected $appends = ['instructions_audio_url'];

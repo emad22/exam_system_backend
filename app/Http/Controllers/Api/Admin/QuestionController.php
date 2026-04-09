@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Question;
+use App\Models\Skill;
 use Illuminate\Http\Request;
 
 class QuestionController extends Controller
@@ -112,5 +113,50 @@ class QuestionController extends Controller
         $question->options()->delete();
         $question->delete();
         return response()->json(['message' => 'Question deleted successfully.']);
+    }
+
+    /**
+     * Get all questions for a specific skill
+     */
+    public function indexBySkill(Skill $skill)
+    {
+        return response()->json(
+            Question::where('skill_id', $skill->id)
+                ->withCount('options')
+                ->latest()
+                ->get()
+        );
+    }
+
+    /**
+     * Bulk update difficulty level for multiple questions
+     */
+    public function bulkUpdateLevel(Request $request)
+    {
+        $validated = $request->validate([
+            'question_ids' => 'required|array',
+            'question_ids.*' => 'exists:questions,id',
+            'difficulty_level' => 'required|integer|min:0|max:9',
+        ]);
+
+        Question::whereIn('id', $validated['question_ids'])
+            ->update(['difficulty_level' => $validated['difficulty_level']]);
+
+        return response()->json([
+            'message' => 'Questions updated successfully.'
+        ]);
+    }
+    /**
+     * Get unique tags for questions belonging to a specific skill
+     */
+    public function getTagsBySkill(Skill $skill)
+    {
+        $tags = Question::where('skill_id', $skill->id)
+            ->whereNotNull('group_tag')
+            ->where('group_tag', '!=', '')
+            ->distinct()
+            ->pluck('group_tag');
+
+        return response()->json($tags);
     }
 }
