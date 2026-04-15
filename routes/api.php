@@ -45,6 +45,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
         Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
         Route::post('/students/bulk-delete', [Admin\StudentController::class, 'bulkDestroy']);
+        Route::post('/students/bulk-skills', [Admin\StudentController::class, 'bulkUpdateSkills']);
+        Route::get('/students/bulk-skills-export', [Admin\StudentController::class, 'exportSkillsExcel']);
+        Route::post('/students/bulk-skills-import', [Admin\StudentController::class, 'importSkillsExcel']);
         Route::post('/students/batch', [Admin\StudentController::class, 'batchImport']);
 
         // Exam Management

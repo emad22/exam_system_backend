@@ -81,49 +81,77 @@ class Student extends Model
     public static function assignDefaultExam(Student $student)
     {
         // 1. Find the designated default exam, or fallback to the latest matching the type
-        $exam = Exam::where('exam_type', $student->exam_type)
-                    ->where('is_default', true)
-                    ->latest()
-                    ->first();
+        $exam = null;
 
+        // Try to get exam from Package first
+        $student->loadMissing('package');
+        if ($student->package && $student->package->exam_id) {
+            $exam = Exam::find($student->package->exam_id);
+        }
+
+        // Fallback to default exam matching type
         if (!$exam) {
             $exam = Exam::where('exam_type', $student->exam_type)
-                    ->latest()
-                    ->first();
+                        ->where('is_default', true)
+                        ->latest()
+                        ->first();
+        }
+
+        // Fallback to latest exam matching type
+        if (!$exam) {
+            $exam = Exam::where('exam_type', $student->exam_type)
+                        ->latest()
+                        ->first();
         }
 
         if (!$exam) return null;
 
-        // 2. Determine Skill Selection (Inherit from Exam if student has no specifics)
-        $assignedSkillIds = (array) $student->assigned_skills;
+        // 2. Determine Skill Selection Priority Loop
+        // Priority 1: Direct Student skills
+        $assignedSkillIds = array_filter((array) $student->assigned_skills);
         
+        // Priority 2: Package skills
+        if (empty($assignedSkillIds) && $student->package && $student->package->skills) {
+            $assignedSkillIds = array_filter((array) $student->package->skills);
+        }
+        
+        // Priority 3: Inherit directly from Exam Defaults logic
         if (empty($assignedSkillIds)) {
-            // Inherit directly from Exam Defaults
             return StudentExamConfig::create([
                 'student_id'      => $student->id,
                 'exam_id'         => $exam->id,
-                'want_listening'  => $exam->default_want_listening,
-                'want_reading'    => $exam->default_want_reading,
-                'want_grammar'    => $exam->default_want_grammar,
-                'want_writing'    => $exam->default_want_writing,
-                'want_speaking'   => $exam->default_want_speaking,
+                'want_listening'  => (bool) $exam->default_want_listening,
+                'want_reading'    => (bool) $exam->default_want_reading,
+                'want_grammar'    => (bool) $exam->default_want_grammar,
+                'want_writing'    => (bool) $exam->default_want_writing,
+                'want_speaking'   => (bool) $exam->default_want_speaking,
             ]);
         }
 
-        // Otherwise, map assigned_skills IDs to Skill names as an override
-        $skillNames = Skill::whereIn('id', $assignedSkillIds)
-                          ->pluck('name')
-                          ->map(fn($v) => strtolower($v))
-                          ->toArray();
+        // Otherwise, map assigned_skills IDs to boolean columns using Skill names and short codes
+        $skills = Skill::whereIn('id', $assignedSkillIds)->get();
+        $skillNames = $skills->pluck('name')->map(fn($v) => strtolower(trim($v)))->toArray();
+        $skillCodes = $skills->pluck('short_code')->filter()->map(fn($v) => strtolower(trim($v)))->toArray();
+
+        // Helper to check
+        $hasSkill = function($aliases) use ($skillNames, $skillCodes) {
+            foreach((array)$aliases as $alias) {
+                $alias = strtolower($alias);
+                if (in_array($alias, $skillNames) || in_array($alias, $skillCodes)) {
+                    return true;
+                }
+            }
+            return false;
+        };
 
         return StudentExamConfig::create([
             'student_id'      => $student->id,
             'exam_id'         => $exam->id,
-            'want_listening'  => in_array('listening', $skillNames),
-            'want_reading'    => in_array('reading comprehension', $skillNames) || in_array('reading', $skillNames),
-            'want_grammar'    => in_array('structure', $skillNames) || in_array('grammar', $skillNames),
-            'want_writing'    => in_array('writing', $skillNames),
-            'want_speaking'   => in_array('speaking', $skillNames),
+            'want_listening'  => $hasSkill(['listening', 'l']),
+            'want_reading'    => $hasSkill(['reading', 'reading comprehension', 'r']),
+            'want_grammar'    => $hasSkill(['grammar', 'structure', 'g']),
+            'want_writing'    => $hasSkill(['writing', 'w']),
+            'want_speaking'   => $hasSkill(['speaking', 's']),
         ]);
     }
 }

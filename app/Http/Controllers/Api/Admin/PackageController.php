@@ -12,7 +12,7 @@ class PackageController extends Controller
      */
     public function index()
     {
-        return response()->json(Package::orderBy('skills_count')->get());
+        return response()->json(Package::with('exam')->orderBy('skills_count')->get());
     }
 
     /**
@@ -25,6 +25,9 @@ class PackageController extends Controller
             'skills_count' => 'required|integer|min:1|max:5',
             'description' => 'nullable|string',
             'wp_package_id' => 'nullable|string|max:255',
+            'exam_id' => 'nullable|exists:exams,id',
+            'skills' => 'nullable|array',
+            'skills.*' => 'integer|exists:skills,id',
         ]);
 
         $package = Package::create($validated);
@@ -50,6 +53,9 @@ class PackageController extends Controller
             'skills_count' => 'required|integer|min:1|max:5',
             'description' => 'nullable|string',
             'wp_package_id' => 'nullable|string|max:255',
+            'exam_id' => 'nullable|exists:exams,id',
+            'skills' => 'nullable|array',
+            'skills.*' => 'integer|exists:skills,id',
         ]);
 
         $package->update($validated);

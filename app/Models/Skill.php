@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Skill extends Model
 {
-    protected $fillable = ['name', 'description', 'icon'];
+    protected $fillable = ['name', 'description', 'icon', 'short_code'];
 
     public function levels(): HasMany
     {
