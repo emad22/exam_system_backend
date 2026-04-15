@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Question extends Model
 {
+    protected $appends = ['media_url'];
+
     protected $fillable = [
         'skill_id', 
         'group_tag', 
@@ -16,9 +18,12 @@ class Question extends Model
         'passage_content',
         'passage_group_id',
         'passage_randomize',
+        'passage_limit',
         'media_path', 
         'difficulty_level', 
-        'points'
+        'points',
+        'min_words',
+        'max_words'
     ];
 
     public function skill(): BelongsTo
@@ -29,5 +34,13 @@ class Question extends Model
     public function options(): HasMany
     {
         return $this->hasMany(QuestionOption::class);
+    }
+
+    public function getMediaUrlAttribute()
+    {
+        if ($this->media_path) {
+            return asset('storage/' . $this->media_path);
+        }
+        return null;
     }
 }

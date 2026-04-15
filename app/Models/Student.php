@@ -22,7 +22,7 @@ class Student extends Model
         'not_adaptive',
         'num_of_login',
         'package_id',
-        'exam_type',
+        'exam_category_id',
         'assigned_skills',
         'registration_source',
         'wordpress_user_id',
@@ -47,6 +47,11 @@ class Student extends Model
                 $student->student_code = 'STU-' . strtoupper(substr(uniqid(), -6));
             }
         });
+    }
+
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(ExamCategory::class, 'exam_category_id');
     }
 
     public function user(): BelongsTo
@@ -78,33 +83,42 @@ class Student extends Model
      * Automatically assign the latest matching exam based on category (Adult/Children)
      * and filter skills to only those assigned to the student.
      */
-    public static function assignDefaultExam(Student $student)
+    public static function assignDefaultExam(Student $student, $examId = null)
     {
-        // 1. Find the designated default exam, or fallback to the latest matching the type
+        // 1. Resolve which exam to use
         $exam = null;
 
-        // Try to get exam from Package first
-        $student->loadMissing('package');
-        if ($student->package && $student->package->exam_id) {
-            $exam = Exam::find($student->package->exam_id);
+        // Priority 1: Direct Exam ID if provided
+        if ($examId) {
+            $exam = Exam::find($examId);
         }
 
-        // Fallback to default exam matching type
+        // Priority 2: Use exam from Package if available
         if (!$exam) {
-            $exam = Exam::where('exam_type', $student->exam_type)
+            $student->loadMissing('package');
+            if ($student->package && $student->package->exam_id) {
+                $exam = Exam::find($student->package->exam_id);
+            }
+        }
+
+        // Priority 3: Fallback to default/latest matching the category
+        if (!$exam) {
+            $exam = Exam::where('exam_category_id', $student->exam_category_id)
                         ->where('is_default', true)
                         ->latest()
                         ->first();
         }
 
-        // Fallback to latest exam matching type
         if (!$exam) {
-            $exam = Exam::where('exam_type', $student->exam_type)
+            $exam = Exam::where('exam_category_id', $student->exam_category_id)
                         ->latest()
                         ->first();
         }
 
         if (!$exam) return null;
+
+        // 2. Determine Skill Selection Priority
+        // ... rest of the existing logic ...
 
         // 2. Determine Skill Selection Priority Loop
         // Priority 1: Direct Student skills
@@ -117,15 +131,16 @@ class Student extends Model
         
         // Priority 3: Inherit directly from Exam Defaults logic
         if (empty($assignedSkillIds)) {
-            return StudentExamConfig::create([
-                'student_id'      => $student->id,
-                'exam_id'         => $exam->id,
-                'want_listening'  => (bool) $exam->default_want_listening,
-                'want_reading'    => (bool) $exam->default_want_reading,
-                'want_grammar'    => (bool) $exam->default_want_grammar,
-                'want_writing'    => (bool) $exam->default_want_writing,
-                'want_speaking'   => (bool) $exam->default_want_speaking,
-            ]);
+            return StudentExamConfig::updateOrCreate(
+                ['student_id' => $student->id, 'exam_id' => $exam->id],
+                [
+                    'want_listening'  => (bool) $exam->default_want_listening,
+                    'want_reading'    => (bool) $exam->default_want_reading,
+                    'want_grammar'    => (bool) $exam->default_want_grammar,
+                    'want_writing'    => (bool) $exam->default_want_writing,
+                    'want_speaking'   => (bool) $exam->default_want_speaking,
+                ]
+            );
         }
 
         // Otherwise, fetch skills by ID or short_code
@@ -155,14 +170,15 @@ class Student extends Model
             return false;
         };
 
-        return StudentExamConfig::create([
-            'student_id'      => $student->id,
-            'exam_id'         => $exam->id,
-            'want_listening'  => $hasSkill(['listening', 'l']),
-            'want_reading'    => $hasSkill(['reading', 'reading comprehension', 'r']),
-            'want_grammar'    => $hasSkill(['grammar', 'structure', 'g']),
-            'want_writing'    => $hasSkill(['writing', 'w']),
-            'want_speaking'   => $hasSkill(['speaking', 's']),
-        ]);
+        return StudentExamConfig::updateOrCreate(
+            ['student_id' => $student->id, 'exam_id' => $exam->id],
+            [
+                'want_listening'  => $hasSkill(['listening', 'l']),
+                'want_reading'    => $hasSkill(['reading', 'reading comprehension', 'r']),
+                'want_grammar'    => $hasSkill(['grammar', 'structure', 'g']),
+                'want_writing'    => $hasSkill(['writing', 'w']),
+                'want_speaking'   => $hasSkill(['speaking', 's']),
+            ]
+        );
     }
 }

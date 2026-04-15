@@ -25,7 +25,7 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
         foreach ($rows as $row) {
             $email = $row['email'] ?? null;
             $code = $row['student_code'] ?? null;
-            $skillsStr = $row['assigned_skills_short_codes'] ?? '';
+            $skillsStr = $row['skills'] ?? $row['assigned_skills'] ?? $row['assigned_skills_short_codes'] ?? '';
 
             if (!$email && !$code) continue;
 
@@ -47,7 +47,7 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
                 $finalShortCodes = [];
                 foreach($parsedCodes as $c) {
                     if (isset($skillMap[$c])) {
-                        $finalShortCodes[] = $skillMap[$c];
+                        $finalShortCodes[] = strtoupper($skillMap[$c]);
                     }
                 }
 

@@ -26,10 +26,8 @@ class StudentSkillsExport implements FromCollection, WithHeadings, WithMapping
     public function headings(): array
     {
         return [
-            'Student Name',
             'Email',
-            'Student Code',
-            'Assigned Skills (Short Codes)'
+            'Skills'
         ];
     }
 
@@ -44,15 +42,12 @@ class StudentSkillsExport implements FromCollection, WithHeadings, WithMapping
                     $shortCodes[] = trim($this->skills[$val]->short_code);
                 }
             } else {
-                // Already a short code string
                 $shortCodes[] = trim($val);
             }
         }
 
         return [
-            $student->user ? ($student->user->first_name . ' ' . $student->user->last_name) : 'N/A',
             $student->user ? $student->user->email : 'N/A',
-            $student->student_code,
             implode(', ', array_unique($shortCodes))
         ];
     }

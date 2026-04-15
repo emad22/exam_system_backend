@@ -85,6 +85,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/skills-with-levels', [Admin\SkillController::class, 'getSkillsWithLevels']);
         Route::get('/skills/{skill}/levels', [Admin\SkillController::class, 'getSkillWithLevels']);
         Route::post('/skills/{skill}/levels/bulk', [Admin\SkillController::class, 'bulkUpdateLevels']);
+        Route::get('/levels', [Admin\LevelController::class, 'index']);
         Route::post('/levels', [Admin\LevelController::class, 'store']);
         Route::patch('/levels/{level}', [Admin\LevelController::class, 'update']);
         Route::delete('/levels/{level}', [Admin\LevelController::class, 'destroy']);
@@ -98,6 +99,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/skills/{skill}/questions', [Admin\QuestionController::class, 'indexBySkill']);
         Route::get('/skills/{skill}/tags', [Admin\QuestionController::class, 'getTagsBySkill']);
         Route::post('/questions/bulk-level', [Admin\QuestionController::class, 'bulkUpdateLevel']);
+        Route::post('/media/upload', [Admin\QuestionController::class, 'uploadMedia']);
 
         // Reports & Attempts
         Route::get('/reports', [Admin\ReportController::class, 'index']);
@@ -122,6 +124,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/packages/{package}', [Admin\PackageController::class, 'update']);
         Route::delete('/packages/{package}', [Admin\PackageController::class, 'destroy']);
 
+        // Exam Categories Management
+        Route::get('/exam-categories', [Admin\ExamCategoryController::class, 'index']);
+        Route::post('/exam-categories', [Admin\ExamCategoryController::class, 'store']);
+        Route::patch('/exam-categories/{category}', [Admin\ExamCategoryController::class, 'update']);
+        Route::delete('/exam-categories/{category}', [Admin\ExamCategoryController::class, 'destroy']);
+
         // System Requirements
         Route::apiResource('system-requirements', Admin\SystemRequirementController::class);
     });
@@ -133,6 +141,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/questions/import', [QuestionImportController::class, 'import'])->middleware(AdminRole::class);
 });
 
+Route::get('/public/exam-categories', [Admin\ExamCategoryController::class, 'index']);
 Route::post('/parent/results', [ParentController::class, 'viewResults']);
 
 Route::post('/register', [AuthController::class, 'register']);

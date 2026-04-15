@@ -38,12 +38,16 @@ class QuestionController extends Controller
             'content' => 'required|string',
             'difficulty_level' => 'required|integer|min:1|max:9',
             'points' => 'required|integer|min:1',
+            'media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240', // 10MB limit
             'options' => 'nullable|array',
             'options.*.option_text' => 'required_with:options|string',
             'options.*.is_correct' => 'required_with:options|boolean',
             'passage_content' => 'nullable|string',
             'passage_group_id' => 'nullable|string',
             'passage_randomize' => 'boolean',
+            'passage_limit' => 'nullable|integer|min:1',
+            'min_words' => 'nullable|integer|min:0',
+            'max_words' => 'nullable|integer|min:0',
         ]);
 
         $question = Question::create([
@@ -56,6 +60,10 @@ class QuestionController extends Controller
             'passage_content' => $validated['passage_content'] ?? null,
             'passage_group_id' => $validated['passage_group_id'] ?? null,
             'passage_randomize' => $validated['passage_randomize'] ?? true,
+            'passage_limit' => $validated['passage_limit'] ?? null,
+            'min_words' => $validated['min_words'] ?? null,
+            'max_words' => $validated['max_words'] ?? null,
+            'media_path' => $request->hasFile('media_file') ? $request->file('media_file')->store('questions', 'public') : null,
         ]);
 
         if (isset($validated['options']) && is_array($validated['options'])) {
@@ -93,6 +101,13 @@ class QuestionController extends Controller
             'options'          => 'nullable|array',
             'options.*.option_text' => 'required_with:options|string',
             'options.*.is_correct'  => 'required_with:options|boolean',
+            'passage_content'       => 'nullable|string',
+            'passage_group_id'      => 'nullable|string',
+            'passage_randomize'     => 'nullable|boolean',
+            'passage_limit'         => 'nullable|integer|min:1',
+            'min_words'             => 'nullable|integer|min:0',
+            'max_words'             => 'nullable|integer|min:0',
+            'media_file'            => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
         ]);
 
         $question->update([
@@ -102,7 +117,19 @@ class QuestionController extends Controller
             'difficulty_level' => $validated['difficulty_level'],
             'points'           => $validated['points'],
             'group_tag'        => $validated['group_tag'] ?? $question->group_tag,
+            'passage_content'  => $validated['passage_content'] ?? $question->passage_content,
+            'passage_group_id' => $validated['passage_group_id'] ?? $question->passage_group_id,
+            'passage_randomize'=> $validated['passage_randomize'] ?? $question->passage_randomize,
+            'passage_limit'    => $validated['passage_limit'] ?? $question->passage_limit,
+            'min_words'        => $validated['min_words'] ?? $question->min_words,
+            'max_words'        => $validated['max_words'] ?? $question->max_words,
         ]);
+
+        if ($request->hasFile('media_file')) {
+            $question->update([
+                'media_path' => $request->file('media_file')->store('questions', 'public')
+            ]);
+        }
 
         // Replace all options
         if (isset($validated['options'])) {
@@ -174,5 +201,22 @@ class QuestionController extends Controller
             ->pluck('group_tag');
 
         return response()->json($tags);
+    }
+
+    /**
+     * Standalone media upload for Exam Constructor
+     */
+    public function uploadMedia(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:mp3,wav,ogg,m4a|max:10240',
+        ]);
+
+        $path = $request->file('file')->store('questions', 'public');
+        
+        return response()->json([
+            'path' => $path,
+            'url'  => asset('storage/' . $path)
+        ]);
     }
 }
