@@ -185,4 +185,39 @@ class ExamController extends Controller
             ]);
         });
     }
+
+    /**
+     * Set an exam as the default for its type
+     */
+    public function setDefault(Exam $exam)
+    {
+        // 1. Capture the ID of the old default for this same type
+        $oldDefaultId = Exam::where('exam_type', $exam->exam_type)
+            ->where('is_default', true)
+            ->value('id');
+
+        // 2. Unset other defaults of the same type
+        Exam::where('exam_type', $exam->exam_type)
+            ->update(['is_default' => false]);
+
+        // 3. Set new default
+        $exam->update(['is_default' => true]);
+
+        // 4. Migrate existing students who were on the old default
+        if ($oldDefaultId && $oldDefaultId != $exam->id) {
+            \App\Models\StudentExamConfig::where('exam_id', $oldDefaultId)
+                ->update([
+                    'exam_id' => $exam->id,
+                    'want_reading' => $exam->default_want_reading,
+                    'want_listening' => $exam->default_want_listening,
+                    'want_grammar' => $exam->default_want_grammar,
+                    'want_writing' => $exam->default_want_writing,
+                    'want_speaking' => $exam->default_want_speaking,
+                ]);
+        }
+
+        return response()->json([
+            'message' => "Exam '{$exam->title}' is now the global default. Existing students have been migrated."
+        ]);
+    }
 }

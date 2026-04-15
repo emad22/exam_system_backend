@@ -61,7 +61,7 @@ class StudentController extends Controller
             'email' => $validated['email'],
             'phone' => $validated['phone'] ?? null,
             'gender' => $validated['gender'] ?? null,
-            'birth_date' => $validated['birth_date'] ?? null,
+            'birth_date' => !empty($validated['birth_date']) ? \Carbon\Carbon::parse($validated['birth_date'])->toDateString() : null,
             'address' => $validated['address'] ?? null,
             'city' => $validated['city'] ?? null,
             'country' => $validated['country'] ?? null,
@@ -144,9 +144,13 @@ class StudentController extends Controller
             if ($user) {
                 $userUpdate = $request->only([
                     'first_name', 'last_name', 'email', 'phone', 'gender', 
-                    'birth_date', 'address', 'city', 'country', 'religion', 'occupation',
+                    'address', 'city', 'country', 'religion', 'occupation',
                     'is_active'
                 ]);
+
+                if (!empty($validated['birth_date'])) {
+                    $userUpdate['birth_date'] = \Carbon\Carbon::parse($validated['birth_date'])->toDateString();
+                }
 
                 if (isset($validated['first_name']) || isset($validated['last_name'])) {
                     $userUpdate['username'] = ($validated['first_name'] ?? $user->first_name) . ' ' . ($validated['last_name'] ?? $user->last_name);
@@ -252,7 +256,8 @@ class StudentController extends Controller
             'first_name', 'last_name', 'email', 'phone', 'gender', 'birth_date', 
             'address', 'city', 'country', 'religion', 'occupation', 
             'student_code', 'come_from', 'student_type', 'year_of_arabic', 
-            'not_adaptive', 'package_id', 'exam_type', 'password'
+            'not_adaptive', 'package_id', 'exam_type', 'password',
+            'want_listening', 'want_reading', 'want_grammar', 'want_writing', 'want_speaking'
         ];
 
         $callback = function() use ($headers) {
@@ -265,6 +270,7 @@ class StudentController extends Controller
                 '123 Street', 'Cairo', 'Egypt', 'None', 'Student',
                 'STU-101', 'Direct', 'Standard', '2024',
                 '1', '1', 'adult', 'pass123',
+                '1', '1', '1', '0', '0' // Skills: L, R, G active; W, S inactive
             ]);
             
             fclose($file);

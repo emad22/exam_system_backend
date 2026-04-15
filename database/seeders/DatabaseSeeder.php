@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
             LevelSeeder::class,
             PackageSeeder::class,
             PartnerSeeder::class,
+            SystemRequirementSeeder::class,
            
         ]);
 
