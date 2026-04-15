@@ -40,15 +40,15 @@ Route::middleware('auth:sanctum')->group(function () {
         // Student Management
         Route::get('/students', [Admin\StudentController::class, 'index']);
         Route::get('/students/template', [Admin\StudentController::class, 'downloadTemplate']);
-        Route::post('/students', [Admin\StudentController::class, 'store']);
-        Route::get('/students/{student}', [Admin\StudentController::class, 'show']);
-        Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
-        Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
         Route::post('/students/bulk-delete', [Admin\StudentController::class, 'bulkDestroy']);
         Route::post('/students/bulk-skills', [Admin\StudentController::class, 'bulkUpdateSkills']);
         Route::get('/students/bulk-skills-export', [Admin\StudentController::class, 'exportSkillsExcel']);
         Route::post('/students/bulk-skills-import', [Admin\StudentController::class, 'importSkillsExcel']);
         Route::post('/students/batch', [Admin\StudentController::class, 'batchImport']);
+        Route::post('/students', [Admin\StudentController::class, 'store']);
+        Route::get('/students/{student}', [Admin\StudentController::class, 'show']);
+        Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
+        Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
 
         // Exam Management
         Route::get('/exams', [Admin\ExamController::class, 'index']);

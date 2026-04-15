@@ -17,14 +17,12 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
         $skillMap = [];
         foreach ($skills as $s) {
             if ($s->short_code) {
-                $skillMap[strtolower(trim($s->short_code))] = $s->id;
+                // Map lowercase short code to the actual short code from DB
+                $skillMap[strtolower(trim($s->short_code))] = $s->short_code;
             }
         }
 
         foreach ($rows as $row) {
-            // Excel headers will be converted to snake_case by WithHeadingRow
-            // headings: 'Student Name', 'Email', 'Student Code', 'Assigned Skills (Short Codes)'
-            // output row keys: 'student_name', 'email', 'student_code', 'assigned_skills_short_codes'
             $email = $row['email'] ?? null;
             $code = $row['student_code'] ?? null;
             $skillsStr = $row['assigned_skills_short_codes'] ?? '';
@@ -46,14 +44,14 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
                                 ->filter()
                                 ->toArray();
                 
-                $mappedIds = [];
+                $finalShortCodes = [];
                 foreach($parsedCodes as $c) {
                     if (isset($skillMap[$c])) {
-                        $mappedIds[] = (string)$skillMap[$c];
+                        $finalShortCodes[] = $skillMap[$c];
                     }
                 }
 
-                $student->assigned_skills = $mappedIds;
+                $student->assigned_skills = array_unique($finalShortCodes);
                 $student->save();
 
                 // Re-evaluate their config to apply the new assignments

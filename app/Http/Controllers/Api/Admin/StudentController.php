@@ -53,6 +53,7 @@ class StudentController extends Controller
             'package_id' => 'nullable|exists:packages,id',
             'exam_type' => 'required|in:adult,children',
             'assigned_skills' => 'nullable|array',
+            'assigned_skills.*' => 'string|exists:skills,short_code',
             'password' => 'required|string|min:6',
         ]);
 
@@ -131,6 +132,7 @@ class StudentController extends Controller
             'package_id' => 'sometimes|nullable|exists:packages,id',
             'exam_type' => 'sometimes|required|in:adult,children',
             'assigned_skills' => 'sometimes|array',
+            'assigned_skills.*' => 'string|exists:skills,short_code',
             'password' => 'sometimes|nullable|string|min:6',
         ]);
 
@@ -261,8 +263,8 @@ class StudentController extends Controller
             'skills.*' => 'string'
         ]);
 
-        // Map short codes to skill IDs
-        $skillIds = Skill::whereIn('short_code', $request->skills)->pluck('id')->toArray();
+        // Map short codes to validated short codes
+        $validShortCodes = Skill::whereIn('short_code', $request->skills)->pluck('short_code')->toArray();
 
         // Get users with matching emails who are students
         $users = User::whereIn('email', $request->emails)->whereHas('student')->with('student')->get();
@@ -272,7 +274,7 @@ class StudentController extends Controller
             $student = $user->student;
             if ($student) {
                 // Update assigned skills
-                $student->update(['assigned_skills' => $skillIds]);
+                $student->update(['assigned_skills' => $validShortCodes]);
                 
                 // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
                 StudentExamConfig::where('student_id', $student->id)->delete();

@@ -128,8 +128,19 @@ class Student extends Model
             ]);
         }
 
-        // Otherwise, map assigned_skills IDs to boolean columns using Skill names and short codes
-        $skills = Skill::whereIn('id', $assignedSkillIds)->get();
+        // Otherwise, fetch skills by ID or short_code
+        $numericIds = array_filter($assignedSkillIds, 'is_numeric');
+        $stringCodes = array_filter($assignedSkillIds, fn($val) => !is_numeric($val));
+
+        $skillsQuery = Skill::query();
+        if (!empty($numericIds)) {
+            $skillsQuery->orWhereIn('id', $numericIds);
+        }
+        if (!empty($stringCodes)) {
+            $skillsQuery->orWhereIn('short_code', $stringCodes);
+        }
+        $skills = $skillsQuery->get();
+
         $skillNames = $skills->pluck('name')->map(fn($v) => strtolower(trim($v)))->toArray();
         $skillCodes = $skills->pluck('short_code')->filter()->map(fn($v) => strtolower(trim($v)))->toArray();
 

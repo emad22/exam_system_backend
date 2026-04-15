@@ -27,7 +27,7 @@ class PackageController extends Controller
             'wp_package_id' => 'nullable|string|max:255',
             'exam_id' => 'nullable|exists:exams,id',
             'skills' => 'nullable|array',
-            'skills.*' => 'integer|exists:skills,id',
+            'skills.*' => 'string|exists:skills,short_code',
         ]);
 
         $package = Package::create($validated);
@@ -55,7 +55,7 @@ class PackageController extends Controller
             'wp_package_id' => 'nullable|string|max:255',
             'exam_id' => 'nullable|exists:exams,id',
             'skills' => 'nullable|array',
-            'skills.*' => 'integer|exists:skills,id',
+            'skills.*' => 'string|exists:skills,short_code',
         ]);
 
         $package->update($validated);

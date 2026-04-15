@@ -73,7 +73,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 if (isset($data[$col]) && $this->parseBoolean($data[$col])) {
                     $skill = \App\Models\Skill::where('name', 'LIKE', "%{$skillName}%")->first();
                     if ($skill) {
-                        $explicitSkills[] = $skill->id;
+                        $explicitSkills[] = $skill->short_code;
                     }
                 }
             }
