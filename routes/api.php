@@ -64,6 +64,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/exams', [Admin\ExamController::class, 'store']);
         Route::get('/exams/{exam}', [Admin\ExamController::class, 'show']);
         Route::patch('/exams/{exam}', [Admin\ExamController::class, 'update']);
+        Route::patch('/exams/{exam}/set-default', [Admin\ExamController::class, 'setDefault']);
         Route::delete('/exams/{exam}', [Admin\ExamController::class, 'destroy']);
         Route::post('/exams/import-folder', [QuestionImportController::class, 'importFolder']);
 
@@ -104,8 +105,20 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Utilities
         Route::get('/languages', [Admin\LanguageController::class, 'index']);
+        
+        // Package Management
         Route::get('/packages', [Admin\PackageController::class, 'index']);
+        Route::post('/packages', [Admin\PackageController::class, 'store']);
+        Route::get('/packages/{package}', [Admin\PackageController::class, 'show']);
+        Route::patch('/packages/{package}', [Admin\PackageController::class, 'update']);
+        Route::delete('/packages/{package}', [Admin\PackageController::class, 'destroy']);
+
+        // System Requirements
+        Route::apiResource('system-requirements', Admin\SystemRequirementController::class);
     });
+
+    // Student Fetch Requirements
+    Route::get('/public/system-requirements', [Admin\SystemRequirementController::class, 'activeList']);
 
     // Global Question Import (Legacy/Admin)
     Route::post('/questions/import', [QuestionImportController::class, 'import'])->middleware(AdminRole::class);

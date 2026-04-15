@@ -17,6 +17,7 @@ class Exam extends Model
         'as_demo', 
         'play_in_real_player', 
         'passing_score',
+        'is_default',
         'default_want_reading',
         'default_want_listening',
         'default_want_grammar',
@@ -27,6 +28,7 @@ class Exam extends Model
     protected $casts = [
         'as_demo' => 'boolean',
         'play_in_real_player' => 'boolean',
+        'is_default' => 'boolean',
         'default_want_reading' => 'boolean',
         'default_want_listening' => 'boolean',
         'default_want_grammar' => 'boolean',

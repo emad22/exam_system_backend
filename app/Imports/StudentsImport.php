@@ -56,9 +56,31 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 'role' => 'student',
             ]);
 
-            // 2. Fetch Package for auto-skill assignment
+            // 2. Fetch Skills (Granular Override vs Package Default)
             $assignedSkills = [];
-            if (!empty($data['package_id'])) {
+            
+            // Check for explicit skill flags in Excel
+            $skillFlags = [
+                'want_listening' => 'Listening',
+                'want_reading'   => 'Reading',
+                'want_grammar'   => 'Structure',
+                'want_writing'   => 'Writing',
+                'want_speaking'  => 'Speaking'
+            ];
+
+            $explicitSkills = [];
+            foreach ($skillFlags as $col => $skillName) {
+                if (isset($data[$col]) && $this->parseBoolean($data[$col])) {
+                    $skill = \App\Models\Skill::where('name', 'LIKE', "%{$skillName}%")->first();
+                    if ($skill) {
+                        $explicitSkills[] = $skill->id;
+                    }
+                }
+            }
+
+            if (!empty($explicitSkills)) {
+                $assignedSkills = $explicitSkills;
+            } elseif (!empty($data['package_id'])) {
                 $package = Package::find($data['package_id']);
                 $assignedSkills = $package ? ($package->skills ?? []) : [];
             }

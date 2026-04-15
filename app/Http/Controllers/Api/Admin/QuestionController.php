@@ -12,9 +12,19 @@ class QuestionController extends Controller
     /**
      * Get all questions with skill info
      */
-    public function index()
+    public function index(Request $request)
     {
-        return response()->json(Question::with('skill')->withCount('options')->latest()->paginate(30));
+        $query = Question::with(['skill', 'options'])->withCount('options');
+
+        if ($request->has('skill_id')) {
+            $query->where('skill_id', $request->skill_id);
+        }
+
+        if ($request->has('difficulty_level')) {
+            $query->where('difficulty_level', $request->difficulty_level);
+        }
+
+        return response()->json($query->latest()->paginate(50));
     }
 
     /**
@@ -28,9 +38,12 @@ class QuestionController extends Controller
             'content' => 'required|string',
             'difficulty_level' => 'required|integer|min:1|max:9',
             'points' => 'required|integer|min:1',
-            'options' => 'required_if:type,mcq,true_false,short_answer|array',
+            'options' => 'nullable|array',
             'options.*.option_text' => 'required_with:options|string',
             'options.*.is_correct' => 'required_with:options|boolean',
+            'passage_content' => 'nullable|string',
+            'passage_group_id' => 'nullable|string',
+            'passage_randomize' => 'boolean',
         ]);
 
         $question = Question::create([
@@ -40,6 +53,9 @@ class QuestionController extends Controller
             'content' => $validated['content'],
             'difficulty_level' => $validated['difficulty_level'],
             'points' => $validated['points'],
+            'passage_content' => $validated['passage_content'] ?? null,
+            'passage_group_id' => $validated['passage_group_id'] ?? null,
+            'passage_randomize' => $validated['passage_randomize'] ?? true,
         ]);
 
         if (isset($validated['options']) && is_array($validated['options'])) {

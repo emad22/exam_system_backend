@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             SkillSeeder::class,
             LevelSeeder::class,
             PartnerSeeder::class,
+            SystemRequirementSeeder::class,
         ]);
 
         User::factory()->create([
