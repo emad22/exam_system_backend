@@ -27,7 +27,10 @@ class SkillController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255|unique:skills'
+            'name' => 'required|string|max:255|unique:skills',
+            'short_code' => 'nullable|string|max:10|unique:skills',
+            'description' => 'nullable|string',
+            'icon' => 'nullable|string',
         ]);
 
         $skill = Skill::create($validated);
@@ -44,7 +47,10 @@ class SkillController extends Controller
     public function update(Request $request, Skill $skill)
     {
         $validated = $request->validate([
-            'name' => 'sometimes|required|string|max:255|unique:skills,name,' . $skill->id
+            'name' => 'sometimes|required|string|max:255|unique:skills,name,' . $skill->id,
+            'short_code' => 'sometimes|nullable|string|max:10|unique:skills,short_code,' . $skill->id,
+            'description' => 'sometimes|nullable|string',
+            'icon' => 'sometimes|nullable|string',
         ]);
 
         $skill->update($validated);

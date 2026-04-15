@@ -11,6 +11,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\StudentsImport;
+use App\Exports\StudentSkillsExport;
+use App\Imports\StudentSkillsImport;
+use Illuminate\Support\Facades\DB;
 
 class StudentController extends Controller
 {
@@ -125,7 +128,6 @@ class StudentController extends Controller
             'year_of_arabic' => 'sometimes|nullable|integer',
             'not_adaptive' => 'sometimes|nullable|boolean',
             'is_active' => 'sometimes|boolean',
-
             'package_id' => 'sometimes|nullable|exists:packages,id',
             'exam_type' => 'sometimes|required|in:adult,children',
             'assigned_skills' => 'sometimes|array',
@@ -248,6 +250,45 @@ class StudentController extends Controller
     }
 
     /**
+     * Batch update assigned skills for multiple students by email.
+     */
+    public function bulkUpdateSkills(Request $request)
+    {
+        $request->validate([
+            'emails' => 'required|array',
+            'emails.*' => 'email',
+            'skills' => 'required|array', // expected array of short codes e.g. ['r', 'w', 'l']
+            'skills.*' => 'string'
+        ]);
+
+        // Map short codes to skill IDs
+        $skillIds = Skill::whereIn('short_code', $request->skills)->pluck('id')->toArray();
+
+        // Get users with matching emails who are students
+        $users = User::whereIn('email', $request->emails)->whereHas('student')->with('student')->get();
+        $updatedCount = 0;
+
+        foreach ($users as $user) {
+            $student = $user->student;
+            if ($student) {
+                // Update assigned skills
+                $student->update(['assigned_skills' => $skillIds]);
+                
+                // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
+                StudentExamConfig::where('student_id', $student->id)->delete();
+                Student::assignDefaultExam($student);
+                
+                $updatedCount++;
+            }
+        }
+
+        return response()->json([
+            'message' => "Successfully updated skills for {$updatedCount} student(s).",
+            'updated_count' => $updatedCount
+        ]);
+    }
+
+    /**
      * Download Standard CSV Template
      */
     public function downloadTemplate()
@@ -283,5 +324,34 @@ class StudentController extends Controller
             "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
             "Expires"             => "0"
         ]);
+    }
+
+    /**
+     * Download Excel template for bulk skills assignment
+     */
+    public function exportSkillsExcel()
+    {
+        return Excel::download(new StudentSkillsExport, 'students_skills_template.xlsx');
+    }
+
+    /**
+     * Import Excel file for bulk skills assignment
+     */
+    public function importSkillsExcel(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|mimes:xlsx,xls,csv'
+        ]);
+
+        try {
+            DB::beginTransaction();
+            Excel::import(new StudentSkillsImport, $request->file('file'));
+            DB::commit();
+
+            return response()->json(['message' => 'Bulk skills updated successfully from Excel file']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'An error occurred during import: ' . $e->getMessage()], 500);
+        }
     }
 }
