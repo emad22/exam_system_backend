@@ -16,7 +16,7 @@ class PartnerSeeder extends Seeder
             'partner_name' => 'Arabacademy',
             'fName_contact' => 'Sameh',
             'lName_contact' => 'Ahmed',
-            'email' => 'info@arabacademy.com',
+            'email' => 'info2@arabacademy.com',
             'phone' => '+201116704021',
             'website' => 'https://arabacademy.com',
             'country' => 'Egypt',

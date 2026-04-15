@@ -12,6 +12,9 @@ use App\Http\Middleware\AdminRole;
 use App\Http\Middleware\StaffRole;
 use App\Http\Middleware\StudentOrDemoRole;
 
+use App\Http\Controllers\Api\WordPressWebhookController;
+
+
 
 Route::middleware('auth:sanctum')->group(function () {
     // Current User Info
@@ -47,7 +50,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // Exam Management
         Route::get('/exams', [Admin\ExamController::class, 'index']);
 
-        // Route::apiResource('/partners', PartnerController::class);
+       // Route::post('/WordPressWebhookController', [WordPressWebhookController::class, 'register']);
+
+
+
 
         // partner Management
         Route::get('/partners', [PartnerController::class, 'index']);

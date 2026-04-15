@@ -14,23 +14,27 @@ class PackageSeeder extends Seeder
     {
         Package::create([
             'id' => 1,
-            'name' => 'Basic',
+            'name' => 'Adult-Basic',
             'skills_count' => 3,
-            'description' => '3 skills package'
+            'description' => '3 skills package',
+            'wp_package_id' => '6542'
         ]);
 
         Package::create([
             'id' => 2,
-            'name' => 'Standard',
+            'name' => 'Adult-Standard',
             'skills_count' => 4,
-            'description' => '4 skills package'
+            'description' => '4 skills package',
+            'wp_package_id' => '6544'
+
         ]);
 
         Package::create([
             'id' => 3,
-            'name' => 'Premium',
+            'name' => 'Adult-Premium',
             'skills_count' => 5,
-            'description' => '5 skills package'
+            'description' => '5 skills package',
+            'wp_package_id' => '6546'
         ]);
     }
 }

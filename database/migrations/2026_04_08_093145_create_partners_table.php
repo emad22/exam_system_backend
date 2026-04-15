@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('partner_name')->nullable(); 
             $table->string('fName_contact')->nullable(); 
             $table->string('lName_contact')->nullable(); 
-            $table->string('email')->nullable();
+            $table->string('email')->nullable()->unique();
             $table->string('phone')->nullable();
             $table->string('website')->nullable();
             $table->string('country')->nullable();
