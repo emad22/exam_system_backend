@@ -19,7 +19,7 @@ class WordPressWebhookController extends Controller
     public function register(Request $request)
     {
         // Simple security check (Shared Secret)
-        echo "in register...............";
+      //  print "in register fun........";
         $secret = config('services.wordpress.webhook_secret');
         if ($request->header('X-WP-Webhook-Secret') !== $secret) {
             return response()->json(['message' => 'Unauthorized source'], 401);
@@ -29,14 +29,19 @@ class WordPressWebhookController extends Controller
             'email' => 'required|email|unique:users,email',
             'first_name' => 'required|string',
             'last_name' => 'required|string',
-            'package_id' => 'required|exists:packages,id',
+            'package_id' => 'required|exists:packages,wp_package_id',
             'wp_user_id' => 'required|string',
             'exam_type' => 'nullable|in:adult,children', // Optional override from WP
         ]);
 
+            // $package = Package::where('wp_package_id', $validated['package_id'])->first();
+            //    echo "iiiiiiiiiiiiiiiiiiiii ".$package;
+
         return DB::transaction(function () use ($validated) {
             // 1. Fetch Package for auto-skill assignment (Try WP ID first, then internal ID)
             $package = Package::where('wp_package_id', $validated['package_id'])->first();
+             
+       
             if (!$package) {
                 $package = Package::find($validated['package_id']);
             }
@@ -61,6 +66,7 @@ class WordPressWebhookController extends Controller
                 'registration_source' => 'wordpress',
                 'exam_type' => $validated['exam_type'] ?? 'adult',
                 'assigned_skills' => $assignedSkills,
+                'not_adaptive' => 0,
                 'registration_date' => now(),
             ]);
 
@@ -76,5 +82,6 @@ class WordPressWebhookController extends Controller
                 'temp_password' => $password, // Useful for debugging or sending welcome email
             ], 201);
         });
+
     }
 }
