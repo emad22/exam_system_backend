@@ -21,13 +21,13 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
      */
 
     protected $partnerId;
-    protected $examId;
+    protected $packageId;
     protected $globalSkills;
 
-    public function __construct($partnerId = null, $examId = null, $globalSkills = null)
+    public function __construct($partnerId = null, $packageId = null, $globalSkills = null)
     {
         $this->partnerId = $partnerId;
-        $this->examId = $examId;
+        $this->packageId = $packageId;
         $this->globalSkills = is_array($globalSkills) ? $globalSkills : null;
     }
     public function onRow(Row $row)
@@ -84,6 +84,9 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
 
             if (!empty($this->globalSkills)) {
                 $assignedSkills = $this->globalSkills;
+            } elseif (!empty($this->packageId)) {
+                $package = Package::find($this->packageId);
+                $assignedSkills = $package ? ($package->skills ?? []) : [];
             } elseif (!empty($explicitSkills)) {
                 $assignedSkills = $explicitSkills;
             } elseif (!empty($data['package_id'])) {
@@ -100,7 +103,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 'student_type' => $data['student_type'] ?? null,
                 'year_of_arabic' => $data['year_of_arabic'] ?? null,
                 'not_adaptive' => isset($data['not_adaptive']) ? (bool)$data['not_adaptive'] : true,
-                'package_id' => $data['package_id'] ?? null,
+                'package_id' => $this->packageId ?? $data['package_id'] ?? null,
                 'exam_category_id' => $data['exam_category_id'] ?? (\App\Models\ExamCategory::where('is_active', true)->first()->id ?? null),
                 'assigned_skills' => $assignedSkills,
                 'registration_source' => 'batch',
@@ -108,7 +111,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             ]);
 
             // 4. Automated Exam Enrollment & Skill Filtering
-            Student::assignDefaultExam($student, $this->examId);
+            Student::assignDefaultExam($student, null);
         });
     }
 

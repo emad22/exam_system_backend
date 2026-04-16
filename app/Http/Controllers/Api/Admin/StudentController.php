@@ -52,9 +52,10 @@ class StudentController extends Controller
             
 
             'exam_id' => 'nullable|exists:exams,id',
-            'exam_category_id' => 'required|exists:exam_categories,id',
+            'exam_category_id' => 'nullable|exists:exam_categories,id',
             'assigned_skills' => 'nullable|array',
             'assigned_skills.*' => 'nullable',
+            'package_id' => 'nullable|exists:packages,id',
             'password' => 'required|string|min:6',
         ]);
 
@@ -92,7 +93,20 @@ class StudentController extends Controller
             $assignedSkills = $package ? ($package->skills ?? []) : [];
         }
 
-        // 3. Create Profile (Student)
+        // 3. Resolve Category if missing
+        $examCategoryId = $validated['exam_category_id'] ?? null;
+        if (!$examCategoryId && !empty($validated['package_id'])) {
+            $package = Package::with(['exam'])->find($validated['package_id']);
+            if ($package && $package->exam) {
+                $examCategoryId = $package->exam->exam_category_id;
+            }
+        }
+
+        if (!$examCategoryId) {
+            $examCategoryId = \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null;
+        }
+
+        // 4. Create Profile (Student)
         $student = Student::create([
             'user_id' => $user->id,
             'student_code' => $validated['student_code'] ?? null,
@@ -101,7 +115,7 @@ class StudentController extends Controller
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
             'not_adaptive' => $validated['not_adaptive'] ?? true,
             'package_id' => $validated['package_id'] ?? null,
-            'exam_category_id' => $validated['exam_category_id'],
+            'exam_category_id' => $examCategoryId,
             'assigned_skills' => $assignedSkills,
             'registration_source' => 'manual',
             'registration_date' => now(),
@@ -260,7 +274,7 @@ class StudentController extends Controller
         $request->validate([
             'file' => 'required|mimes:xlsx,csv,xls',
             'partner_id' => 'nullable',
-            'exam_id' => 'nullable|exists:exams,id',
+            'package_id' => 'nullable|exists:packages,id',
             'assigned_skills' => 'nullable' // JSON encoded or array
         ]);
 
@@ -273,7 +287,7 @@ class StudentController extends Controller
             Excel::import(
                 new StudentsImport(
                     $request->input('partner_id'),
-                    $request->input('exam_id'),
+                    $request->input('package_id'),
                     $assignedSkills
                 ), 
                 $request->file('file')
