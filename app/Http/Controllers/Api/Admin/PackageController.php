@@ -15,9 +15,6 @@ class PackageController extends Controller
         return response()->json(Package::with('exam')->orderBy('skills_count')->get());
     }
 
-    /**
-     * Store new package
-     */
     public function store(\Illuminate\Http\Request $request)
     {
         $validated = $request->validate([
@@ -27,8 +24,17 @@ class PackageController extends Controller
             'wp_package_id' => 'nullable|string|max:255',
             'exam_id' => 'nullable|exists:exams,id',
             'skills' => 'nullable|array',
-            'skills.*' => 'integer|exists:skills,id',
+            'skills.*' => 'nullable',
         ]);
+
+        if (!empty($validated['skills'])) {
+            $validated['skills'] = \App\Models\Skill::whereIn('id', $validated['skills'])
+                                    ->orWhereIn('short_code', $validated['skills'])
+                                    ->pluck('short_code')
+                                    ->map(fn($code) => strtoupper($code))
+                                    ->unique()
+                                    ->toArray();
+        }
 
         $package = Package::create($validated);
 
@@ -43,9 +49,6 @@ class PackageController extends Controller
         return response()->json($package);
     }
 
-    /**
-     * Update package
-     */
     public function update(\Illuminate\Http\Request $request, Package $package)
     {
         $validated = $request->validate([
@@ -55,8 +58,17 @@ class PackageController extends Controller
             'wp_package_id' => 'nullable|string|max:255',
             'exam_id' => 'nullable|exists:exams,id',
             'skills' => 'nullable|array',
-            'skills.*' => 'integer|exists:skills,id',
+            'skills.*' => 'nullable',
         ]);
+
+        if (isset($validated['skills'])) {
+            $validated['skills'] = \App\Models\Skill::whereIn('id', $validated['skills'])
+                                    ->orWhereIn('short_code', $validated['skills'])
+                                    ->pluck('short_code')
+                                    ->map(fn($code) => strtoupper($code))
+                                    ->unique()
+                                    ->toArray();
+        }
 
         $package->update($validated);
 

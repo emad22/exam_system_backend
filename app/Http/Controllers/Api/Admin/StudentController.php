@@ -50,11 +50,23 @@ class StudentController extends Controller
             'year_of_arabic' => 'nullable|integer',
             'not_adaptive' => 'nullable|boolean',
             
-            'package_id' => 'nullable|exists:packages,id',
-            'exam_type' => 'required|in:adult,children',
+
+            'exam_id' => 'nullable|exists:exams,id',
+            'exam_category_id' => 'required|exists:exam_categories,id',
             'assigned_skills' => 'nullable|array',
+            'assigned_skills.*' => 'nullable',
             'password' => 'required|string|min:6',
         ]);
+
+        $assignedSkills = [];
+        if (!empty($validated['assigned_skills'])) {
+            $assignedSkills = Skill::whereIn('id', $validated['assigned_skills'])
+                                    ->orWhereIn('short_code', $validated['assigned_skills'])
+                                    ->pluck('short_code')
+                                    ->map(fn($code) => strtoupper($code))
+                                    ->unique()
+                                    ->toArray();
+        }
 
         // 1. Create Identity (User)
         $user = User::create([
@@ -75,7 +87,6 @@ class StudentController extends Controller
         ]);
 
         // 2. Fetch Package Skills if assigned_skills not provided
-        $assignedSkills = $validated['assigned_skills'] ?? [];
         if (empty($assignedSkills) && !empty($validated['package_id'])) {
             $package = Package::find($validated['package_id']);
             $assignedSkills = $package ? ($package->skills ?? []) : [];
@@ -89,15 +100,15 @@ class StudentController extends Controller
             'student_type' => $validated['student_type'] ?? null,
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
             'not_adaptive' => $validated['not_adaptive'] ?? true,
-            'package_id' => $validated['package_id'],
-            'exam_type' => $validated['exam_type'],
+            'package_id' => $validated['package_id'] ?? null,
+            'exam_category_id' => $validated['exam_category_id'],
             'assigned_skills' => $assignedSkills,
             'registration_source' => 'manual',
             'registration_date' => now(),
         ]);
 
         // 4. Automated Exam Enrollment & Skill Filtering
-        Student::assignDefaultExam($student);
+        Student::assignDefaultExam($student, $validated['exam_id'] ?? null);
 
         return response()->json([
             'message' => 'Student account created and Exam assigned successfully.',
@@ -129,16 +140,32 @@ class StudentController extends Controller
             'not_adaptive' => 'sometimes|nullable|boolean',
             'is_active' => 'sometimes|boolean',
             'package_id' => 'sometimes|nullable|exists:packages,id',
-            'exam_type' => 'sometimes|required|in:adult,children',
+            'exam_category_id' => 'sometimes|required|exists:exam_categories,id',
             'assigned_skills' => 'sometimes|array',
+            'assigned_skills.*' => 'nullable',
             'password' => 'sometimes|nullable|string|min:6',
         ]);
 
+        if (isset($validated['assigned_skills'])) {
+            $validated['assigned_skills'] = Skill::whereIn('id', $validated['assigned_skills'])
+                                                ->orWhereIn('short_code', $validated['assigned_skills'])
+                                                ->pluck('short_code')
+                                                ->map(fn($code) => strtoupper($code))
+                                                ->unique()
+                                                ->toArray();
+        }
+
         // 1. Update Profile (Student)
-        $student->update($request->only([
-            'package_id', 'exam_type', 'assigned_skills', 'student_type', 'student_code',
+        $studentUpdate = $request->only([
+            'package_id', 'exam_category_id', 'student_type', 'student_code',
             'come_from', 'year_of_arabic', 'not_adaptive', 
-        ]));
+        ]);
+
+        if (isset($validated['assigned_skills'])) {
+            $studentUpdate['assigned_skills'] = $validated['assigned_skills'];
+        }
+
+        $student->update($studentUpdate);
 
         // 2. Update Identity (User)
         if ($student->user_id) {
@@ -230,12 +257,27 @@ class StudentController extends Controller
      */
     public function batchImport(Request $request)
     {
-        // $request->validate([
-        //     'file' => 'required|mimes:xlsx,csv,xls',
-        // ]);
+        $request->validate([
+            'file' => 'required|mimes:xlsx,csv,xls',
+            'partner_id' => 'nullable',
+            'exam_id' => 'nullable|exists:exams,id',
+            'assigned_skills' => 'nullable' // JSON encoded or array
+        ]);
 
         try {
-            Excel::import(new StudentsImport($request->input('partner_id')), $request->file('file'));
+            $assignedSkills = $request->input('assigned_skills');
+            if (is_string($assignedSkills)) {
+                $assignedSkills = json_decode($assignedSkills, true);
+            }
+
+            Excel::import(
+                new StudentsImport(
+                    $request->input('partner_id'),
+                    $request->input('exam_id'),
+                    $assignedSkills
+                ), 
+                $request->file('file')
+            );
             return response()->json(['message' => 'Students imported successfully.']);
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
             $failures = $e->failures();
@@ -257,12 +299,17 @@ class StudentController extends Controller
         $request->validate([
             'emails' => 'required|array',
             'emails.*' => 'email',
-            'skills' => 'required|array', // expected array of short codes e.g. ['r', 'w', 'l']
-            'skills.*' => 'string'
+            'skills' => 'required|array',
+            'skills.*' => 'nullable',
         ]);
 
-        // Map short codes to skill IDs
-        $skillIds = Skill::whereIn('short_code', $request->skills)->pluck('id')->toArray();
+        // Map IDs or short codes to validated short codes
+        $validShortCodes = Skill::whereIn('id', $request->skills)
+                                ->orWhereIn('short_code', $request->skills)
+                                ->pluck('short_code')
+                                ->map(fn($code) => strtoupper($code))
+                                ->unique()
+                                ->toArray();
 
         // Get users with matching emails who are students
         $users = User::whereIn('email', $request->emails)->whereHas('student')->with('student')->get();
@@ -272,7 +319,7 @@ class StudentController extends Controller
             $student = $user->student;
             if ($student) {
                 // Update assigned skills
-                $student->update(['assigned_skills' => $skillIds]);
+                $student->update(['assigned_skills' => $validShortCodes]);
                 
                 // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
                 StudentExamConfig::where('student_id', $student->id)->delete();
@@ -297,7 +344,7 @@ class StudentController extends Controller
             'first_name', 'last_name', 'email', 'phone', 'gender', 'birth_date', 
             'address', 'city', 'country', 'religion', 'occupation', 
             'student_code', 'come_from', 'student_type', 'year_of_arabic', 
-            'not_adaptive', 'package_id', 'exam_type', 'password',
+            'not_adaptive', 'package_id', 'exam_category_id', 'password',
             'want_listening', 'want_reading', 'want_grammar', 'want_writing', 'want_speaking'
         ];
 
@@ -310,7 +357,7 @@ class StudentController extends Controller
                 'John', 'Doe', 'john.doe@example.com', '123456789', 'male', '2005-05-15',
                 '123 Street', 'Cairo', 'Egypt', 'None', 'Student',
                 'STU-101', 'Direct', 'Standard', '2024',
-                '1', '1', 'adult', 'pass123',
+                '1', '1', '1', 'pass123',
                 '1', '1', '1', '0', '0' // Skills: L, R, G active; W, S inactive
             ]);
             

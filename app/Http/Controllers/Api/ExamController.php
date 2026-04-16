@@ -198,13 +198,20 @@ class ExamController extends Controller
                 foreach ($ruleQuestions as $q) {
                     if ($q->passage_group_id && !in_array($q->passage_group_id, $processedGroups)) {
                         $processedGroups[] = $q->passage_group_id;
-                        $groupQuestions = Question::where('passage_group_id', $q->passage_group_id)
-                            ->with('options')
-                            ->get();
                         
-                        // Internal randomization
-                        if ($groupQuestions->first() && $groupQuestions->first()->passage_randomize) {
-                            $groupQuestions = $groupQuestions->shuffle();
+                        // Fetch the group
+                        $groupQuery = Question::where('passage_group_id', $q->passage_group_id)
+                            ->with('options');
+                        
+                        // Internal ordering/randomization
+                        $groupQuestions = $q->passage_randomize 
+                            ? $groupQuery->inRandomOrder()->get() 
+                            : $groupQuery->orderBy('id', 'asc')->get();
+
+                        // Apply passage limit if one question in the group has it
+                        $limit = $groupQuestions->first()->passage_limit;
+                        if ($limit && $limit > 0) {
+                            $groupQuestions = $groupQuestions->take($limit);
                         }
 
                         $processedQuestions = $processedQuestions->concat($groupQuestions);

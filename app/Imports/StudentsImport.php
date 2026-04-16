@@ -21,10 +21,14 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
      */
 
     protected $partnerId;
+    protected $examId;
+    protected $globalSkills;
 
-    public function __construct($partnerId)
+    public function __construct($partnerId = null, $examId = null, $globalSkills = null)
     {
         $this->partnerId = $partnerId;
+        $this->examId = $examId;
+        $this->globalSkills = is_array($globalSkills) ? $globalSkills : null;
     }
     public function onRow(Row $row)
     {
@@ -73,12 +77,14 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 if (isset($data[$col]) && $this->parseBoolean($data[$col])) {
                     $skill = \App\Models\Skill::where('name', 'LIKE', "%{$skillName}%")->first();
                     if ($skill) {
-                        $explicitSkills[] = $skill->id;
+                        $explicitSkills[] = strtoupper($skill->short_code);
                     }
                 }
             }
 
-            if (!empty($explicitSkills)) {
+            if (!empty($this->globalSkills)) {
+                $assignedSkills = $this->globalSkills;
+            } elseif (!empty($explicitSkills)) {
                 $assignedSkills = $explicitSkills;
             } elseif (!empty($data['package_id'])) {
                 $package = Package::find($data['package_id']);
@@ -95,14 +101,14 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 'year_of_arabic' => $data['year_of_arabic'] ?? null,
                 'not_adaptive' => isset($data['not_adaptive']) ? (bool)$data['not_adaptive'] : true,
                 'package_id' => $data['package_id'] ?? null,
-                'exam_type' => $data['exam_type'] ?? 'adult',
+                'exam_category_id' => $data['exam_category_id'] ?? (\App\Models\ExamCategory::where('is_active', true)->first()->id ?? null),
                 'assigned_skills' => $assignedSkills,
                 'registration_source' => 'batch',
                 'registration_date' => now(),
             ]);
 
             // 4. Automated Exam Enrollment & Skill Filtering
-            Student::assignDefaultExam($student);
+            Student::assignDefaultExam($student, $this->examId);
         });
     }
 
@@ -112,7 +118,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             'email' => 'required|email|unique:users,email',
             'first_name' => 'required|string',
             'last_name' => 'required|string',
-            'exam_type' => 'nullable|in:adult,children',
+            'exam_category_id' => 'nullable|exists:exam_categories,id',
         ];
     }
 

@@ -14,7 +14,7 @@ class ExamController extends Controller
      */
     public function index()
     {
-        return response()->json(Exam::with('language')->withCount('attempts')->latest()->get());
+        return response()->json(Exam::with(['language', 'category'])->withCount('attempts')->latest()->get());
     }
 
     /**
@@ -26,7 +26,7 @@ class ExamController extends Controller
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
 
-            'exam_type' => 'required|in:adult,children',
+            'exam_category_id' => 'required|exists:exam_categories,id',
             'passing_score' => 'required|numeric|min:0|max:100',
 
             'skills' => 'required|array|min:1',
@@ -41,9 +41,9 @@ class ExamController extends Controller
         
         $exam = Exam::create([
             'title' => $validated['title'],
-            'description' => $validated['description'],
+            'description' => $validated['description'] ?? null,
 
-            'exam_type' => $validated['exam_type'],
+            'exam_category_id' => $validated['exam_category_id'],
             'passing_score' => $validated['passing_score'],
 
             'default_want_reading' => in_array('reading', $skillNames),
@@ -84,7 +84,14 @@ class ExamController extends Controller
      */
     public function show(Exam $exam)
     {
-        return response()->json($exam->load(['skills', 'questionRules', 'language']));
+        $exam->load(['skills', 'questionRules', 'language', 'category']);
+        
+        // Attach questions that belong to this exam via the group_tag
+        $exam->questions = \App\Models\Question::where('group_tag', $exam->title)
+            ->with('options')
+            ->get();
+
+        return response()->json($exam);
     }
 
     /**
@@ -95,8 +102,7 @@ class ExamController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'language_id' => 'required|exists:languages,id',
-            'exam_type' => 'required|in:adult,children',
+            'exam_category_id' => 'required|exists:exam_categories,id',
             'passing_score' => 'required|numeric|min:0|max:100',
             'is_adaptive' => 'boolean',
             'skills' => 'required|array|min:1',
@@ -106,13 +112,16 @@ class ExamController extends Controller
             'skills.*.rules' => 'nullable|array',
         ]);
 
+        // Clean up existing questions for this exam (by old tag) before frontend re-saves
+        // This prevents duplicates because the frontend will POST all current questions in localQuestions
+        \App\Models\Question::where('group_tag', $exam->title)->delete();
+
         $skillNames = Skill::whereIn('id', collect($validated['skills'])->pluck('skill_id'))->pluck('name')->map(fn($n) => strtolower($n))->toArray();
 
         $exam->update([
             'title' => $validated['title'],
-            'description' => $validated['description'],
-            'language_id' => $validated['language_id'],
-            'exam_type' => $validated['exam_type'],
+            'description' => $validated['description'] ?? null,
+            'exam_category_id' => $validated['exam_category_id'],
             'passing_score' => $validated['passing_score'],
             'is_adaptive' => $validated['is_adaptive'] ?? false,
             'default_want_reading' => in_array('reading', $skillNames),
@@ -191,13 +200,13 @@ class ExamController extends Controller
      */
     public function setDefault(Exam $exam)
     {
-        // 1. Capture the ID of the old default for this same type
-        $oldDefaultId = Exam::where('exam_type', $exam->exam_type)
+        // 1. Capture the ID of the old default for this same category
+        $oldDefaultId = Exam::where('exam_category_id', $exam->exam_category_id)
             ->where('is_default', true)
             ->value('id');
 
-        // 2. Unset other defaults of the same type
-        Exam::where('exam_type', $exam->exam_type)
+        // 2. Unset other defaults of the same category
+        Exam::where('exam_category_id', $exam->exam_category_id)
             ->update(['is_default' => false]);
 
         // 3. Set new default

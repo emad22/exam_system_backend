@@ -19,7 +19,7 @@ class AuthController extends Controller
             'phone' => 'nullable|string|max:20',
             'birth_date' => 'nullable|date',
             'gender' => 'nullable|in:male,female,other',
-            'exam_type' => 'required|in:adult,children',
+            'exam_category_id' => 'required|exists:exam_categories,id',
             'password' => 'required|min:6|confirmed',
         ]);
 
@@ -37,7 +37,7 @@ class AuthController extends Controller
 
         $student = Student::create([
             'user_id' => $user->id,
-            'exam_type' => $validated['exam_type'],
+            'exam_category_id' => $validated['exam_category_id'],
             'registration_source' => 'website',
             'registration_date' => now(),
         ]);

@@ -11,13 +11,24 @@ use Illuminate\Support\Facades\Storage;
 class LevelController extends Controller
 {
     /**
+     * Display a listing of levels
+     */
+    public function index(Request $request)
+    {
+        $query = Level::query();
+        if ($request->has('skill_id')) {
+            $query->where('skill_id', $request->skill_id);
+        }
+        return response()->json($query->orderBy('skill_id')->orderBy('level_number')->get());
+    }
+
+    /**
      * Store a new level for a skill
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'skill_id' => 'required|exists:skills,id',
-            'name' => 'required|string|max:255',
             'level_number' => 'required|integer',
             'min_score' => 'required|integer',
             'max_score' => 'required|integer',
@@ -46,7 +57,7 @@ class LevelController extends Controller
     public function update(Request $request, Level $level)
     {
         $validated = $request->validate([
-            'name' => 'sometimes|required|string|max:255',
+            
             'min_score' => 'sometimes|required|integer',
             'max_score' => 'sometimes|required|integer',
             'pass_threshold' => 'sometimes|required|integer|min:0|max:100',

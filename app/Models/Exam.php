@@ -11,9 +11,10 @@ class Exam extends Model
     protected $fillable = [
         'title', 
         'description', 
-        'exam_type',
+        'exam_category_id',
+        'is_active',
         'timer_type',
-        'duration',
+        'time_limit',
         'as_demo', 
         'play_in_real_player', 
         'passing_score',
@@ -34,7 +35,13 @@ class Exam extends Model
         'default_want_grammar' => 'boolean',
         'default_want_writing' => 'boolean',
         'default_want_speaking' => 'boolean',
+        'is_active' => 'boolean'
     ];
+
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(ExamCategory::class, 'exam_category_id');
+    }
 
     public function language(): BelongsTo
     {
@@ -59,7 +66,7 @@ class Exam extends Model
     public function skills(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
     {
         return $this->belongsToMany(Skill::class, 'exam_skill')
-            ->withPivot('duration', 'is_optional')
+            ->withPivot('duration', 'is_optional', 'order_index')
             ->withTimestamps();
     }
 }

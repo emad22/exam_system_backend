@@ -109,38 +109,46 @@ class SkillController extends Controller
     }
 
     /**
-     * Bulk update levels for a skill
+     * Bulk update/create levels for a skill
      */
     public function bulkUpdateLevels(Request $request, Skill $skill)
     {
         $validated = $request->validate([
             'levels' => 'required|array',
-            'levels.*.id' => 'required|exists:levels,id',
+            'levels.*.id' => 'nullable|exists:levels,id',
             'levels.*.name' => 'required|string|max:255',
             'levels.*.level_number' => 'required|integer',
             'levels.*.min_score' => 'required|integer',
             'levels.*.max_score' => 'required|integer',
             'levels.*.pass_threshold' => 'required|integer|min:0|max:100',
+            'levels.*.instructions' => 'nullable|string',
         ]);
 
         DB::beginTransaction();
         try {
+            $incomingIds = array_filter(array_column($validated['levels'], 'id'));
+
+            // Sync: Optional - Delete levels not in the request? 
+            // Better to handle deletion explicitly through the destroy method to avoid accidental data loss.
+            
             foreach ($validated['levels'] as $levelData) {
-                Level::where('id', $levelData['id'])
-                    ->where('skill_id', $skill->id) // Security check
-                    ->update([
+                Level::updateOrCreate(
+                    ['id' => $levelData['id'] ?? null, 'skill_id' => $skill->id],
+                    [
                         'name' => $levelData['name'],
                         'level_number' => $levelData['level_number'],
                         'min_score' => $levelData['min_score'],
                         'max_score' => $levelData['max_score'],
                         'pass_threshold' => $levelData['pass_threshold'],
-                    ]);
+                        'instructions' => $levelData['instructions'] ?? null,
+                    ]
+                );
             }
             DB::commit();
-            return response()->json(['message' => 'Levels updated successfully.']);
+            return response()->json(['message' => 'Levels synchronized successfully.']);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => 'Failed to update levels: ' . $e->getMessage()], 500);
+            return response()->json(['error' => 'Failed to synchronize levels: ' . $e->getMessage()], 500);
         }
     }
 }

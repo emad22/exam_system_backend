@@ -31,7 +31,8 @@ class WordPressWebhookController extends Controller
             'last_name' => 'required|string',
             'package_id' => 'required|exists:packages,wp_package_id',
             'wp_user_id' => 'required|string',
-            'exam_type' => 'nullable|in:adult,children', // Optional override from WP
+            'exam_category_id' => 'nullable|exists:exam_categories,id',
+            'exam_type' => 'nullable|string', // Support legacy WP slug (adult/children)
         ]);
 
             // $package = Package::where('wp_package_id', $validated['package_id'])->first();
@@ -48,6 +49,19 @@ class WordPressWebhookController extends Controller
 
             $assignedSkills = $package ? ($package->skills ?? []) : [];
             $finalPackageId = $package ? $package->id : null;
+
+            // Resolve Category
+            $categoryId = $validated['exam_category_id'] ?? null;
+            if (!$categoryId && !empty($validated['exam_type'])) {
+                $category = \App\Models\ExamCategory::where('slug', $validated['exam_type'])->first();
+                if ($category) $categoryId = $category->id;
+            }
+            
+            // Final fallback to first active category
+            if (!$categoryId) {
+                $categoryId = \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null;
+            }
+
             $password = Str::random(10);
             $user = User::create([
                // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
@@ -64,7 +78,7 @@ class WordPressWebhookController extends Controller
                 'package_id' => $finalPackageId, // Resolved mapping
                 'wordpress_user_id' => $validated['wp_user_id'],
                 'registration_source' => 'wordpress',
-                'exam_type' => $validated['exam_type'] ?? 'adult',
+                'exam_category_id' => $categoryId,
                 'assigned_skills' => $assignedSkills,
                 'not_adaptive' => 0,
                 'registration_date' => now(),

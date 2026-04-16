@@ -116,7 +116,7 @@ class QuestionImportController extends Controller
                     ['title' => $examTitle],
                     [
                         'description' => "Legacy import: $examTitle",
-                        'exam_type' => 'adult',
+                        'exam_category_id' => \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null,
                         'passing_score' => 50,
                     ]
                 );
