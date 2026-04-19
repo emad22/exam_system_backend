@@ -112,10 +112,6 @@ class ExamController extends Controller
             'skills.*.rules' => 'nullable|array',
         ]);
 
-        // Clean up existing questions for this exam (by old tag) before frontend re-saves
-        // This prevents duplicates because the frontend will POST all current questions in localQuestions
-        \App\Models\Question::where('group_tag', $exam->title)->delete();
-
         $skillNames = Skill::whereIn('id', collect($validated['skills'])->pluck('skill_id'))->pluck('name')->map(fn($n) => strtolower($n))->toArray();
 
         $exam->update([
