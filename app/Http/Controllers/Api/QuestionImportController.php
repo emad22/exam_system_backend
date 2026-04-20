@@ -91,6 +91,7 @@ class QuestionImportController extends Controller
         ]);
 
         $fileDataArray = $request->input('files');
+        $categoryId = $request->input('exam_category_id');
 
         DB::beginTransaction();
 
@@ -108,16 +109,20 @@ class QuestionImportController extends Controller
 
             $importedQuestions = 0;
             $examsCreatedCount = 0;
-            $defaultLang = \App\Models\Language::first()->id ?? null;
+            
+            // Set default language to Arabic (id: 1)
+            $arabicLangId = \App\Models\Language::where('code', 'ar')->first()->id ?? 1;
 
             foreach ($structuredData as $examTitle => $skillsConfig) {
-                // Create or find Exam (Remove missing columns)
+                // Create or find Exam
                 $exam = \App\Models\Exam::firstOrCreate(
                     ['title' => $examTitle],
                     [
-                        'description' => "Legacy import: $examTitle",
-                        'exam_category_id' => \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null,
+                        'description' => "Imported via Folder: $examTitle",
+                        'exam_category_id' => $categoryId ?? \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null,
                         'passing_score' => 50,
+                        'language_id' => $arabicLangId,
+                        'is_active' => true
                     ]
                 );
                 $examsCreatedCount++;

@@ -25,17 +25,47 @@ class ExamController extends Controller
             return response()->json([]);
         }
 
-        // Filter exams based on what has been explicitly assigned to this student
-        $assignedExamIds = $studentProfile->configs()->pluck('exam_id');
+        // Filter exams based on what has been explicitly assigned or is in their package
+        $assignedExamIds = $studentProfile->configs()->pluck('exam_id')->toArray();
+        
+        if ($studentProfile->package && $studentProfile->package->exam_id) {
+            if (!in_array($studentProfile->package->exam_id, $assignedExamIds)) {
+                $assignedExamIds[] = $studentProfile->package->exam_id;
+            }
+        }
         
         $exams = Exam::whereIn('id', $assignedExamIds)
             ->with(['language', 'skills'])
             ->get();
 
-        // Attach attempt status
-        $exams->each(function($exam) use ($studentProfile) {
+        // Identify allowed skills for this student based on priority: Student -> Package
+        $allowedSkillIdentifiers = array_filter((array) $studentProfile->assigned_skills);
+        if (empty($allowedSkillIdentifiers) && $studentProfile->package && $studentProfile->package->skills) {
+            $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
+        }
+
+        // Attach attempt status and filter visible skills
+        $exams->each(function($exam) use ($studentProfile, $allowedSkillIdentifiers) {
+            // Restore the skill filtering logic
+            if (!empty($allowedSkillIdentifiers)) {
+                $filteredSkills = $exam->skills->filter(function($skill) use ($allowedSkillIdentifiers) {
+                    $skillName = strtolower(trim($skill->name));
+                    $skillCode = strtolower(trim($skill->short_code));
+                    
+                    foreach ($allowedSkillIdentifiers as $idOrCode) {
+                        $match = strtolower(trim($idOrCode));
+                        if ($skill->id == $match || $skillName == $match || $skillCode == $match) {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                $exam->setRelation('skills', $filteredSkills->values());
+            }
+            
             $exam->latest_attempt = ExamAttempt::where('student_id', $studentProfile->id)
                 ->where('exam_id', $exam->id)
+                ->with('attemptSkills') // Load individual skill status
                 ->orderBy('created_at', 'desc')
                 ->first();
         });
@@ -54,7 +84,22 @@ class ExamController extends Controller
         if (!$studentProfile) {
             return response()->json(['error' => 'Student profile not found.'], 404);
         }
-        
+
+        // --- NEW: Block Repeated Skill Attempts ---
+        if ($request->has('skill_id')) {
+            $requestedSkillId = (int)$request->skill_id;
+            $hasCompletedSkill = \App\Models\ExamAttemptSkill::whereHas('attempt', function($q) use ($studentProfile, $exam) {
+                $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
+            })->where('skill_id', $requestedSkillId)
+              ->whereIn('status', ['completed', 'failed']) // Statuses that mean "Done"
+              ->exists();
+            
+            if ($hasCompletedSkill) {
+                return response()->json(['error' => 'You have already completed the evaluation for this specific module.'], 403);
+            }
+        }
+        // ------------------------------------------
+
         $attempt = ExamAttempt::where('student_id', $studentProfile->id)
             ->where('exam_id', $exam->id)
             ->where('status', 'ongoing')
@@ -79,8 +124,13 @@ class ExamController extends Controller
                 ->where('exam_id', $exam->id)
                 ->first();
 
+            // If no config exists, try to auto-assign it (e.g. from package or defaults)
             if (!$config) {
-                return response()->json(['error' => 'This exam has not been formally assigned to your account.'], 403);
+                $config = \App\Models\Student::assignDefaultExam($studentProfile, $exam->id);
+                
+                if (!$config) {
+                    return response()->json(['error' => 'This exam has not been formally assigned to your account or package.'], 403);
+                }
             }
 
             // 2. Map config flags to actual skill IDs available in this exam
@@ -277,6 +327,16 @@ class ExamController extends Controller
 
         $total = 0;
         foreach ($levels as $level) {
+            // If there are no actual questions in the database for this level, skip it
+            // This prevents inflating the total question count with empty levels
+            $hasQuestions = \App\Models\Question::where('skill_id', $skillId)
+                ->where('difficulty_level', $level->level_number)
+                ->exists();
+
+            if (!$hasQuestions) {
+                continue;
+            }
+
             // Check level-specific rules first
             $levelQty = \App\Models\ExamQuestionRule::where('exam_id', $examId)
                 ->where('skill_id', $skillId)
@@ -299,7 +359,14 @@ class ExamController extends Controller
     }
 
     /**
-     * Submit a batch of answers and decide the next step (Adaptive Logic)
+     * Submit a batch of answers — handles both Adaptive and Not-Adaptive logic.
+     *
+     * ADAPTIVE:     Always continues to the next level after a pass.
+     *               Stops only after passing or failing Level 9.
+     *
+     * NOT-ADAPTIVE: If student PASSES a level → move to next level (ascending).
+     *               If student FAILS a level → STOP this skill immediately.
+     *               That failing level is recorded as the student's placement level.
      */
     public function submitBatch(Request $request, ExamAttempt $attempt)
     {
@@ -314,7 +381,7 @@ class ExamController extends Controller
         if (!isset($pos['skill_ids'])) {
             return response()->json(['error' => 'Current position is invalid.'], 500);
         }
-        
+
         $skillId = $pos['skill_ids'][$pos['current_skill_index']];
         $levelNum = $pos['current_level'];
 
@@ -322,56 +389,117 @@ class ExamController extends Controller
             ->where('level_number', $levelNum)
             ->first();
 
-        // Calculate score for this batch
+        // --- Calculate score for this batch ---
         $correctCount = 0;
+        $totalAnswered = count($request->answers);
         foreach ($request->answers as $ans) {
             $question = Question::find($ans['question_id']);
             $isCorrect = false;
-            
+
             if ($question->type === 'mcq' && isset($ans['option_id'])) {
                 $option = $question->options()->find($ans['option_id']);
                 $isCorrect = $option ? $option->is_correct : false;
             }
-            // Add logic for other types...
+            // Writing/speaking are manually graded — treat as not-counted for now
 
             if ($isCorrect) $correctCount++;
 
             StudentAnswer::updateOrCreate(
                 ['exam_attempt_id' => $attempt->id, 'question_id' => $question->id],
                 [
-                    'option_id' => $ans['option_id'] ?? null,
-                    'text_answer' => $ans['text_answer'] ?? null,
-                    'is_correct' => $isCorrect,
-                    'points_awarded' => $isCorrect ? $question->points : 0
+                    'option_id'      => $ans['option_id'] ?? null,
+                    'text_answer'    => $ans['text_answer'] ?? null,
+                    'is_correct'     => $isCorrect,
+                    'points_awarded' => $isCorrect ? $question->points : 0,
                 ]
             );
         }
 
-        $batchScore = ($correctCount / count($request->answers)) * 100;
-        $passed = $batchScore >= ($level->pass_threshold ?? 70);
+        $batchScore    = $totalAnswered > 0 ? round(($correctCount / $totalAnswered) * 100, 1) : 0;
+        $passThreshold = $level->pass_threshold ?? 70;
+        $passed        = $batchScore >= $passThreshold;
 
-        $nextPos = $pos;
+        // --- Determine the student's exam mode ---
+        $student     = $attempt->student;          // relationship: ExamAttempt->student
+        $isAdaptive  = !$student->not_adaptive;    // not_adaptive = 1 means NOT adaptive
+
+        $nextPos     = $pos;
         $finishedExam = false;
-        $skillEnded = false;
+        $skillEnded   = false;
+        $placementLevel = null;   // For not-adaptive: the level where student stopped
+        $placementScore = null;
 
-        if ($passed && $levelNum < 9) {
-            // Move up
-            $nextPos['current_level'] = $levelNum + 1;
+        // Check if another level exists at all
+        $nextLevelExists = \App\Models\Level::where('skill_id', $skillId)
+            ->where('level_number', $levelNum + 1)
+            ->exists();
+
+        if ($isAdaptive) {
+            // ===== ADAPTIVE MODE =====
+            // Continue upward through all levels, regardless of passing or failing.
+            // Stop only when there are no more levels.
+            if ($nextLevelExists) {
+                // Move to next level
+                $nextPos['current_level'] = $levelNum + 1;
+            } else {
+                // Done with this skill (reached the last level)
+                $skillEnded = true;
+                $attempt->attemptSkills()->updateOrCreate(
+                    ['skill_id' => $skillId],
+                    [
+                        'max_level_reached' => $levelNum,
+                        'score'             => $batchScore,
+                        'status'            => 'completed', // They finished all levels
+                        'finished_at'       => now(),
+                    ]
+                );
+            }
         } else {
-            // STOP criteria met (Failed or Level 9 reached)
-            $skillEnded = true;
-            
-            // Record result for this skill
-            $attempt->attemptSkills()->updateOrCreate(
-                ['skill_id' => $skillId],
-                [
-                    'max_level_reached' => $levelNum,
-                    'status' => $passed ? 'completed' : 'failed',
-                    'finished_at' => now()
-                ]
-            );
+            // ===== NOT-ADAPTIVE MODE =====
+            // FAIL → STOP immediately. This level is the student's placement.
+            // PASS → move to next level (if any), otherwise skill is done.
+            if (!$passed) {
+                // Student FAILED → record placement and stop
+                $skillEnded     = true;
+                $placementLevel = $levelNum;          // ← "their level"
+                $placementScore = $batchScore;
 
-            // Move to NEXT SKILL
+                $attempt->attemptSkills()->updateOrCreate(
+                    ['skill_id' => $skillId],
+                    [
+                        'max_level_reached'  => $levelNum,
+                        'score'              => $batchScore,
+                        'status'             => 'failed',
+                        'placement_level'    => $levelNum,   // store separately for reports
+                        'placement_score'    => $batchScore,
+                        'finished_at'        => now(),
+                    ]
+                );
+            } elseif ($passed && $nextLevelExists) {
+                // Student PASSED and there is a higher level → advance
+                $nextPos['current_level'] = $levelNum + 1;
+            } else {
+                // Student PASSED the final level → skill done (top placement)
+                $skillEnded     = true;
+                $placementLevel = $levelNum;
+                $placementScore = $batchScore;
+
+                $attempt->attemptSkills()->updateOrCreate(
+                    ['skill_id' => $skillId],
+                    [
+                        'max_level_reached'  => $levelNum,
+                        'score'              => $batchScore,
+                        'status'             => 'completed',
+                        'placement_level'    => $levelNum,
+                        'placement_score'    => $batchScore,
+                        'finished_at'        => now(),
+                    ]
+                );
+            }
+        }
+
+        // Move to next skill or finish exam
+        if ($skillEnded) {
             if ($pos['current_skill_index'] < count($pos['skill_ids']) - 1) {
                 $nextPos['current_skill_index']++;
                 $nextPos['current_level'] = 1;
@@ -387,11 +515,14 @@ class ExamController extends Controller
         }
 
         return response()->json([
-            'passed_level' => $passed,
-            'batch_score' => $batchScore,
-            'skill_ended' => $skillEnded,
-            'finished_exam' => $finishedExam,
-            'next_step' => $finishedExam ? 'results' : 'next_batch'
+            'passed_level'    => $passed,
+            'batch_score'     => $batchScore,
+            'skill_ended'     => $skillEnded,
+            'finished_exam'   => $finishedExam,
+            'placement_level' => $placementLevel,   // null if adaptive or mid-skill
+            'placement_score' => $placementScore,
+            'is_adaptive'     => $isAdaptive,
+            'next_step'       => $finishedExam ? 'results' : ($skillEnded ? 'dashboard' : 'next_batch'),
         ]);
     }
 }
