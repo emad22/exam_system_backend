@@ -11,18 +11,19 @@ return new class extends Migration
      */
     public function up(): void
     {
-        
+
         Schema::create('partners', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('user_id')->unique()->constrained()->cascadeOnDelete();
             $table->string('partner_name')->nullable(); 
-            $table->string('fName_contact')->nullable(); 
-            $table->string('lName_contact')->nullable(); 
-            $table->string('email')->nullable()->unique();
-            $table->string('phone')->nullable();
+            // $table->string('fName_contact')->nullable(); 
+            // $table->string('lName_contact')->nullable(); 
+            // $table->string('email')->nullable()->unique();
+            // $table->string('phone')->nullable();
             $table->string('website')->nullable();
-            $table->string('country')->nullable();
+         //   $table->string('country')->nullable();
             $table->date('r_date')->nullable();
-            $table->boolean('is_active')->default(true);
+          //  $table->boolean('is_active')->default(true);
             $table->string('note')->nullable();
             $table->timestamps();
         });

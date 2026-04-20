@@ -70,4 +70,10 @@ class User extends Authenticatable
     {
         return $this->hasOne(Student::class);
     }
+
+    public function partner(): \Illuminate\Database\Eloquent\Relations\HasOne
+{
+    return $this->hasOne(Partner::class);
+}
+
 }

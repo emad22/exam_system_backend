@@ -33,7 +33,51 @@ class PartnerController extends Controller
     public function store(Request $request)
     {
         // dd($request->all());
-        $partner = Partner::create($request->all());
+      //  $partner = Partner::create($request->all());  // shaimaa commented this
+
+        $validated = $request->validate([
+                'first_name' => 'sometimes|required|string|max:255',
+                'last_name' => 'sometimes|required|string|max:255',
+                'email' => 'sometimes|required|email|unique:users,email,' . ($student->user_id ?? 0),
+                'phone' => 'sometimes|nullable|string|max:20',
+                'password' => 'required|min:6',
+                'partner_name' => 'required|string',
+                'website' => 'sometimes|nullable|string',
+                'country' => 'nullable|string|max:255',
+                'note' => 'nullable|string',
+                'r_date' => 'nullable|string',
+            ]);
+
+            dd($validated);
+         //   return DB::transaction(function () use ($validated) {
+
+                // 1) Create User
+                $user = User::create([
+                    'first_name' => $validated['first_name'],
+                    'last_name' => $validated['last_name'],
+                    'email' => $validated['email'],
+                    'password' => Hash::make($validated['password']),
+                    'role' => 'partner', 
+                    'country' => $validated['country'],
+                ]);
+
+                // 2) Create Partner
+                $partner = Partner::create([
+                    'user_id' => $user->id,
+                    'partner_name' => $validated['partner_name'],
+                    'website' => $validated['website'],
+                    'note' => $validated['note'],
+                    'r_date' => $validated['r_date'],                   
+                ]);
+
+                return response()->json([
+                    'message' => 'Partner created successfully',
+                    'user' => $user,
+                    'partner' => $partner
+                ], 201);
+           // });
+
+
         return response()->json([
             'message' => 'Partner created successfully',
             'partner' => $partner

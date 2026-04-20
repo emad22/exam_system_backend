@@ -13,11 +13,7 @@ class PartnerSeeder extends Seeder
     public function run(): void
     {
         \App\Models\Partner::create([
-            'partner_name' => 'Arabacademy',
-            'fName_contact' => 'Sameh',
-            'lName_contact' => 'Ahmed',
-            'email' => 'info2@arabacademy.com',
-            'phone' => '+201116704021',
+            'partner_name' => 'Arabacademy',          
             'website' => 'https://arabacademy.com',
             'country' => 'Egypt',
             'r_date' => now()->toDateString(),
