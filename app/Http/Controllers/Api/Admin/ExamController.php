@@ -114,6 +114,8 @@ class ExamController extends Controller
 
         $skillNames = Skill::whereIn('id', collect($validated['skills'])->pluck('skill_id'))->pluck('name')->map(fn($n) => strtolower($n))->toArray();
 
+        $oldTitle = $exam->title;
+
         $exam->update([
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
@@ -126,6 +128,10 @@ class ExamController extends Controller
             'default_want_writing' => in_array('writing', $skillNames),
             'default_want_speaking' => in_array('speaking', $skillNames),
         ]);
+
+        if ($oldTitle !== $exam->title) {
+            \App\Models\Question::where('group_tag', $oldTitle)->update(['group_tag' => $exam->title]);
+        }
 
         // Sync Skills
         $pivotSkills = [];

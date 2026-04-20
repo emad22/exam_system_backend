@@ -39,6 +39,7 @@ class QuestionController extends Controller
             'difficulty_level' => 'required|integer|min:1|max:9',
             'points' => 'required|integer|min:1',
             'media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240', // 10MB limit
+            'media_path' => 'nullable|string',
             'options' => 'nullable|array',
             'options.*.option_text' => 'required_with:options|string',
             'options.*.is_correct' => 'required_with:options|boolean',
@@ -63,7 +64,9 @@ class QuestionController extends Controller
             'passage_limit' => $validated['passage_limit'] ?? null,
             'min_words' => $validated['min_words'] ?? null,
             'max_words' => $validated['max_words'] ?? null,
-            'media_path' => $request->hasFile('media_file') ? $request->file('media_file')->store('questions', 'public') : null,
+            'media_path' => $request->hasFile('media_file') 
+                ? $request->file('media_file')->store('questions', 'public') 
+                : ($request->media_path ?? null),
         ]);
 
         if (isset($validated['options']) && is_array($validated['options'])) {
@@ -108,6 +111,7 @@ class QuestionController extends Controller
             'min_words'             => 'nullable|integer|min:0',
             'max_words'             => 'nullable|integer|min:0',
             'media_file'            => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
+            'media_path'            => 'nullable|string',
         ]);
 
         $question->update([
@@ -128,6 +132,10 @@ class QuestionController extends Controller
         if ($request->hasFile('media_file')) {
             $question->update([
                 'media_path' => $request->file('media_file')->store('questions', 'public')
+            ]);
+        } elseif ($request->has('media_path')) {
+            $question->update([
+                'media_path' => $request->media_path
             ]);
         }
 
