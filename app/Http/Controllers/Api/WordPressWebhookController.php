@@ -31,6 +31,9 @@ class WordPressWebhookController extends Controller
             'last_name' => 'required|string',
             'package_id' => 'required|exists:packages,wp_package_id',
             'wp_user_id' => 'required|string',
+            'phone' => 'required|string',
+            'address' => 'nullable|string',
+            'country' => 'nullable|string',
             'exam_category_id' => 'nullable|exists:exam_categories,id',
             'exam_type' => 'nullable|string', // Support legacy WP slug (adult/children)
         ]);
@@ -68,6 +71,9 @@ class WordPressWebhookController extends Controller
                 'first_name' => $validated['first_name'],
                 'last_name' => $validated['last_name'],
                 'email' => $validated['email'],
+                'phone' => $validated['phone'],
+                'address' => $validated['address'],
+                'country' => $validated['country'],
                 'password' => Hash::make($password),
                 'role' => 'student',
             ]);
