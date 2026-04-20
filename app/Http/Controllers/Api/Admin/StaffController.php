@@ -4,31 +4,32 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Partner;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
 class StaffController extends Controller
 {
     /**
-     * Get all staff members (Admin, Teacher, Supervisor)
+     * Get all staff members
      */
     public function index(Request $request)
     {
-        $staff = User::where('role', '!=', 'student')
+        $staff = User::with('partner')->where('role', '!=', 'student')
             ->orderBy('role')
             ->paginate(50);
         return response()->json($staff);
     }
 
     /**
-     * Get a specific staff member
+     * Get a specific staff member with partner details if applicable
      */
     public function show(User $user)
     {
         if ($user->role === 'student') {
             return response()->json(['error' => 'Not a staff member.'], 422);
         }
-        return response()->json($user);
+        return response()->json($user->load('partner'));
     }
 
     /**
@@ -43,10 +44,11 @@ class StaffController extends Controller
             'password' => 'required|string|min:6',
             'role' => 'required|in:admin,teacher,supervisor,demo,partner',
             'is_active' => 'sometimes|boolean',
-            'partner_name' => 'nullable|string|max:255',
             'phone' => 'nullable|string|max:255',
-            'website' => 'nullable|string|max:255',
             'country' => 'nullable|string|max:255',
+            // Partner specific
+            'partner_name' => 'nullable|string|max:255',
+            'website' => 'nullable|string|max:255',
             'note' => 'nullable|string'
         ]);
 
@@ -56,27 +58,24 @@ class StaffController extends Controller
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'role' => $validated['role'],
+            'phone' => $validated['phone'] ?? null,
+            'country' => $validated['country'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
         ]);
 
         if ($staff->role === 'partner') {
-            \App\Models\Partner::create([
+            Partner::create([
+                'user_id' => $staff->id,
                 'partner_name' => $validated['partner_name'] ?? ($validated['first_name'] . ' ' . $validated['last_name']),
-                'fName_contact' => $validated['first_name'],
-                'lName_contact' => $validated['last_name'],
-                'email' => $validated['email'],
-                'phone' => $validated['phone'] ?? null,
                 'website' => $validated['website'] ?? null,
-                'country' => $validated['country'] ?? null,
                 'note' => $validated['note'] ?? null,
-                'is_active' => $validated['is_active'] ?? true,
                 'r_date' => now(),
             ]);
         }
 
         return response()->json([
             'message' => 'Staff identity provisioned successfully.',
-            'staff' => $staff
+            'staff' => $staff->load('partner')
         ], 201);
     }
 
@@ -95,28 +94,48 @@ class StaffController extends Controller
             'email' => 'sometimes|required|email|unique:users,email,' . $user->id,
             'role' => 'sometimes|required|in:admin,teacher,supervisor,demo,partner',
             'password' => 'sometimes|nullable|string|min:6',
-            'is_active' => 'sometimes|boolean'
+            'is_active' => 'sometimes|boolean',
+            'phone' => 'sometimes|nullable|string|max:255',
+            'country' => 'sometimes|nullable|string|max:255',
+            // Partner specific
+            'partner_name' => 'sometimes|nullable|string|max:255',
+            'website' => 'sometimes|nullable|string|max:255',
+            'note' => 'sometimes|nullable|string'
         ]);
 
         if (isset($validated['first_name'])) $user->first_name = $validated['first_name'];
         if (isset($validated['last_name'])) $user->last_name = $validated['last_name'];
         if (isset($validated['email'])) $user->email = $validated['email'];
         if (isset($validated['role'])) $user->role = $validated['role'];
+        if (isset($validated['phone'])) $user->phone = $validated['phone'];
+        if (isset($validated['country'])) $user->country = $validated['country'];
         if (isset($validated['is_active'])) $user->is_active = $validated['is_active'];
+        
         if (!empty($validated['password'])) {
             $user->password = Hash::make($validated['password']);
         }
 
         $user->save();
 
+        if ($user->role === 'partner') {
+            Partner::updateOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'partner_name' => $validated['partner_name'] ?? ($user->first_name . ' ' . $user->last_name),
+                    'website' => $validated['website'] ?? null,
+                    'note' => $validated['note'] ?? null,
+                ]
+            );
+        }
+
         return response()->json([
             'message' => 'Staff identity updated successfully.',
-            'staff' => $user
+            'staff' => $user->load('partner')
         ]);
     }
 
     /**
-     * Revoke staff access (Delete)
+     * Revoke staff access
      */
     public function destroy(Request $request, User $user)
     {
@@ -128,6 +147,9 @@ class StaffController extends Controller
             return response()->json(['error' => 'Use identity management for students.'], 422);
         }
 
+        // Note: Linked Partner record will remain unless deleted specifically, 
+        // or cascading delete is set on migrations. 
+        // Admin might want to keep the Partner profile for history.
         $user->delete();
 
         return response()->json(['message' => 'Staff access revoked successfully.']);

@@ -45,4 +45,9 @@ class ExamAttempt extends Model
     {
         return $this->hasMany(ExamAttemptSkill::class);
     }
+
+    public function attemptLevels(): HasMany
+    {
+        return $this->hasMany(ExamAttemptLevel::class);
+    }
 }

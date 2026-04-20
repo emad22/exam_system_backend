@@ -30,6 +30,7 @@ class PackageController extends Controller
         if (!empty($validated['skills'])) {
             $validated['skills'] = \App\Models\Skill::whereIn('id', $validated['skills'])
                                     ->orWhereIn('short_code', $validated['skills'])
+                                    ->orWhereIn('name', $validated['skills'])
                                     ->pluck('short_code')
                                     ->map(fn($code) => strtoupper($code))
                                     ->unique()
@@ -64,6 +65,7 @@ class PackageController extends Controller
         if (isset($validated['skills'])) {
             $validated['skills'] = \App\Models\Skill::whereIn('id', $validated['skills'])
                                     ->orWhereIn('short_code', $validated['skills'])
+                                    ->orWhereIn('name', $validated['skills'])
                                     ->pluck('short_code')
                                     ->map(fn($code) => strtoupper($code))
                                     ->unique()

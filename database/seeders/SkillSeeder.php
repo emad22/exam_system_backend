@@ -9,10 +9,19 @@ class SkillSeeder extends Seeder
 {
     public function run(): void
     {
-        $skills = ['Listening', 'Reading', 'Structure', 'Writing', 'Speaking'];
+        $skills = [
+            ['name' => 'Listening', 'short_code' => 'LIST'],
+            ['name' => 'Reading',   'short_code' => 'READ'],
+            ['name' => 'Structure', 'short_code' => 'GRAM'],
+            ['name' => 'Writing',   'short_code' => 'WRIT'],
+            ['name' => 'Speaking',  'short_code' => 'SPEK'],
+        ];
 
         foreach ($skills as $skill) {
-            Skill::firstOrCreate(['name' => $skill]);
+            Skill::updateOrCreate(
+                ['name' => $skill['name']],
+                ['short_code' => $skill['short_code']]
+            );
         }
     }
 }

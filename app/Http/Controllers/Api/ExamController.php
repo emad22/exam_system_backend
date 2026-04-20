@@ -38,10 +38,17 @@ class ExamController extends Controller
             ->with(['language', 'skills'])
             ->get();
 
-        // Identify allowed skills for this student based on priority: Student -> Package
+        // Priority 1: Specifically assigned in students table
         $allowedSkillIdentifiers = array_filter((array) $studentProfile->assigned_skills);
+        
+        // Priority 2: Skills defined in the package_id in students table
         if (empty($allowedSkillIdentifiers) && $studentProfile->package && $studentProfile->package->skills) {
             $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
+        }
+
+        // Priority 3: All skills in the exam linked with the package
+        if (empty($allowedSkillIdentifiers) && $studentProfile->package && $studentProfile->package->exam) {
+            $allowedSkillIdentifiers = $studentProfile->package->exam->skills->pluck('name')->toArray();
         }
 
         // Attach attempt status and filter visible skills
@@ -63,11 +70,21 @@ class ExamController extends Controller
                 $exam->setRelation('skills', $filteredSkills->values());
             }
             
+            // 1. Get the latest attempt for the "Resume" logic
             $exam->latest_attempt = ExamAttempt::where('student_id', $studentProfile->id)
                 ->where('exam_id', $exam->id)
-                ->with('attemptSkills') // Load individual skill status
+                ->with('attemptSkills') 
                 ->orderBy('created_at', 'desc')
                 ->first();
+
+            // 2. Aggregate all COMPLETED skill IDs across ALL attempts for this student/exam
+            $exam->completed_skill_ids = \App\Models\ExamAttemptSkill::whereHas('attempt', function($q) use ($studentProfile, $exam) {
+                    $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
+                })
+                ->whereIn('status', ['completed', 'failed'])
+                ->pluck('skill_id')
+                ->unique()
+                ->values();
         });
 
         return response()->json($exams);
@@ -418,6 +435,15 @@ class ExamController extends Controller
         $batchScore    = $totalAnswered > 0 ? round(($correctCount / $totalAnswered) * 100, 1) : 0;
         $passThreshold = $level->pass_threshold ?? 70;
         $passed        = $batchScore >= $passThreshold;
+
+        // --- Log Level Performance (Movement Log) ---
+        \App\Models\ExamAttemptLevel::create([
+            'exam_attempt_id' => $attempt->id,
+            'skill_id'        => $skillId,
+            'level_number'    => $levelNum,
+            'score'           => $batchScore,
+            'status'          => $passed ? 'passed' : 'failed',
+        ]);
 
         // --- Determine the student's exam mode ---
         $student     = $attempt->student;          // relationship: ExamAttempt->student

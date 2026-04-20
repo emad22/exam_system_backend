@@ -7,27 +7,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Partner extends Model
 {
-    //
     protected $fillable = [
-    'partner_name',
-    // 'fName_contact',
-    // 'lName_contact',
-    // 'email',
-    // 'phone',
-    'website',
-    //'country',
-    'r_date',
-    //'is_active',
-    'note'
+        'user_id',
+        'partner_name',
+        'website',
+        'r_date',
+        'note'
     ]; 
 
-
-     public function user(): BelongsTo
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
-
-
-    
-
 }

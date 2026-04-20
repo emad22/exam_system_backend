@@ -220,7 +220,16 @@ class StudentController extends Controller
      */
     public function show(Student $student)
     {
-        return response()->json($student->load(['user', 'package', 'attempts']));
+        return response()->json($student->load([
+            'user', 
+            'package', 
+            'category',
+            'attempts.exam',
+            'attempts.attemptSkills.skill',
+            'attempts.attemptLevels' => function($q) {
+                $q->orderBy('created_at', 'asc');
+            }
+        ]));
     }
 
     /**
@@ -413,6 +422,33 @@ class StudentController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => 'An error occurred during import: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Reset all exam attempts for a student to allow a clean retake.
+     */
+    public function resetExamAttempts(Request $request, Student $student)
+    {
+        try {
+            DB::beginTransaction();
+            
+            // 1. Find all attempts
+            $attempts = \App\Models\ExamAttempt::where('student_id', $student->id)->get();
+            
+            foreach ($attempts as $attempt) {
+                // Cascading delete is preferred if relationships are properly set, 
+                // but we'll do it explicitly here for safety with student answers.
+                \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
+                \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
+                $attempt->delete();
+            }
+
+            DB::commit();
+            return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Failed to reset candidate progress: ' . $e->getMessage()], 500);
         }
     }
 }

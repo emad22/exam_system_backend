@@ -14,19 +14,19 @@ class PartnerController extends Controller
     //
     public function index()
     {
-        // return Partner::all();
-        return response()->json(Partner::orderBy('partner_name')->get());
-        
+        return response()->json(Partner::with('user')->orderBy('partner_name')->get());
     }
 
-   public function getActivePartners()
-{
-    return response()->json(
-        Partner::where('is_active', true)
-               ->orderBy('partner_name')
-               ->get()
-    );
-}
+    public function getActivePartners()
+    {
+        return response()->json(
+            Partner::whereHas('user', function($q) {
+                $q->where('is_active', true);
+            })
+            ->orderBy('partner_name')
+            ->get()
+        );
+    }
    
 
 // STORE
@@ -56,7 +56,6 @@ class PartnerController extends Controller
                     'first_name' => $validated['first_name'],
                     'last_name' => $validated['last_name'],
                     'email' => $validated['email'],
-                    'password' => Hash::make($validated['password']),
                     'role' => 'partner', 
                     'country' => $validated['country'],
                 ]);
@@ -122,9 +121,14 @@ class PartnerController extends Controller
             return response()->json(['message' => 'Partner not found'], 404);
         }
 
-        // Student::where('partner_id', $partnerId)->update(['is_active' => false]);
+        // User::whereIn('id', Student::where('partner_id', $partnerId)->pluck('user_id'))->update(['is_active' => false]);
         User::whereIn('id', Student::where('partner_id', $partnerId)->pluck('user_id'))->update(['is_active' => false]);
-        $partner->update(['is_active' => false]);
+        
+        $user = $partner->user;
+        if ($user) {
+            $user->is_active = false;
+            $user->save();
+        }
 
         return response()->json([
             'message' => 'All students under this partner have been deactivated.'
@@ -136,7 +140,11 @@ class PartnerController extends Controller
         $partner = Partner::find($partnerId);
         if (!$partner) return response()->json(['message' => 'Partner not found'], 404);
 
-        $partner->update(['is_active' => true]);
+        $user = $partner->user;
+        if ($user) {
+            $user->is_active = true;
+            $user->save();
+        }
 
         // Student::where('partner_id', $partnerId)->update(['is_active' => true]);
         User::whereIn('id', Student::where('partner_id', $partnerId)->pluck('user_id'))->update(['is_active' => true]);

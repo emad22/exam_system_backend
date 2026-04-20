@@ -13,10 +13,28 @@ class ReportController extends Controller
      */
     public function index(Request $request)
     {
-        $attempts = ExamAttempt::with(['student', 'exam'])
+        $attempts = ExamAttempt::with(['student.user', 'exam'])
             ->where('status', 'completed')
-            ->paginate(20);
+            ->orderBy('finished_at', 'desc')
+            ->paginate(15);
         return response()->json($attempts);
+    }
+
+    /**
+     * Get detailed movement report for a specific attempt
+     */
+    public function show(ExamAttempt $attempt)
+    {
+        $attempt->load([
+            'student.user', 
+            'exam', 
+            'attemptSkills.skill', 
+            'attemptLevels' => function($q) {
+                $q->orderBy('created_at', 'asc');
+            }
+        ]);
+        
+        return response()->json($attempt);
     }
 
     /**
@@ -24,8 +42,11 @@ class ReportController extends Controller
      */
     public function resetAttempt(Request $request, ExamAttempt $attempt)
     {
-        $attempt->update(['status' => 'voided']);
-        
-        return response()->json(['message' => 'Exam attempt voided successfully. Student can now retake the exam.']);
+        try {
+            $attempt->update(['status' => 'voided']);
+            return response()->json(['message' => 'Exam attempt voided successfully. Student can now retake the exam.']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to void attempt: ' . $e->getMessage()], 500);
+        }
     }
 }

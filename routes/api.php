@@ -49,6 +49,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/students/{student}', [Admin\StudentController::class, 'show']);
         Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
         Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
+        Route::post('/students/{student}/reset-attempts', [Admin\StudentController::class, 'resetExamAttempts']);
 
         // Exam Management
         Route::get('/exams', [Admin\ExamController::class, 'index']);
@@ -103,6 +104,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Reports & Attempts
         Route::get('/reports', [Admin\ReportController::class, 'index']);
+        Route::get('/reports/{attempt}', [Admin\ReportController::class, 'show']);
         Route::post('/attempts/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt']);
 
         // Staff Management (Admin Only)
