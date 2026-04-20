@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
 
 
-            $table->enum('role', ['admin', 'teacher', 'student','demo'])->default('student'); // role
+            $table->enum('role', ['admin', 'teacher', 'student','demo','partner'])->default('student'); // role
             $table->string('username')->nullable(); // username
             $table->string('email')->unique(); // email
             $table->string('password'); // password  
