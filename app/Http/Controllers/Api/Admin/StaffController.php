@@ -41,8 +41,13 @@ class StaffController extends Controller
             'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
-            'role' => 'required|in:admin,teacher,supervisor',
-            'is_active' => 'sometimes|boolean'
+            'role' => 'required|in:admin,teacher,supervisor,demo,partner',
+            'is_active' => 'sometimes|boolean',
+            'partner_name' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:255',
+            'website' => 'nullable|string|max:255',
+            'country' => 'nullable|string|max:255',
+            'note' => 'nullable|string'
         ]);
 
         $staff = User::create([
@@ -53,6 +58,21 @@ class StaffController extends Controller
             'role' => $validated['role'],
             'is_active' => $validated['is_active'] ?? true,
         ]);
+
+        if ($staff->role === 'partner') {
+            \App\Models\Partner::create([
+                'partner_name' => $validated['partner_name'] ?? ($validated['first_name'] . ' ' . $validated['last_name']),
+                'fName_contact' => $validated['first_name'],
+                'lName_contact' => $validated['last_name'],
+                'email' => $validated['email'],
+                'phone' => $validated['phone'] ?? null,
+                'website' => $validated['website'] ?? null,
+                'country' => $validated['country'] ?? null,
+                'note' => $validated['note'] ?? null,
+                'is_active' => $validated['is_active'] ?? true,
+                'r_date' => now(),
+            ]);
+        }
 
         return response()->json([
             'message' => 'Staff identity provisioned successfully.',
@@ -73,7 +93,7 @@ class StaffController extends Controller
             'first_name' => 'sometimes|required|string|max:255',
             'last_name' => 'sometimes|required|string|max:255',
             'email' => 'sometimes|required|email|unique:users,email,' . $user->id,
-            'role' => 'sometimes|required|in:admin,teacher,supervisor',
+            'role' => 'sometimes|required|in:admin,teacher,supervisor,demo,partner',
             'password' => 'sometimes|nullable|string|min:6',
             'is_active' => 'sometimes|boolean'
         ]);
