@@ -31,6 +31,7 @@ class StudentController extends Controller
      */
     public function store(Request $request)
     {
+        // dd($request->all());
         $validated = $request->validate([
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -43,30 +44,31 @@ class StudentController extends Controller
             'country' => 'nullable|string|max:255',
             'religion' => 'nullable|string|max:255',
             'occupation' => 'nullable|string|max:255',
-            
+
             'student_code' => 'nullable|string|max:50|unique:students',
             'come_from' => 'nullable|string|max:255',
             'student_type' => 'nullable|string|max:50',
             'year_of_arabic' => 'nullable|integer',
             'not_adaptive' => 'nullable|boolean',
-            
+
 
             'exam_id' => 'nullable|exists:exams,id',
             'exam_category_id' => 'nullable|exists:exam_categories,id',
             'assigned_skills' => 'nullable|array',
             'assigned_skills.*' => 'nullable',
             'package_id' => 'nullable|exists:packages,id',
+            'partner_id' => 'nullable|exists:partners,id',
             'password' => 'required|string|min:6',
         ]);
 
         $assignedSkills = [];
         if (!empty($validated['assigned_skills'])) {
             $assignedSkills = Skill::whereIn('id', $validated['assigned_skills'])
-                                    ->orWhereIn('short_code', $validated['assigned_skills'])
-                                    ->pluck('short_code')
-                                    ->map(fn($code) => strtoupper($code))
-                                    ->unique()
-                                    ->toArray();
+                ->orWhereIn('short_code', $validated['assigned_skills'])
+                ->pluck('short_code')
+                ->map(fn($code) => strtoupper($code))
+                ->unique()
+                ->toArray();
         }
 
         // 1. Create Identity (User)
@@ -117,6 +119,7 @@ class StudentController extends Controller
             'package_id' => $validated['package_id'] ?? null,
             'exam_category_id' => $examCategoryId,
             'assigned_skills' => $assignedSkills,
+            'partner_id' => $validated['partner_id'] ?? null,
             'registration_source' => 'manual',
             'registration_date' => now(),
         ]);
@@ -157,22 +160,23 @@ class StudentController extends Controller
             'exam_category_id' => 'sometimes|required|exists:exam_categories,id',
             'assigned_skills' => 'sometimes|array',
             'assigned_skills.*' => 'nullable',
+            'partner_id' => 'sometimes|nullable|exists:partners,id',
             'password' => 'sometimes|nullable|string|min:6',
         ]);
 
         if (isset($validated['assigned_skills'])) {
             $validated['assigned_skills'] = Skill::whereIn('id', $validated['assigned_skills'])
-                                                ->orWhereIn('short_code', $validated['assigned_skills'])
-                                                ->pluck('short_code')
-                                                ->map(fn($code) => strtoupper($code))
-                                                ->unique()
-                                                ->toArray();
+                ->orWhereIn('short_code', $validated['assigned_skills'])
+                ->pluck('short_code')
+                ->map(fn($code) => strtoupper($code))
+                ->unique()
+                ->toArray();
         }
 
         // 1. Update Profile (Student)
         $studentUpdate = $request->only([
             'package_id', 'exam_category_id', 'student_type', 'student_code',
-            'come_from', 'year_of_arabic', 'not_adaptive', 
+            'come_from', 'year_of_arabic', 'not_adaptive', 'partner_id'
         ]);
 
         if (isset($validated['assigned_skills'])) {
@@ -186,8 +190,16 @@ class StudentController extends Controller
             $user = User::find($student->user_id);
             if ($user) {
                 $userUpdate = $request->only([
-                    'first_name', 'last_name', 'email', 'phone', 'gender', 
-                    'address', 'city', 'country', 'religion', 'occupation',
+                    'first_name',
+                    'last_name',
+                    'email',
+                    'phone',
+                    'gender',
+                    'address',
+                    'city',
+                    'country',
+                    'religion',
+                    'occupation',
                     'is_active'
                 ]);
 
@@ -221,12 +233,12 @@ class StudentController extends Controller
     public function show(Student $student)
     {
         return response()->json($student->load([
-            'user', 
-            'package', 
+            'user',
+            'package',
             'category',
             'attempts.exam',
             'attempts.attemptSkills.skill',
-            'attempts.attemptLevels' => function($q) {
+            'attempts.attemptLevels' => function ($q) {
                 $q->orderBy('created_at', 'asc');
             }
         ]));
@@ -244,7 +256,7 @@ class StudentController extends Controller
         // Then explicitly delete the associated user to ensure both are removed
         if ($userId) {
             User::destroy($userId);
-        }    
+        }
         return response()->json(['message' => 'Student record deleted successfully.']);
     }
 
@@ -254,7 +266,7 @@ class StudentController extends Controller
     public function bulkDestroy(Request $request)
     {
         $request->validate([
-            'ids'   => 'required|array',
+            'ids' => 'required|array',
             'ids.*' => 'integer|exists:students,id',
         ]);
 
@@ -298,7 +310,7 @@ class StudentController extends Controller
                     $request->input('partner_id'),
                     $request->input('package_id'),
                     $assignedSkills
-                ), 
+                ),
                 $request->file('file')
             );
             return response()->json(['message' => 'Students imported successfully.']);
@@ -328,11 +340,11 @@ class StudentController extends Controller
 
         // Map IDs or short codes to validated short codes
         $validShortCodes = Skill::whereIn('id', $request->skills)
-                                ->orWhereIn('short_code', $request->skills)
-                                ->pluck('short_code')
-                                ->map(fn($code) => strtoupper($code))
-                                ->unique()
-                                ->toArray();
+            ->orWhereIn('short_code', $request->skills)
+            ->pluck('short_code')
+            ->map(fn($code) => strtoupper($code))
+            ->unique()
+            ->toArray();
 
         // Get users with matching emails who are students
         $users = User::whereIn('email', $request->emails)->whereHas('student')->with('student')->get();
@@ -343,11 +355,11 @@ class StudentController extends Controller
             if ($student) {
                 // Update assigned skills
                 $student->update(['assigned_skills' => $validShortCodes]);
-                
+
                 // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
                 StudentExamConfig::where('student_id', $student->id)->delete();
                 Student::assignDefaultExam($student);
-                
+
                 $updatedCount++;
             }
         }
@@ -364,35 +376,73 @@ class StudentController extends Controller
     public function downloadTemplate()
     {
         $headers = [
-            'first_name', 'last_name', 'email', 'phone', 'gender', 'birth_date', 
-            'address', 'city', 'country', 'religion', 'occupation', 
-            'student_code', 'come_from', 'student_type', 'year_of_arabic', 
-            'not_adaptive', 'package_id', 'exam_category_id', 'password',
-            'want_listening', 'want_reading', 'want_grammar', 'want_writing', 'want_speaking'
+            'first_name',
+            'last_name',
+            'email',
+            'phone',
+            'gender',
+            'birth_date',
+            'address',
+            'city',
+            'country',
+            'religion',
+            'occupation',
+            'student_code',
+            'come_from',
+            'student_type',
+            'year_of_arabic',
+            'not_adaptive',
+            'package_id',
+            'exam_category_id',
+            'password',
+            'want_listening',
+            'want_reading',
+            'want_grammar',
+            'want_writing',
+            'want_speaking'
         ];
 
-        $callback = function() use ($headers) {
+        $callback = function () use ($headers) {
             $file = fopen('php://output', 'w');
             fputcsv($file, $headers);
-            
+
             // Add a sample row
             fputcsv($file, [
-                'John', 'Doe', 'john.doe@example.com', '123456789', 'male', '2005-05-15',
-                '123 Street', 'Cairo', 'Egypt', 'None', 'Student',
-                'STU-101', 'Direct', 'Standard', '2024',
-                '1', '1', '1', 'pass123',
-                '1', '1', '1', '0', '0' // Skills: L, R, G active; W, S inactive
+                'John',
+                'Doe',
+                'john.doe@example.com',
+                '123456789',
+                'male',
+                '2005-05-15',
+                '123 Street',
+                'Cairo',
+                'Egypt',
+                'None',
+                'Student',
+                'STU-101',
+                'Direct',
+                'Standard',
+                '2024',
+                '1',
+                '1',
+                '1',
+                'pass123',
+                '1',
+                '1',
+                '1',
+                '0',
+                '0' // Skills: L, R, G active; W, S inactive
             ]);
-            
+
             fclose($file);
         };
 
         return response()->stream($callback, 200, [
-            "Content-type"        => "text/csv",
+            "Content-type" => "text/csv",
             "Content-Disposition" => "attachment; filename=student_import_template.csv",
-            "Pragma"              => "no-cache",
-            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
-            "Expires"             => "0"
+            "Pragma" => "no-cache",
+            "Cache-Control" => "must-revalidate, post-check=0, pre-check=0",
+            "Expires" => "0"
         ]);
     }
 
@@ -432,10 +482,10 @@ class StudentController extends Controller
     {
         try {
             DB::beginTransaction();
-            
+
             // 1. Find all attempts
             $attempts = \App\Models\ExamAttempt::where('student_id', $student->id)->get();
-            
+
             foreach ($attempts as $attempt) {
                 // Cascading delete is preferred if relationships are properly set, 
                 // but we'll do it explicitly here for safety with student answers.
