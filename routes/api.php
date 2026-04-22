@@ -87,6 +87,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/skills/{skill}/levels', [Admin\SkillController::class, 'getSkillWithLevels']);
         Route::post('/skills/{skill}/levels/bulk', [Admin\SkillController::class, 'bulkUpdateLevels']);
         Route::get('/levels', [Admin\LevelController::class, 'index']);
+        Route::get('/levels/{level}', [Admin\LevelController::class, 'show']);
         Route::post('/levels', [Admin\LevelController::class, 'store']);
         Route::patch('/levels/{level}', [Admin\LevelController::class, 'update']);
         Route::delete('/levels/{level}', [Admin\LevelController::class, 'destroy']);

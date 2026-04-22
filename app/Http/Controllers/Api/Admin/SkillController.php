@@ -122,6 +122,7 @@ class SkillController extends Controller
             'levels.*.max_score' => 'required|integer',
             'levels.*.pass_threshold' => 'required|integer|min:0|max:100',
             'levels.*.instructions' => 'nullable|string',
+            'levels.*.default_question_count' => 'nullable|integer|min:1',
         ]);
 
         DB::beginTransaction();
@@ -141,6 +142,7 @@ class SkillController extends Controller
                         'max_score' => $levelData['max_score'],
                         'pass_threshold' => $levelData['pass_threshold'],
                         'instructions' => $levelData['instructions'] ?? null,
+                        'default_question_count' => $levelData['default_question_count'] ?? 2,
                     ]
                 );
             }

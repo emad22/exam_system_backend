@@ -12,6 +12,7 @@ class StudentAnswer extends Model
         'question_id', 
         'option_id', 
         'text_answer', 
+        'media_answer', 
         'is_correct', 
         'points_awarded'
     ];

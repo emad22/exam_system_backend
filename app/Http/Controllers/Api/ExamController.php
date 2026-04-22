@@ -150,19 +150,40 @@ class ExamController extends Controller
                 }
             }
 
-            // 2. Map config flags to actual skill IDs available in this exam
+            // 2. Map allowed skills to actual skill IDs available in this exam
             $examSkills = $exam->skills;
             $assignedSkills = [];
 
+            // Get allowed skill identifiers (IDs, names, or codes)
+            $allowedSkillIdentifiers = array_filter((array) $studentProfile->assigned_skills);
+            if (empty($allowedSkillIdentifiers) && $studentProfile->package) {
+                $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
+            }
+            if (empty($allowedSkillIdentifiers)) {
+                $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
+            }
+
             foreach ($examSkills as $skill) {
-                $name = strtolower($skill->name);
+                $skillName = strtolower(trim($skill->name));
+                $skillCode = strtolower(trim($skill->short_code));
                 $shouldInclude = false;
 
-                if ($name === 'listening' && $config->want_listening) $shouldInclude = true;
-                if (($name === 'reading' || $name === 'reading comprehension') && $config->want_reading) $shouldInclude = true;
-                if (($name === 'grammar' || $name === 'structure') && $config->want_grammar) $shouldInclude = true;
-                if ($name === 'writing' && $config->want_writing) $shouldInclude = true;
-                if ($name === 'speaking' && $config->want_speaking) $shouldInclude = true;
+                if (!empty($allowedSkillIdentifiers)) {
+                    foreach ($allowedSkillIdentifiers as $idOrCode) {
+                        $match = strtolower(trim($idOrCode));
+                        if ($skill->id == $match || $skillName == $match || $skillCode == $match) {
+                            $shouldInclude = true;
+                            break;
+                        }
+                    }
+                } else {
+                    // Fallback to config flags if no granular identifiers
+                    if ($skillName === 'listening' && $config->want_listening) $shouldInclude = true;
+                    if (($skillName === 'reading' || $skillName === 'reading comprehension') && $config->want_reading) $shouldInclude = true;
+                    if (($skillName === 'grammar' || $skillName === 'structure') && $config->want_grammar) $shouldInclude = true;
+                    if ($skillName === 'writing' && $config->want_writing) $shouldInclude = true;
+                    if ($skillName === 'speaking' && $config->want_speaking) $shouldInclude = true;
+                }
 
                 if ($shouldInclude) {
                     $assignedSkills[] = $skill->id;
@@ -236,7 +257,7 @@ class ExamController extends Controller
         // 1. Try to find Level-Specific rules first
         $rules = \App\Models\ExamQuestionRule::where('exam_id', $attempt->exam_id)
             ->where('skill_id', $skillId)
-            ->where('level_id', $levelNum)
+            ->where('level_id', $level->id)
             ->get();
 
         // 2. If no level-specific rules, fall back to General (Skill-wide) rules
@@ -253,7 +274,7 @@ class ExamController extends Controller
                 // Fetch ONLY questions associated with this exam via pivot
                 $query = $attempt->exam->questions()
                     ->where('questions.skill_id', $skillId)
-                    ->where('questions.level_id', $levelNum)
+                    ->where('questions.level_id', $level->id)
                     ->whereNotIn('questions.id', $answeredIds)
                     ->with(['options', 'passage']);
 
@@ -290,7 +311,7 @@ class ExamController extends Controller
                 $excludedIds = $questions->pluck('id')->toArray();
                 $padding = $attempt->exam->questions()
                     ->where('questions.skill_id', $skillId)
-                    ->where('questions.level_id', $levelNum)
+                    ->where('questions.level_id', $level->id)
                     ->whereNotIn('questions.id', array_merge($answeredIds, $excludedIds))
                     ->whereNull('questions.passage_id') 
                     ->with('options')
@@ -303,7 +324,7 @@ class ExamController extends Controller
             // Fallback to random level-based selection from the POOL linked to this exam
             $questions = $attempt->exam->questions()
                 ->where('questions.skill_id', $skillId)
-                ->where('questions.level_id', $levelNum)
+                ->where('questions.level_id', $level->id)
                 ->whereNotIn('questions.id', $answeredIds)
                 ->whereNull('questions.passage_id')
                 ->with('options')
@@ -343,7 +364,7 @@ class ExamController extends Controller
             // Check pivot existence
             $hasQuestions = $exam->questions()
                 ->where('questions.skill_id', $skillId)
-                ->where('questions.level_id', $level->level_number)
+                ->where('questions.level_id', $level->id)
                 ->exists();
 
             if (!$hasQuestions) {
@@ -353,7 +374,7 @@ class ExamController extends Controller
             // Check level-specific rules first
             $levelQty = \App\Models\ExamQuestionRule::where('exam_id', $examId)
                 ->where('skill_id', $skillId)
-                ->where('level_id', $level->level_number)
+                ->where('level_id', $level->id)
                 ->sum('quantity');
 
             if ($levelQty > 0) {
@@ -388,6 +409,7 @@ class ExamController extends Controller
             'answers.*.question_id' => 'required|exists:questions,id',
             'answers.*.option_id' => 'nullable|exists:question_options,id',
             'answers.*.text_answer' => 'nullable|string',
+            'answers.*.audio_file' => 'nullable|file|mimes:mp3,wav,webm,ogg|max:10240', // Max 10MB
         ]);
 
         $pos = $attempt->current_position ?? [];
@@ -405,7 +427,8 @@ class ExamController extends Controller
         // --- Calculate score for this batch ---
         $correctCount = 0;
         $totalAnswered = count($request->answers);
-        foreach ($request->answers as $ans) {
+        
+        foreach ($request->answers as $index => $ans) {
             $question = Question::find($ans['question_id']);
             $isCorrect = false;
 
@@ -413,7 +436,13 @@ class ExamController extends Controller
                 $option = $question->options()->find($ans['option_id']);
                 $isCorrect = $option ? $option->is_correct : false;
             }
-            // Writing/speaking are manually graded — treat as not-counted for now
+            
+            // Handle Audio Upload for Speaking tasks
+            $mediaPath = null;
+            if ($request->hasFile("answers.{$index}.audio_file")) {
+                $file = $request->file("answers.{$index}.audio_file");
+                $mediaPath = $file->store("attempts/{$attempt->id}/answers", 'public');
+            }
 
             if ($isCorrect) $correctCount++;
 
@@ -422,6 +451,7 @@ class ExamController extends Controller
                 [
                     'option_id'      => $ans['option_id'] ?? null,
                     'text_answer'    => $ans['text_answer'] ?? null,
+                    'media_answer'   => $mediaPath,
                     'is_correct'     => $isCorrect,
                     'points_awarded' => $isCorrect ? $question->points : 0,
                 ]

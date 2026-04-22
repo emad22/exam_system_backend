@@ -16,6 +16,7 @@ class Level extends Model
         'min_score', 
         'max_score', 
         'pass_threshold',
+        'default_question_count',
         'is_active'
     ];
 

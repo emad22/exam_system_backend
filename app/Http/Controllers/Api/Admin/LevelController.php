@@ -33,6 +33,7 @@ class LevelController extends Controller
             'min_score' => 'required|integer',
             'max_score' => 'required|integer',
             'pass_threshold' => 'required|integer|min:0|max:100',
+            'default_question_count' => 'nullable|integer|min:1',
             'instructions' => 'nullable|string',
             'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120',
             'is_active' => 'sometimes|boolean'
@@ -52,17 +53,28 @@ class LevelController extends Controller
     }
 
     /**
+     * Get a single level
+     */
+    public function show(Level $level)
+    {
+        return response()->json($level);
+    }
+
+    /**
      * Update an existing level
      */
     public function update(Request $request, Level $level)
     {
         $validated = $request->validate([
-            
+            'skill_id' => 'sometimes|required|exists:skills,id',
+            'name' => 'sometimes|required|string|max:255',
+            'level_number' => 'sometimes|required|integer',
             'min_score' => 'sometimes|required|integer',
             'max_score' => 'sometimes|required|integer',
             'pass_threshold' => 'sometimes|required|integer|min:0|max:100',
+            'default_question_count' => 'nullable|integer|min:1',
             'instructions' => 'nullable|string',
-            'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120', // 5MB limit
+            'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120',
             'is_active' => 'sometimes|boolean'
         ]);
 
