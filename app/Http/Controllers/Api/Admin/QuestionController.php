@@ -37,19 +37,10 @@ class QuestionController extends Controller
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $request->validate([
             'skill_id' => 'required|exists:skills,id',
-            'exam_id' => 'nullable|exists:exams,id',
+            'exam_id' => 'required|exists:exams,id',
             'level_id' => 'required|integer|min:1|max:9',
-            'type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload',
-            'content' => 'required_unless:type,upload|string|nullable',
-            'instructions' => 'nullable|string',
-            'points' => 'required|integer|min:1',
-            'min_words' => 'nullable|integer|min:0',
-            'max_words' => 'nullable|integer|min:0',
-
-            // Question Media
-            'q_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
 
             // Passage Logic
             'passage_mode' => 'required|in:none,existing,new',
@@ -58,30 +49,35 @@ class QuestionController extends Controller
             'passage_title' => 'nullable|string',
             'passage_content' => 'nullable|string',
             'passage_questions_limit' => 'nullable|integer|min:1',
-            'passage_is_random' => 'nullable|boolean',
+            'passage_is_random' => 'nullable',
             'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
 
-            // Options
-            'options' => 'nullable|array',
-            'options.*.option_text' => 'nullable|string',
-            'options.*.is_correct' => 'nullable|boolean',
+            // Questions Batch
+            'questions' => 'required|array|min:1',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload',
+            'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
+            'questions.*.instructions' => 'nullable|string',
+            'questions.*.points' => 'required|integer|min:1',
+            'questions.*.options' => 'nullable|array',
         ]);
 
-        // Logic check for MCQ/TrueFalse
-        if (in_array($request->type, ['mcq', 'true_false'])) {
-            if (!$request->options || count($request->options) < 2) {
-                return response()->json(['message' => 'Options are required for this question type.'], 422);
-            }
-            $hasCorrect = collect($request->options)->contains('is_correct', true);
-            if (!$hasCorrect) {
-                return response()->json(['message' => 'You must select a correct answer.'], 422);
+        // Logic check for MCQ/TrueFalse for all questions in the batch
+        foreach ($request->questions as $index => $qData) {
+            if (in_array($qData['type'], ['mcq', 'true_false'])) {
+                if (!isset($qData['options']) || count($qData['options']) < 2) {
+                    return response()->json(['message' => "Options are required for question #".($index+1)], 422);
+                }
+                $hasCorrect = collect($qData['options'])->contains('is_correct', true);
+                if (!$hasCorrect) {
+                    return response()->json(['message' => "You must select a correct answer for question #".($index+1)], 422);
+                }
             }
         }
 
-        return DB::transaction(function () use ($request, $validated) {
+        return DB::transaction(function () use ($request) {
             $passageId = null;
 
-            // 1. Handle Passage
+            // 1. Handle Passage (Shared for the whole batch)
             if ($request->passage_mode === 'existing') {
                 $passageId = $request->passage_id;
             } elseif ($request->passage_mode === 'new') {
@@ -104,140 +100,205 @@ class QuestionController extends Controller
             // 2. Map Slider Level to Level ID
             $actualLevelId = \App\Models\Level::where('skill_id', $request->skill_id)
                 ->where('level_number', $request->level_id)
-                ->value('id') ?? $request->level_id; // Fallback to provided number if mapping fails
+                ->value('id') ?? $request->level_id;
 
-            // 3. Create Question
-            $qMediaPath = null;
-            if ($request->hasFile('q_media_file')) {
-                $qMediaPath = $request->file('q_media_file')->store('questions', 'public');
-            }
+            $createdQuestions = [];
 
-            $question = Question::create([
-                'skill_id' => $request->skill_id,
-                'exam_id' => $request->exam_id,
-                'level_id' => $actualLevelId,
-                'passage_id' => $passageId,
-                'type' => $request->type,
-                'instructions' => $request->instructions,
-                'content' => $request->content ?? '',
-                'media_path' => $qMediaPath,
-                'points' => $request->points,
-                'min_words' => $request->min_words,
-                'max_words' => $request->max_words,
-            ]);
-
-            // 4. Create Options
-            if (!empty($request->options) && !in_array($request->type, ['writing', 'speaking', 'upload'])) {
-                foreach ($request->options as $opt) {
-                    $question->options()->create([
-                        'option_text' => $opt['option_text'] ?? '',
-                        'is_correct' => filter_var($opt['is_correct'], FILTER_VALIDATE_BOOLEAN)
-                    ]);
+            // 3. Process each question in the batch
+            foreach ($request->questions as $index => $qData) {
+                $qMediaPath = null;
+                $fileKey = "questions.{$index}.q_media_file";
+                if ($request->hasFile($fileKey)) {
+                    $qMediaPath = $request->file($fileKey)->store('questions', 'public');
                 }
-            }
 
-            // 5. Link to Exam pivot if exam_id provided
-            if ($request->exam_id) {
-                $question->exams()->syncWithoutDetaching([$request->exam_id]);
+                $question = Question::create([
+                    'skill_id' => $request->skill_id,
+                    'exam_id' => $request->exam_id,
+                    'level_id' => $actualLevelId,
+                    'passage_id' => $passageId,
+                    'type' => $qData['type'],
+                    'instructions' => $qData['instructions'] ?? null,
+                    'content' => $qData['content'] ?? '',
+                    'media_path' => $qMediaPath,
+                    'points' => $qData['points'] ?? 1,
+                    'min_words' => $qData['min_words'] ?? null,
+                    'max_words' => $qData['max_words'] ?? null,
+                ]);
+
+                // 4. Create Options
+                if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
+                    foreach ($qData['options'] as $opt) {
+                        $question->options()->create([
+                            'option_text' => $opt['option_text'] ?? '',
+                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                        ]);
+                    }
+                }
+
+                // 5. Link to Exam pivot
+                if ($request->exam_id) {
+                    $question->exams()->syncWithoutDetaching([$request->exam_id]);
+                }
+
+                $createdQuestions[] = $question->id;
             }
 
             return response()->json([
-                'message' => 'Question and passage created successfully.',
-                'question' => $question->load(['options', 'passage'])
+                'message' => count($createdQuestions) . ' questions and passage created successfully.',
+                'question_ids' => $createdQuestions,
+                'passage_id' => $passageId
             ], 201);
         });
     }
 
     /**
-     * Get a single question with its options
+     * Get a single question with its options and full passage context if available
      */
     public function show(Question $question)
     {
-        return response()->json($question->load(['options', 'skill', 'passage']));
+        return response()->json($question->load(['options', 'skill', 'passage.questions.options']));
     }
 
     /**
-     * Update an existing question and its options
+     * Update Questions (Batch support)
      */
     public function update(Request $request, Question $question)
     {
-        $validated = $request->validate([
+        $request->validate([
             'skill_id' => 'required|exists:skills,id',
-            'exam_id' => 'nullable|exists:exams,id',
+            'exam_id' => 'required|exists:exams,id',
             'level_id' => 'required|integer|min:1|max:9',
-            'type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload',
-            'content' => 'required_unless:type,upload|string|nullable',
-            'instructions' => 'nullable|string',
-            'points' => 'required|integer|min:1',
-            'min_words' => 'nullable|integer|min:0',
-            'max_words' => 'nullable|integer|min:0',
 
-            // Question Media
-            'q_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
-
-            // Passage Logic (Updates are tricky, usually either keep same or change ID)
+            // Passage Logic
             'passage_mode' => 'required|in:none,existing,new',
             'passage_id' => 'required_if:passage_mode,existing|exists:passages,id|nullable',
-            
-            // Options
-            'options' => 'nullable|array',
-            'options.*.option_text' => 'nullable|string',
-            'options.*.is_correct' => 'nullable|boolean',
+            'passage_type' => 'required_if:passage_mode,new|in:text,image,audio,video|nullable',
+            'passage_title' => 'nullable|string',
+            'passage_content' => 'nullable|string',
+            'passage_questions_limit' => 'nullable|integer|min:1',
+            'passage_is_random' => 'nullable',
+            'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
+
+            // Questions Batch
+            'questions' => 'nullable|array',
+            'questions.*.id' => 'nullable|exists:questions,id',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload',
+            'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
+            'questions.*.instructions' => 'nullable|string',
+            'questions.*.points' => 'required|integer|min:1',
+            'questions.*.options' => 'nullable|array',
         ]);
 
-        return DB::transaction(function () use ($request, $validated, $question) {
+        return DB::transaction(function () use ($request, $question) {
             $passageId = $question->passage_id;
 
+            // 1. Handle Passage Update
             if ($request->passage_mode === 'none') {
                 $passageId = null;
-            } elseif ($request->passage_mode === 'existing') {
-                $passageId = $request->passage_id;
-            }
-            // Note: We don't handle "create new passage during update" here to keep it simple, 
-            // usually you'd link to an existing or none.
 
+            } elseif ($request->passage_mode === 'existing') {
+                // Link to selected passage
+                $passageId = $request->passage_id;
+
+                // If the selected passage is the SAME as the question's current passage,
+                // also update its content fields (user may have edited them)
+                if ($passageId && $question->passage_id == $passageId && $question->passage) {
+                    $pMediaPath = $question->passage->media_path;
+                    if ($request->hasFile('p_media_file')) {
+                        $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
+                    }
+                    $question->passage->update([
+                        'type'            => $request->passage_type ?? $question->passage->type,
+                        'title'           => $request->passage_title ?? $question->passage->title,
+                        'content'         => $request->passage_content ?? $question->passage->content,
+                        'media_path'      => $pMediaPath,
+                        'questions_limit' => $request->passage_questions_limit ?? $question->passage->questions_limit,
+                        'is_random'       => $request->boolean('passage_is_random'),
+                    ]);
+                }
+
+            } elseif ($request->passage_mode === 'new') {
+                $pMediaPath = null;
+                if ($request->hasFile('p_media_file')) {
+                    $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
+                }
+                $passage = \App\Models\Passage::create([
+                    'type'            => $request->passage_type,
+                    'title'           => $request->passage_title,
+                    'content'         => $request->passage_content,
+                    'media_path'      => $pMediaPath,
+                    'questions_limit' => $request->passage_questions_limit,
+                    'is_random'       => $request->boolean('passage_is_random'),
+                ]);
+                $passageId = $passage->id;
+            }
+
+            // 2. Map Level
             $actualLevelId = \App\Models\Level::where('skill_id', $request->skill_id)
                 ->where('level_number', $request->level_id)
                 ->value('id') ?? $request->level_id;
 
-            $updateData = [
-                'skill_id' => $request->skill_id,
-                'exam_id' => $request->exam_id,
-                'level_id' => $actualLevelId,
-                'passage_id' => $passageId,
-                'type' => $request->type,
-                'instructions' => $request->instructions,
-                'content' => $request->content ?? '',
-                'points' => $request->points,
-                'min_words' => $request->min_words,
-                'max_words' => $request->max_words,
+            // 3. Process Batch if provided, else single update
+            $questionsData = $request->questions ?? [
+                array_merge($request->only(['type', 'content', 'instructions', 'points', 'min_words', 'max_words', 'options']), ['id' => $question->id])
             ];
 
-            if ($request->hasFile('q_media_file')) {
-                $updateData['media_path'] = $request->file('q_media_file')->store('questions', 'public');
-            }
+            foreach ($questionsData as $index => $qData) {
+                $qMediaPath = null;
+                $fileKey = "questions.{$index}.q_media_file";
+                
+                // If it's a single update from legacy form, key might be q_media_file directly
+                if (!$request->hasFile($fileKey) && $request->hasFile('q_media_file') && count($questionsData) === 1) {
+                    $fileKey = 'q_media_file';
+                }
 
-            $question->update($updateData);
+                if ($request->hasFile($fileKey)) {
+                    $qMediaPath = $request->file($fileKey)->store('questions', 'public');
+                }
 
-            // Sync Options
-            if (isset($request->options) && !in_array($request->type, ['writing', 'speaking', 'upload'])) {
-                $question->options()->delete();
-                foreach ($request->options as $opt) {
-                    $question->options()->create([
-                        'option_text' => $opt['option_text'] ?? '',
-                        'is_correct' => filter_var($opt['is_correct'], FILTER_VALIDATE_BOOLEAN)
-                    ]);
+                $qInstance = isset($qData['id']) ? Question::find($qData['id']) : new Question();
+                
+                $data = [
+                    'skill_id' => $request->skill_id,
+                    'exam_id' => $request->exam_id,
+                    'level_id' => $actualLevelId,
+                    'passage_id' => $passageId,
+                    'type' => $qData['type'],
+                    'instructions' => $qData['instructions'] ?? null,
+                    'content' => $qData['content'] ?? '',
+                    'points' => $qData['points'] ?? 1,
+                    'min_words' => $qData['min_words'] ?? null,
+                    'max_words' => $qData['max_words'] ?? null,
+                ];
+
+                if ($qMediaPath) {
+                    $data['media_path'] = $qMediaPath;
+                }
+
+                $qInstance->fill($data);
+                $qInstance->save();
+
+                // 4. Update Options
+                if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
+                    $qInstance->options()->delete();
+                    foreach ($qData['options'] as $opt) {
+                        $qInstance->options()->create([
+                            'option_text' => $opt['option_text'] ?? '',
+                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                        ]);
+                    }
+                }
+
+                // 5. Link Exam
+                if ($request->exam_id) {
+                    $qInstance->exams()->syncWithoutDetaching([$request->exam_id]);
                 }
             }
 
-            // Update Exam pivot if exam_id provided
-            if ($request->exam_id) {
-                $question->exams()->syncWithoutDetaching([$request->exam_id]);
-            }
-
             return response()->json([
-                'message' => 'Question updated successfully.',
-                'question' => $question->load(['options', 'passage'])
+                'message' => 'Batch updated successfully.',
+                'question' => $question->fresh(['options', 'passage.questions.options'])
             ]);
         });
     }

@@ -92,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/levels/{level}', [Admin\LevelController::class, 'destroy']);
 
         // Question Management
+        Route::get('/passages', [Admin\PassageController::class, 'index']);
         Route::get('/questions', [Admin\QuestionController::class, 'index']);
         Route::post('/questions', [Admin\QuestionController::class, 'store']);
         Route::get('/questions/{question}', [Admin\QuestionController::class, 'show']);
