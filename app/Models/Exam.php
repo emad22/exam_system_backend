@@ -69,4 +69,11 @@ class Exam extends Model
             ->withPivot('duration', 'is_optional', 'order_index')
             ->withTimestamps();
     }
+
+    public function questions(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Question::class, 'exam_questions')
+            ->withPivot('order', 'is_random')
+            ->withTimestamps();
+    }
 }

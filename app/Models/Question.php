@@ -12,23 +12,48 @@ class Question extends Model
 
     protected $fillable = [
         'skill_id', 
-        'group_tag', 
+        'exam_id',
+        'level_id',
+        'passage_id',
         'type', 
+        'instructions',
         'content', 
-        'passage_content',
-        'passage_group_id',
-        'passage_randomize',
-        'passage_limit',
         'media_path', 
-        'difficulty_level', 
         'points',
         'min_words',
         'max_words'
     ];
 
+    protected $casts = [
+        'points' => 'integer',
+        'min_words' => 'integer',
+        'max_words' => 'integer',
+        'level_id' => 'integer',
+    ];
+
     public function skill(): BelongsTo
     {
         return $this->belongsTo(Skill::class);
+    }
+
+    public function exams(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Exam::class, 'exam_questions');
+    }
+
+    public function exam(): BelongsTo
+    {
+        return $this->belongsTo(Exam::class);
+    }
+
+    public function level(): BelongsTo
+    {
+        return $this->belongsTo(Level::class);
+    }
+
+    public function passage(): BelongsTo
+    {
+        return $this->belongsTo(Passage::class);
     }
 
     public function options(): HasMany

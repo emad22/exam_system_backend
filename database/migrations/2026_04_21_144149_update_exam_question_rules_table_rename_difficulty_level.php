@@ -11,8 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('questions', function (Blueprint $blueprint) {
-            $blueprint->integer('passage_limit')->nullable()->after('passage_randomize');
+        Schema::table('exam_question_rules', function (Blueprint $table) {
+            $table->renameColumn('difficulty_level', 'level_id');
         });
     }
 
@@ -21,8 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('questions', function (Blueprint $blueprint) {
-            $blueprint->dropColumn('passage_limit');
+        Schema::table('exam_question_rules', function (Blueprint $table) {
+            $table->renameColumn('level_id', 'difficulty_level');
         });
     }
 };

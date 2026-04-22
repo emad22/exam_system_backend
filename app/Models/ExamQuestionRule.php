@@ -10,14 +10,16 @@ class ExamQuestionRule extends Model
     protected $fillable = [
         'exam_id',
         'skill_id',
-        'difficulty_level', // New field
-        'group_tag',
+        'level_id',
+        'group_tag', // Keep for backward compatibility if needed, but we focus on level_id
         'quantity',
         'randomize'
     ];
 
     protected $casts = [
         'randomize' => 'boolean',
+        'level_id' => 'integer',
+        'quantity' => 'integer',
     ];
 
     public function exam(): BelongsTo
@@ -28,5 +30,10 @@ class ExamQuestionRule extends Model
     public function skill(): BelongsTo
     {
         return $this->belongsTo(Skill::class);
+    }
+
+    public function level(): BelongsTo
+    {
+        return $this->belongsTo(Level::class, 'level_id');
     }
 }

@@ -236,25 +236,26 @@ class ExamController extends Controller
         // 1. Try to find Level-Specific rules first
         $rules = \App\Models\ExamQuestionRule::where('exam_id', $attempt->exam_id)
             ->where('skill_id', $skillId)
-            ->where('difficulty_level', $levelNum)
+            ->where('level_id', $levelNum)
             ->get();
 
         // 2. If no level-specific rules, fall back to General (Skill-wide) rules
         if ($rules->isEmpty()) {
             $rules = \App\Models\ExamQuestionRule::where('exam_id', $attempt->exam_id)
                 ->where('skill_id', $skillId)
-                ->whereNull('difficulty_level')
+                ->whereNull('level_id')
                 ->get();
         }
 
         if ($rules->isNotEmpty()) {
             $questions = collect();
             foreach ($rules as $rule) {
-                $query = Question::where('skill_id', $skillId)
-                    ->where('difficulty_level', $levelNum)
-                    ->whereNotIn('id', $answeredIds)
-                    ->when($rule->group_tag, fn($q) => $q->where('group_tag', $rule->group_tag))
-                    ->with('options');
+                // Fetch ONLY questions associated with this exam via pivot
+                $query = $attempt->exam->questions()
+                    ->where('questions.skill_id', $skillId)
+                    ->where('questions.level_id', $levelNum)
+                    ->whereNotIn('questions.id', $answeredIds)
+                    ->with(['options', 'passage']);
 
                 $ruleQuestions = $query->inRandomOrder()->take($rule->quantity)->get();
                 
@@ -263,26 +264,18 @@ class ExamController extends Controller
                 $processedGroups = [];
 
                 foreach ($ruleQuestions as $q) {
-                    if ($q->passage_group_id && !in_array($q->passage_group_id, $processedGroups)) {
-                        $processedGroups[] = $q->passage_group_id;
+                    if ($q->passage_id && !in_array($q->passage_id, $processedGroups)) {
+                        $processedGroups[] = $q->passage_id;
                         
-                        // Fetch the group
-                        $groupQuery = Question::where('passage_group_id', $q->passage_group_id)
-                            ->with('options');
-                        
-                        // Internal ordering/randomization
-                        $groupQuestions = $q->passage_randomize 
-                            ? $groupQuery->inRandomOrder()->get() 
-                            : $groupQuery->orderBy('id', 'asc')->get();
-
-                        // Apply passage limit if one question in the group has it
-                        $limit = $groupQuestions->first()->passage_limit;
-                        if ($limit && $limit > 0) {
-                            $groupQuestions = $groupQuestions->take($limit);
-                        }
+                        // Fetch the rest of the questions for this passage that are also in this exam
+                        $groupQuestions = $attempt->exam->questions()
+                            ->where('questions.passage_id', $q->passage_id)
+                            ->with('options')
+                            ->orderBy('questions.id', 'asc') // Usually passages have a logical order
+                            ->get();
 
                         $processedQuestions = $processedQuestions->concat($groupQuestions);
-                    } elseif (!$q->passage_group_id) {
+                    } elseif (!$q->passage_id) {
                         $processedQuestions->push($q);
                     }
                 }
@@ -295,10 +288,11 @@ class ExamController extends Controller
             if ($questions->count() < $targetBatchSize) {
                 $needed = $targetBatchSize - $questions->count();
                 $excludedIds = $questions->pluck('id')->toArray();
-                $padding = Question::where('skill_id', $skillId)
-                    ->where('difficulty_level', $levelNum)
-                    ->whereNotIn('id', $excludedIds)
-                    ->whereNull('passage_group_id') // Padding shouldn't accidentally pull massive passages
+                $padding = $attempt->exam->questions()
+                    ->where('questions.skill_id', $skillId)
+                    ->where('questions.level_id', $levelNum)
+                    ->whereNotIn('questions.id', array_merge($answeredIds, $excludedIds))
+                    ->whereNull('questions.passage_id') 
                     ->with('options')
                     ->inRandomOrder()
                     ->take($needed)
@@ -306,11 +300,12 @@ class ExamController extends Controller
                 $questions = $questions->concat($padding);
             }
         } else {
-            // Fallback to random level-based selection (Default Batch Size: 5)
-            $questions = Question::where('skill_id', $skillId)
-                ->where('difficulty_level', $levelNum)
-                ->whereNotIn('id', $answeredIds)
-                ->whereNull('passage_group_id')
+            // Fallback to random level-based selection from the POOL linked to this exam
+            $questions = $attempt->exam->questions()
+                ->where('questions.skill_id', $skillId)
+                ->where('questions.level_id', $levelNum)
+                ->whereNotIn('questions.id', $answeredIds)
+                ->whereNull('questions.passage_id')
                 ->with('options')
                 ->inRandomOrder()
                 ->take(5) 
@@ -338,16 +333,17 @@ class ExamController extends Controller
      */
     private function getTotalSkillQuestions(int $examId, int $skillId): int
     {
+        $exam = Exam::find($examId);
         $levels = \App\Models\Level::where('skill_id', $skillId)
             ->where('is_active', true)
             ->get();
 
         $total = 0;
         foreach ($levels as $level) {
-            // If there are no actual questions in the database for this level, skip it
-            // This prevents inflating the total question count with empty levels
-            $hasQuestions = \App\Models\Question::where('skill_id', $skillId)
-                ->where('difficulty_level', $level->level_number)
+            // Check pivot existence
+            $hasQuestions = $exam->questions()
+                ->where('questions.skill_id', $skillId)
+                ->where('questions.level_id', $level->level_number)
                 ->exists();
 
             if (!$hasQuestions) {
@@ -357,7 +353,7 @@ class ExamController extends Controller
             // Check level-specific rules first
             $levelQty = \App\Models\ExamQuestionRule::where('exam_id', $examId)
                 ->where('skill_id', $skillId)
-                ->where('difficulty_level', $level->level_number)
+                ->where('level_id', $level->level_number)
                 ->sum('quantity');
 
             if ($levelQty > 0) {
@@ -366,7 +362,7 @@ class ExamController extends Controller
                 // Fall back to general (null) rules for this skill
                 $generalQty = \App\Models\ExamQuestionRule::where('exam_id', $examId)
                     ->where('skill_id', $skillId)
-                    ->whereNull('difficulty_level')
+                    ->whereNull('level_id')
                     ->sum('quantity');
                 $total += $generalQty > 0 ? $generalQty : 5;
             }

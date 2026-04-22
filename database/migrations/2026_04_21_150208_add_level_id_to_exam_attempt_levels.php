@@ -11,9 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('questions', function (Blueprint $blueprint) {
-            $blueprint->integer('min_words')->nullable()->after('points');
-            $blueprint->integer('max_words')->nullable()->after('min_words');
+        Schema::table('exam_attempt_levels', function (Blueprint $table) {
+            //
         });
     }
 
@@ -22,8 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('questions', function (Blueprint $blueprint) {
-            $blueprint->dropColumn(['min_words', 'max_words']);
+        Schema::table('exam_attempt_levels', function (Blueprint $table) {
+            //
         });
     }
 };
