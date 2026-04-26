@@ -17,11 +17,19 @@ class Level extends Model
         'max_score', 
         'pass_threshold',
         'default_question_count',
-        'is_active'
+        'default_standalone_quantity',
+        'default_passage_quantity',
+        'is_active',
+        'is_random',
+        'allows_retry'
     ];
 
     protected $casts = [
-        'is_active' => 'boolean'
+        'is_active'    => 'boolean',
+        'is_random'    => 'boolean',
+        'allows_retry' => 'boolean',
+        'default_standalone_quantity' => 'integer',
+        'default_passage_quantity' => 'integer'
     ];
 
     protected $appends = ['instructions_audio_url'];

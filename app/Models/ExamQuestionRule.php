@@ -13,6 +13,8 @@ class ExamQuestionRule extends Model
         'level_id',
         'group_tag', // Keep for backward compatibility if needed, but we focus on level_id
         'quantity',
+        'standalone_quantity',
+        'passage_quantity',
         'randomize'
     ];
 
@@ -20,6 +22,8 @@ class ExamQuestionRule extends Model
         'randomize' => 'boolean',
         'level_id' => 'integer',
         'quantity' => 'integer',
+        'standalone_quantity' => 'integer',
+        'passage_quantity' => 'integer',
     ];
 
     public function exam(): BelongsTo

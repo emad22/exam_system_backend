@@ -57,7 +57,9 @@ class ExamController extends Controller
             'skills.*.is_optional' => 'boolean',
             'skills.*.rules' => 'nullable|array',
             'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
-            'skills.*.rules.*.quantity' => 'required|integer|min:1',
+            'skills.*.rules.*.quantity' => 'required|integer|min:0',
+            'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
+            'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',
             'skills.*.rules.*.randomize' => 'boolean',
 
             'question_ids' => 'nullable|array', // List of questions assigned directly
@@ -87,6 +89,8 @@ class ExamController extends Controller
                             'skill_id' => $skill['skill_id'],
                             'level_id' => $rule['level_id'],
                             'quantity' => $rule['quantity'],
+                            'standalone_quantity' => $rule['standalone_quantity'] ?? 0,
+                            'passage_quantity' => $rule['passage_quantity'] ?? 0,
                             'randomize' => $rule['randomize'] ?? true,
                         ]);
                     }
@@ -133,7 +137,9 @@ class ExamController extends Controller
             'skills.*.is_optional' => 'boolean',
             'skills.*.rules' => 'nullable|array',
             'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
-            'skills.*.rules.*.quantity' => 'required|integer|min:1',
+            'skills.*.rules.*.quantity' => 'required|integer|min:0',
+            'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
+            'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',
             'skills.*.rules.*.randomize' => 'boolean',
 
             'question_ids' => 'nullable|array',
@@ -170,6 +176,8 @@ class ExamController extends Controller
                             'skill_id' => $skill['skill_id'],
                             'level_id' => $rule['level_id'],
                             'quantity' => $rule['quantity'],
+                            'standalone_quantity' => $rule['standalone_quantity'] ?? 0,
+                            'passage_quantity' => $rule['passage_quantity'] ?? 0,
                             'randomize' => $rule['randomize'] ?? true,
                         ]);
                     }

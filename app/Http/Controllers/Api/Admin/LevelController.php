@@ -36,7 +36,11 @@ class LevelController extends Controller
             'default_question_count' => 'nullable|integer|min:1',
             'instructions' => 'nullable|string',
             'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120',
-            'is_active' => 'sometimes|boolean'
+            'is_active' => 'sometimes|boolean',
+            'is_random' => 'sometimes|boolean',
+            'allows_retry' => 'sometimes|boolean',
+            'default_standalone_quantity' => 'nullable|integer|min:0',
+            'default_passage_quantity' => 'nullable|integer|min:0'
         ]);
 
         if ($request->hasFile('instructions_audio')) {
@@ -75,7 +79,11 @@ class LevelController extends Controller
             'default_question_count' => 'nullable|integer|min:1',
             'instructions' => 'nullable|string',
             'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120',
-            'is_active' => 'sometimes|boolean'
+            'is_active' => 'sometimes|boolean',
+            'is_random' => 'sometimes|boolean',
+            'allows_retry' => 'sometimes|boolean',
+            'default_standalone_quantity' => 'nullable|integer|min:0',
+            'default_passage_quantity' => 'nullable|integer|min:0'
         ]);
 
         if ($request->hasFile('instructions_audio')) {
