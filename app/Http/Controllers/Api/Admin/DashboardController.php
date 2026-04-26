@@ -19,6 +19,9 @@ class DashboardController extends Controller
             'students_count' => Student::count(),
             'exams_count' => Exam::count(),
             'attempts_count' => ExamAttempt::count(),
+            'live_students_count' => ExamAttempt::where('status', 'ongoing')
+                ->where('updated_at', '>=', now()->subMinutes(30))
+                ->count(),
             'recent_attempts' => ExamAttempt::with(['student', 'exam'])
                 ->orderBy('created_at', 'desc')
                 ->take(5)

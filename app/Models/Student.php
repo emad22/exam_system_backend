@@ -181,4 +181,49 @@ class Student extends Model
             ]
         );
     }
+
+    /**
+     * Synchronize package_id based on current assigned_skills.
+     * If skills match a package, use it. Otherwise, use Custom Package (ID 4).
+     */
+    public function syncPackageWithSkills()
+    {
+        // 1. Pre-fetch all skills for mapping IDs to Codes
+        $allSkillsMap = Skill::all()->keyBy('id');
+        
+        $normalize = function($skills) use ($allSkillsMap) {
+            return collect((array) $skills)
+                ->map(function($s) use ($allSkillsMap) {
+                    if (is_numeric($s) && isset($allSkillsMap[$s])) {
+                        return $allSkillsMap[$s]->short_code;
+                    }
+                    return (string)$s;
+                })
+                ->map(fn($s) => strtoupper(trim($s)))
+                ->filter()
+                ->sort()
+                ->values()
+                ->all();
+        };
+
+        $assigned = $normalize($this->assigned_skills);
+        if (empty($assigned)) return;
+
+        // 2. Fetch all standard packages
+        $packages = Package::where('id', '!=', 4)->get(); // 4 is Custom
+        $matchingPackageId = 4; // Default to Custom
+
+        foreach ($packages as $package) {
+            $packageSkills = $normalize($package->skills);
+            
+            if (!empty($packageSkills) && $assigned === $packageSkills) {
+                $matchingPackageId = $package->id;
+                break;
+            }
+        }
+
+        if ($this->package_id != $matchingPackageId) {
+            $this->update(['package_id' => $matchingPackageId]);
+        }
+    }
 }

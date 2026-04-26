@@ -20,8 +20,10 @@ class DatabaseSeeder extends Seeder
             SkillSeeder::class,
             LevelSeeder::class,
             PackageSeeder::class,
-          //  PartnerSeeder::class,
+            PartnerSeeder::class,
             SystemRequirementSeeder::class,
+            ExamSeeder::class,
+            QuestionSeeder::class,
            
         ]);
 

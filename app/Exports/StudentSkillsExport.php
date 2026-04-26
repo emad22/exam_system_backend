@@ -25,30 +25,25 @@ class StudentSkillsExport implements FromCollection, WithHeadings, WithMapping
 
     public function headings(): array
     {
-        return [
-            'Email',
-            'Skills'
-        ];
+        $headers = ['Email'];
+        foreach ($this->skills as $skill) {
+            $headers[] = $skill->name;
+        }
+        return $headers;
     }
 
     public function map($student): array
     {
-        $assignedSkills = array_filter((array) $student->assigned_skills);
-        $shortCodes = [];
+        $row = [$student->user ? $student->user->email : 'N/A'];
         
-        foreach ($assignedSkills as $val) {
-            if (is_numeric($val)) {
-                if (isset($this->skills[$val]) && $this->skills[$val]->short_code) {
-                    $shortCodes[] = trim($this->skills[$val]->short_code);
-                }
-            } else {
-                $shortCodes[] = trim($val);
-            }
+        $assigned = array_map('strtoupper', array_filter((array) $student->assigned_skills));
+
+        foreach ($this->skills as $skill) {
+            $code = strtoupper($skill->short_code);
+            // Check if student has this skill
+            $row[] = in_array($code, $assigned) ? '1' : '0';
         }
 
-        return [
-            $student->user ? $student->user->email : 'N/A',
-            implode(', ', array_unique($shortCodes))
-        ];
+        return $row;
     }
 }

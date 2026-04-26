@@ -228,6 +228,8 @@ class ExamController extends Controller
      */
     public function getNextBatch(Request $request, ExamAttempt $attempt)
     {
+        \Illuminate\Support\Facades\Log::info("getNextBatch hit for Attempt ID: " . $attempt->id);
+
         if ($attempt->status !== 'ongoing') {
             return response()->json(['error' => 'Exam is not active.'], 403);
         }
@@ -254,7 +256,7 @@ class ExamController extends Controller
             ->toArray();
 
         // Ordering based on level's is_random flag
-        $orderMethod = $level->is_random ? 'inRandomOrder' : function($q) { return $q->orderBy('questions.id', 'asc'); };
+        $orderMethod = $level->is_random ? 'inRandomOrder' : function($q) { return $q->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc'); };
 
         // Find level-specific rules first, then fall back to skill-wide rules
         $rules = \App\Models\ExamQuestionRule::where('exam_id', $attempt->exam_id)
@@ -300,7 +302,7 @@ class ExamController extends Controller
 
                         $standaloneQuery = $level->is_random
                             ? $standaloneQuery->inRandomOrder()
-                            : $standaloneQuery->orderBy('questions.id', 'asc');
+                            : $standaloneQuery->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
 
                         $questions = $questions->concat(
                             $standaloneQuery->take($standaloneQty)->get()
@@ -327,7 +329,7 @@ class ExamController extends Controller
 
                         $passageQuery = $level->is_random
                             ? $passageQuery->inRandomOrder()
-                            : $passageQuery->orderBy('questions.passage_id', 'asc');
+                            : $passageQuery->orderBy('questions.sort_order', 'asc')->orderBy('questions.passage_id', 'asc');
 
                         $selectedPassageIds = $passageQuery->take($passageQty)
                             ->pluck('questions.passage_id')
@@ -435,26 +437,57 @@ class ExamController extends Controller
                     }
                 }
             } else {
-                // Pure legacy fallback
+                // Unified Legacy Fallback: Pick ANY questions in this level, ordered by sort_order
                 $query = $attempt->exam->questions()
                     ->where('questions.skill_id', $skillId)
                     ->where('questions.level_id', $level->id)
                     ->whereNotIn('questions.id', $answeredIds)
-                    ->whereNull('questions.passage_id')
-                    ->with('options');
+                    ->with(['options', 'passage']);
 
                 $query = $level->is_random
                     ? $query->inRandomOrder()
-                    : $query->orderBy('questions.id', 'asc');
+                    : $query->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
 
-                $questions = $query->take($legacyQty)->get();
+                $ruleQuestions = $query->take($legacyQty)->get();
+
+                // Group expansion: If any selected question has a passage, we MUST fetch the whole passage group
+                // to avoid showing a passage with missing questions.
+                $processedPassages = [];
+                foreach ($ruleQuestions as $q) {
+                    if ($q->passage_id && !in_array($q->passage_id, $processedPassages)) {
+                        $processedPassages[] = $q->passage_id;
+                        $passageQuestions = \App\Models\Question::where('passage_id', $q->passage_id)
+                            ->with(['options', 'passage'])
+                            ->orderBy('sort_order', 'asc')
+                            ->orderBy('id', 'asc')
+                            ->get();
+                        
+                        // Only add questions from this passage that haven't been answered yet
+                        foreach($passageQuestions as $pq) {
+                            if (!in_array($pq->id, $answeredIds)) {
+                                $questions->push($pq);
+                            }
+                        }
+                    } elseif (!$q->passage_id) {
+                        $questions->push($q);
+                    }
+                }
+                
+                // Ensure unique collection (in case multiple questions from the same passage were in the initial take)
+                $questions = $questions->unique('id')->values();
             }
         }
 
         if ($questions->isEmpty()) {
             return response()->json([
-                'error'    => "No questions found for {$level->name} in " . \App\Models\Skill::find($skillId)->name,
+                'error'    => "Empty Question Set: No questions found for level '{$level->name}' (Skill ID: {$skillId}). Please verify that questions are assigned to this level and linked to the exam.",
                 'is_empty' => true,
+                'debug' => [
+                    'skill_id' => $skillId,
+                    'level_id' => $level->id,
+                    'attempt_id' => $attempt->id,
+                    'exam_id' => $attempt->exam_id
+                ]
             ], 404);
         }
 
@@ -572,12 +605,13 @@ class ExamController extends Controller
             ->where('level_number', $levelNum)
             ->first();
 
-        // --- Calculate score for this batch ---
-        $correctCount = 0;
-        $totalAnswered = count($request->answers);
+        // --- Calculate score for this batch (Weighted by points) ---
+        $earnedPoints = 0;
+        $totalPossiblePoints = 0;
         
         foreach ($request->answers as $index => $ans) {
             $question = Question::find($ans['question_id']);
+            $totalPossiblePoints += $question->points;
             $isCorrect = false;
 
             if ($question->type === 'mcq' && isset($ans['option_id'])) {
@@ -592,7 +626,7 @@ class ExamController extends Controller
                 $mediaPath = $file->store("attempts/{$attempt->id}/answers", 'public');
             }
 
-            if ($isCorrect) $correctCount++;
+            if ($isCorrect) $earnedPoints += $question->points;
 
             StudentAnswer::updateOrCreate(
                 ['exam_attempt_id' => $attempt->id, 'question_id' => $question->id],
@@ -606,9 +640,17 @@ class ExamController extends Controller
             );
         }
 
-        $batchScore    = $totalAnswered > 0 ? round(($correctCount / $totalAnswered) * 100, 1) : 0;
+        $batchScore    = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 0;
         $passThreshold = $level->pass_threshold ?? 70;
         $passed        = $batchScore >= $passThreshold;
+
+        $answeredIds = StudentAnswer::where('exam_attempt_id', $attempt->id)
+            ->pluck('question_id')
+            ->toArray();
+
+        $remainingQuestionsCount = \App\Models\Question::where('level_id', $level->id)
+            ->whereNotIn('id', $answeredIds)
+            ->count();
 
         // --- Log Level Performance (Movement Log) ---
         \App\Models\ExamAttemptLevel::create([
@@ -638,21 +680,26 @@ class ExamController extends Controller
             // ===== ADAPTIVE MODE =====
             // Continue upward through all levels, regardless of passing or failing.
             // Stop only when there are no more levels.
-            if ($nextLevelExists) {
-                // Move to next level
-                $nextPos['current_level'] = $levelNum + 1;
+            if ($remainingQuestionsCount == 0) {
+                if ($nextLevelExists) {
+                    // Move to next level
+                    $nextPos['current_level'] = $levelNum + 1;
+                } else {
+                    // Done with this skill (reached the last level)
+                    $skillEnded = true;
+                    $attempt->attemptSkills()->updateOrCreate(
+                        ['skill_id' => $skillId],
+                        [
+                            'max_level_reached' => $levelNum,
+                            'score'             => $batchScore,
+                            'status'            => 'completed', // They finished all levels
+                            'finished_at'       => now(),
+                        ]
+                    );
+                }
             } else {
-                // Done with this skill (reached the last level)
-                $skillEnded = true;
-                $attempt->attemptSkills()->updateOrCreate(
-                    ['skill_id' => $skillId],
-                    [
-                        'max_level_reached' => $levelNum,
-                        'score'             => $batchScore,
-                        'status'            => 'completed', // They finished all levels
-                        'finished_at'       => now(),
-                    ]
-                );
+                // More questions left in this level, stay here
+                $nextPos['current_level'] = $levelNum;
             }
         } else {
             // ===== NOT-ADAPTIVE MODE =====
@@ -667,11 +714,9 @@ class ExamController extends Controller
                     ->count();
 
                 // If the level allows retry AND this is their FIRST fail → give a second chance
-                // The $failCount is AFTER the current log has been written (so 1 = first time failing)
-                if ($level->allows_retry && $failCount <= 1) {
-                    // Stay on the same level — getNextBatch will automatically
-                    // exclude already-answered questions and serve fresh ones
-                    // Do NOT set $skillEnded = true. Just continue.
+                // BUT only if there are actually more questions left to answer!
+                if ($level->allows_retry && $failCount <= 1 && $remainingQuestionsCount > 0) {
+                    // Stay on the same level — getNextBatch will serve fresh questions
                 } else {
                     // Second fail (or retry not allowed) → Stop skill
                     $skillEnded     = true;
@@ -716,18 +761,19 @@ class ExamController extends Controller
                             'finished_at'        => now(),
                         ]
                     );
-                } elseif ($nextLevelExists) {
-                    // Student PASSED on first attempt and there is a higher level → advance
-                    $nextPos['current_level'] = $levelNum + 1;
-                } else {
-                    // Student PASSED the final level on first attempt → skill done
-                    $skillEnded     = true;
-                    $placementLevel = $levelNum;
-                    $placementScore = $batchScore;
-
-                    $attempt->attemptSkills()->updateOrCreate(
-                        ['skill_id' => $skillId],
-                        [
+                } elseif ($remainingQuestionsCount == 0) {
+                    if ($nextLevelExists) {
+                        // Student PASSED on first attempt and there is a higher level → advance
+                        $nextPos['current_level'] = $levelNum + 1;
+                    } else {
+                        // Student PASSED the final level on first attempt → skill done
+                        $skillEnded     = true;
+                        $placementLevel = $levelNum;
+                        $placementScore = $batchScore;
+    
+                        $attempt->attemptSkills()->updateOrCreate(
+                            ['skill_id' => $skillId],
+                            [
                             'max_level_reached'  => $levelNum,
                             'score'              => $batchScore,
                             'status'             => 'completed',
@@ -738,7 +784,8 @@ class ExamController extends Controller
                     );
                 }
             }
-        }
+            }
+        } // Close else for non-adaptive mode
 
         // Move to next skill or finish exam
         if ($skillEnded) {

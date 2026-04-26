@@ -12,20 +12,11 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
 {
     public function collection(Collection $rows)
     {
-        // Pre-fetch all skills and group by lowercased short code
-        $skills = Skill::all();
-        $skillMap = [];
-        foreach ($skills as $s) {
-            if ($s->short_code) {
-                // Map lowercase short code to the actual short code from DB
-                $skillMap[strtolower(trim($s->short_code))] = $s->short_code;
-            }
-        }
-
+        $allSkills = Skill::all();
+        
         foreach ($rows as $row) {
             $email = $row['email'] ?? null;
             $code = $row['student_code'] ?? null;
-            $skillsStr = $row['skills'] ?? $row['assigned_skills'] ?? $row['assigned_skills_short_codes'] ?? '';
 
             if (!$email && !$code) continue;
 
@@ -39,24 +30,47 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
             $student = $studentQuery->first();
             
             if ($student) {
-                $parsedCodes = collect(explode(',', (string)$skillsStr))
-                                ->map(fn($c) => strtolower(trim($c)))
-                                ->filter()
-                                ->toArray();
-                
                 $finalShortCodes = [];
-                foreach($parsedCodes as $c) {
-                    if (isset($skillMap[$c])) {
-                        $finalShortCodes[] = strtoupper($skillMap[$c]);
+
+                // 1. Check for multi-column format (Skill Name columns)
+                foreach ($allSkills as $skill) {
+                    $slug = \Illuminate\Support\Str::slug($skill->name, '_');
+                    if (isset($row[$slug]) && $this->isTrue($row[$slug])) {
+                        $finalShortCodes[] = strtoupper($skill->short_code);
                     }
                 }
 
-                $student->assigned_skills = array_unique($finalShortCodes);
-                $student->save();
+                // 2. Fallback to legacy comma-separated format if no multi-column skills found
+                if (empty($finalShortCodes)) {
+                    $skillsStr = $row['skills'] ?? $row['assigned_skills'] ?? '';
+                    if ($skillsStr) {
+                        $parsed = explode(',', (string)$skillsStr);
+                        foreach ($parsed as $c) {
+                            $c = strtolower(trim($c));
+                            $skillMatch = $allSkills->first(fn($s) => strtolower($s->short_code) === $c || strtolower($s->name) === $c);
+                            if ($skillMatch) {
+                                $finalShortCodes[] = strtoupper($skillMatch->short_code);
+                            }
+                        }
+                    }
+                }
 
-                // Re-evaluate their config to apply the new assignments
-                Student::assignDefaultExam($student);
+                if (!empty($finalShortCodes)) {
+                    $student->assigned_skills = array_unique($finalShortCodes);
+                    $student->save();
+                    // Re-evaluate their config to apply the new assignments
+                    Student::assignDefaultExam($student);
+                    // Sync package based on new skills
+                    $student->syncPackageWithSkills();
+                }
             }
         }
+    }
+
+    private function isTrue($value): bool
+    {
+        if (is_null($value)) return false;
+        $val = strtolower(trim((string)$value));
+        return in_array($val, ['1', 'true', 'yes', 'active', 'x']);
     }
 }

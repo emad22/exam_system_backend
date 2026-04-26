@@ -51,6 +51,8 @@ class QuestionController extends Controller
             'passage_questions_limit' => 'nullable|integer|min:1',
             'passage_is_random' => 'nullable',
             'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
+            'p_audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
+            'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
 
             // Questions Batch
             'questions' => 'required|array|min:1',
@@ -58,6 +60,7 @@ class QuestionController extends Controller
             'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
+            'questions.*.sort_order' => 'nullable|integer',
             'questions.*.options' => 'nullable|array',
         ]);
 
@@ -82,15 +85,25 @@ class QuestionController extends Controller
                 $passageId = $request->passage_id;
             } elseif ($request->passage_mode === 'new') {
                 $pMediaPath = null;
+                $pAudioPath = null;
+                $pImagePath = null;
                 if ($request->hasFile('p_media_file')) {
                     $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
                 }
-
+                if ($request->hasFile('p_audio_file')) {
+                    $pAudioPath = $request->file('p_audio_file')->store('passages/audio', 'public');
+                }
+                if ($request->hasFile('p_image_file')) {
+                    $pImagePath = $request->file('p_image_file')->store('passages/images', 'public');
+                }
+ 
                 $passage = \App\Models\Passage::create([
                     'type' => $request->passage_type,
                     'title' => $request->passage_title,
                     'content' => $request->passage_content,
                     'media_path' => $pMediaPath,
+                    'audio_path' => $pAudioPath,
+                    'image_path' => $pImagePath,
                     'questions_limit' => $request->passage_questions_limit,
                     'is_random' => $request->boolean('passage_is_random'),
                 ]);
@@ -107,9 +120,22 @@ class QuestionController extends Controller
             // 3. Process each question in the batch
             foreach ($request->questions as $index => $qData) {
                 $qMediaPath = null;
+                $qAudioPath = null;
+                $qImagePath = null;
+
                 $fileKey = "questions.{$index}.q_media_file";
                 if ($request->hasFile($fileKey)) {
                     $qMediaPath = $request->file($fileKey)->store('questions', 'public');
+                }
+
+                $audioKey = "questions.{$index}.q_audio_file";
+                if ($request->hasFile($audioKey)) {
+                    $qAudioPath = $request->file($audioKey)->store('questions/audio', 'public');
+                }
+
+                $imageKey = "questions.{$index}.q_image_file";
+                if ($request->hasFile($imageKey)) {
+                    $qImagePath = $request->file($imageKey)->store('questions/images', 'public');
                 }
 
                 $question = Question::create([
@@ -121,7 +147,10 @@ class QuestionController extends Controller
                     'instructions' => $qData['instructions'] ?? null,
                     'content' => $qData['content'] ?? '',
                     'media_path' => $qMediaPath,
+                    'audio_path' => $qAudioPath,
+                    'image_path' => $qImagePath,
                     'points' => $qData['points'] ?? 1,
+                    'sort_order' => $qData['sort_order'] ?? 0,
                     'min_words' => $qData['min_words'] ?? null,
                     'max_words' => $qData['max_words'] ?? null,
                 ]);
@@ -157,7 +186,7 @@ class QuestionController extends Controller
      */
     public function show(Question $question)
     {
-        return response()->json($question->load(['options', 'skill', 'passage.questions.options']));
+        return response()->json($question->load(['options', 'skill', 'passage.questions.options', 'level']));
     }
 
     /**
@@ -179,6 +208,8 @@ class QuestionController extends Controller
             'passage_questions_limit' => 'nullable|integer|min:1',
             'passage_is_random' => 'nullable',
             'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
+            'p_audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
+            'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
 
             // Questions Batch
             'questions' => 'nullable|array',
@@ -187,6 +218,7 @@ class QuestionController extends Controller
             'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
+            'questions.*.sort_order' => 'nullable|integer',
             'questions.*.options' => 'nullable|array',
         ]);
 
@@ -204,15 +236,17 @@ class QuestionController extends Controller
                 // If the selected passage is the SAME as the question's current passage,
                 // also update its content fields (user may have edited them)
                 if ($passageId && $question->passage_id == $passageId && $question->passage) {
-                    $pMediaPath = $question->passage->media_path;
-                    if ($request->hasFile('p_media_file')) {
-                        $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
-                    }
+                    $pMediaPath = $request->hasFile('p_media_file') ? $request->file('p_media_file')->store('passages', 'public') : $question->passage->media_path;
+                    $pAudioPath = $request->hasFile('p_audio_file') ? $request->file('p_audio_file')->store('passages/audio', 'public') : $question->passage->audio_path;
+                    $pImagePath = $request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $question->passage->image_path;
+
                     $question->passage->update([
                         'type'            => $request->passage_type ?? $question->passage->type,
                         'title'           => $request->passage_title ?? $question->passage->title,
                         'content'         => $request->passage_content ?? $question->passage->content,
                         'media_path'      => $pMediaPath,
+                        'audio_path'      => $pAudioPath,
+                        'image_path'      => $pImagePath,
                         'questions_limit' => $request->passage_questions_limit ?? $question->passage->questions_limit,
                         'is_random'       => $request->boolean('passage_is_random'),
                     ]);
@@ -246,15 +280,27 @@ class QuestionController extends Controller
 
             foreach ($questionsData as $index => $qData) {
                 $qMediaPath = null;
+                $qAudioPath = null;
+                $qImagePath = null;
                 $fileKey = "questions.{$index}.q_media_file";
+                $audioKey = "questions.{$index}.q_audio_file";
+                $imageKey = "questions.{$index}.q_image_file";
                 
-                // If it's a single update from legacy form, key might be q_media_file directly
-                if (!$request->hasFile($fileKey) && $request->hasFile('q_media_file') && count($questionsData) === 1) {
-                    $fileKey = 'q_media_file';
+                // Single update handling
+                if (count($questionsData) === 1) {
+                    if (!$request->hasFile($fileKey) && $request->hasFile('q_media_file')) $fileKey = 'q_media_file';
+                    if (!$request->hasFile($audioKey) && $request->hasFile('q_audio_file')) $audioKey = 'q_audio_file';
+                    if (!$request->hasFile($imageKey) && $request->hasFile('q_image_file')) $imageKey = 'q_image_file';
                 }
 
                 if ($request->hasFile($fileKey)) {
                     $qMediaPath = $request->file($fileKey)->store('questions', 'public');
+                }
+                if ($request->hasFile($audioKey)) {
+                    $qAudioPath = $request->file($audioKey)->store('questions/audio', 'public');
+                }
+                if ($request->hasFile($imageKey)) {
+                    $qImagePath = $request->file($imageKey)->store('questions/images', 'public');
                 }
 
                 $qInstance = isset($qData['id']) ? Question::find($qData['id']) : new Question();
@@ -268,13 +314,14 @@ class QuestionController extends Controller
                     'instructions' => $qData['instructions'] ?? null,
                     'content' => $qData['content'] ?? '',
                     'points' => $qData['points'] ?? 1,
+                    'sort_order' => $qData['sort_order'] ?? 0,
                     'min_words' => $qData['min_words'] ?? null,
                     'max_words' => $qData['max_words'] ?? null,
                 ];
 
-                if ($qMediaPath) {
-                    $data['media_path'] = $qMediaPath;
-                }
+                if ($qMediaPath) $data['media_path'] = $qMediaPath;
+                if ($qAudioPath) $data['audio_path'] = $qAudioPath;
+                if ($qImagePath) $data['image_path'] = $qImagePath;
 
                 $qInstance->fill($data);
                 $qInstance->save();

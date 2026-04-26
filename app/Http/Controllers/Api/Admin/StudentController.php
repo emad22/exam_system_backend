@@ -185,6 +185,11 @@ class StudentController extends Controller
 
         $student->update($studentUpdate);
 
+        // Synchronize package if skills were modified
+        if (isset($validated['assigned_skills'])) {
+            $student->syncPackageWithSkills();
+        }
+
         // 2. Update Identity (User)
         if ($student->user_id) {
             $user = User::find($student->user_id);
@@ -293,7 +298,7 @@ class StudentController extends Controller
     public function batchImport(Request $request)
     {
         $request->validate([
-            'file' => 'required|mimes:xlsx,csv,xls',
+            'file' => 'required|file|max:10240', // 10MB max, flexible mime check
             'partner_id' => 'nullable',
             'package_id' => 'nullable|exists:packages,id',
             'assigned_skills' => 'nullable' // JSON encoded or array
@@ -359,6 +364,9 @@ class StudentController extends Controller
                 // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
                 StudentExamConfig::where('student_id', $student->id)->delete();
                 Student::assignDefaultExam($student);
+                
+                // Sync package based on new skills
+                $student->syncPackageWithSkills();
 
                 $updatedCount++;
             }

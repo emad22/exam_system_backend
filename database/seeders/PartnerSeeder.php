@@ -12,12 +12,22 @@ class PartnerSeeder extends Seeder
      */
     public function run(): void
     {
+        $user = \App\Models\User::create([
+            "username" => "Arabacademy Partner",
+            'first_name' => 'Arabacademy',
+            'last_name' => 'Partner',
+            'email' => 'partner@arabacademy.com',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'role' => 'partner',
+            'is_active' => true,
+            'country' => 'Egypt'
+        ]);
+
         \App\Models\Partner::create([
-            'partner_name' => 'Arabacademy',          
+            'user_id' => $user->id,
+            'partner_name' => 'Arabacademy',
             'website' => 'https://arabacademy.com',
-            'country' => 'Egypt',
             'r_date' => now()->toDateString(),
-            'is_active' => 1,
             'note' => 'Seeded data partner for testing'
         ]);
     }

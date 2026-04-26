@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Question extends Model
 {
-    protected $appends = ['media_url'];
+    protected $appends = ['media_url', 'audio_url', 'image_url'];
 
     protected $fillable = [
         'skill_id', 
@@ -19,9 +19,12 @@ class Question extends Model
         'instructions',
         'content', 
         'media_path', 
+        'audio_path',
+        'image_path',
         'points',
         'min_words',
-        'max_words'
+        'max_words',
+        'sort_order'
     ];
 
     protected $casts = [
@@ -29,6 +32,7 @@ class Question extends Model
         'min_words' => 'integer',
         'max_words' => 'integer',
         'level_id' => 'integer',
+        'sort_order' => 'integer',
     ];
 
     public function skill(): BelongsTo
@@ -65,6 +69,22 @@ class Question extends Model
     {
         if ($this->media_path) {
             return asset('storage/' . $this->media_path);
+        }
+        return null;
+    }
+
+    public function getAudioUrlAttribute()
+    {
+        if ($this->audio_path) {
+            return asset('storage/' . $this->audio_path);
+        }
+        return null;
+    }
+
+    public function getImageUrlAttribute()
+    {
+        if ($this->image_path) {
+            return asset('storage/' . $this->image_path);
         }
         return null;
     }
