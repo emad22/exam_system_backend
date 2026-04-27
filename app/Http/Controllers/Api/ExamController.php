@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
+use App\Models\ExamAttemptLevel;
+use App\Models\ExamQuestionRule;
+use App\Models\Level;
 use App\Models\Question;
 use App\Models\StudentAnswer;
 use App\Models\StudentExamConfig;
@@ -20,27 +23,27 @@ class ExamController extends Controller
     {
         $user = $request->user();
         $studentProfile = $user->student;
-        
+
         if (!$studentProfile) {
             return response()->json([]);
         }
 
         // Filter exams based on what has been explicitly assigned or is in their package
         $assignedExamIds = $studentProfile->configs()->pluck('exam_id')->toArray();
-        
+
         if ($studentProfile->package && $studentProfile->package->exam_id) {
             if (!in_array($studentProfile->package->exam_id, $assignedExamIds)) {
                 $assignedExamIds[] = $studentProfile->package->exam_id;
             }
         }
-        
+
         $exams = Exam::whereIn('id', $assignedExamIds)
             ->with(['language', 'skills'])
             ->get();
 
         // Priority 1: Specifically assigned in students table
         $allowedSkillIdentifiers = array_filter((array) $studentProfile->assigned_skills);
-        
+
         // Priority 2: Skills defined in the package_id in students table
         if (empty($allowedSkillIdentifiers) && $studentProfile->package && $studentProfile->package->skills) {
             $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
@@ -52,13 +55,13 @@ class ExamController extends Controller
         }
 
         // Attach attempt status and filter visible skills
-        $exams->each(function($exam) use ($studentProfile, $allowedSkillIdentifiers) {
+        $exams->each(function ($exam) use ($studentProfile, $allowedSkillIdentifiers) {
             // Restore the skill filtering logic
             if (!empty($allowedSkillIdentifiers)) {
-                $filteredSkills = $exam->skills->filter(function($skill) use ($allowedSkillIdentifiers) {
+                $filteredSkills = $exam->skills->filter(function ($skill) use ($allowedSkillIdentifiers) {
                     $skillName = strtolower(trim($skill->name));
                     $skillCode = strtolower(trim($skill->short_code));
-                    
+
                     foreach ($allowedSkillIdentifiers as $idOrCode) {
                         $match = strtolower(trim($idOrCode));
                         if ($skill->id == $match || $skillName == $match || $skillCode == $match) {
@@ -69,22 +72,24 @@ class ExamController extends Controller
                 });
                 $exam->setRelation('skills', $filteredSkills->values());
             }
-            
+
             // 1. Get the latest attempt for the "Resume" logic
             $exam->latest_attempt = ExamAttempt::where('student_id', $studentProfile->id)
                 ->where('exam_id', $exam->id)
-                ->with('attemptSkills') 
+                ->with('attemptSkills')
                 ->orderBy('created_at', 'desc')
                 ->first();
 
-            // 2. Aggregate all COMPLETED skill IDs across ALL attempts for this student/exam
-            $exam->completed_skill_ids = \App\Models\ExamAttemptSkill::whereHas('attempt', function($q) use ($studentProfile, $exam) {
-                    $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
-                })
-                ->whereIn('status', ['completed', 'failed'])
-                ->pluck('skill_id')
-                ->unique()
-                ->values();
+            // 2. Aggregate COMPLETED skill IDs ONLY for the latest attempt (if it exists)
+            if ($exam->latest_attempt) {
+                $exam->completed_skill_ids = \App\Models\ExamAttemptSkill::where('exam_attempt_id', $exam->latest_attempt->id)
+                    ->whereIn('status', ['completed', 'failed'])
+                    ->pluck('skill_id')
+                    ->unique()
+                    ->values();
+            } else {
+                $exam->completed_skill_ids = [];
+            }
         });
 
         return response()->json($exams);
@@ -104,13 +109,13 @@ class ExamController extends Controller
 
         // --- NEW: Block Repeated Skill Attempts ---
         if ($request->has('skill_id')) {
-            $requestedSkillId = (int)$request->skill_id;
-            $hasCompletedSkill = \App\Models\ExamAttemptSkill::whereHas('attempt', function($q) use ($studentProfile, $exam) {
+            $requestedSkillId = (int) $request->skill_id;
+            $hasCompletedSkill = \App\Models\ExamAttemptSkill::whereHas('attempt', function ($q) use ($studentProfile, $exam) {
                 $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
             })->where('skill_id', $requestedSkillId)
-              ->whereIn('status', ['completed', 'failed']) // Statuses that mean "Done"
-              ->exists();
-            
+                ->whereIn('status', ['completed', 'failed']) // Statuses that mean "Done"
+                ->exists();
+
             if ($hasCompletedSkill) {
                 return response()->json(['error' => 'You have already completed the evaluation for this specific module.'], 403);
             }
@@ -125,13 +130,20 @@ class ExamController extends Controller
         if ($attempt) {
             // Case: RESUME but with a specific skill request
             if ($request->has('skill_id')) {
-                $requestedSkillId = (int)$request->skill_id;
+                $requestedSkillId = (int) $request->skill_id;
                 $pos = $attempt->current_position;
                 $skillIndex = array_search($requestedSkillId, $pos['skill_ids']);
-                
+
                 if ($skillIndex !== false) {
+                    // --- FIX: If switching to a NEW skill, reset the timer start time to null ---
+                    // This prevents the timer from running while the user is still in the dashboard 
+                    // or on the "Launch Assessment" (instructions) screen.
+                    if ($pos['current_skill_index'] !== $skillIndex) {
+                        $pos['current_skill_started_at'] = null;
+                        $pos['current_level'] = 1; // Start from Level 1 for the new skill
+                    }
+                    
                     $pos['current_skill_index'] = $skillIndex;
-                    $pos['current_level'] = 1; // Start from Level 1 for the new skill
                     $attempt->update(['current_position' => $pos]);
                 }
             }
@@ -144,7 +156,7 @@ class ExamController extends Controller
             // If no config exists, try to auto-assign it (e.g. from package or defaults)
             if (!$config) {
                 $config = \App\Models\Student::assignDefaultExam($studentProfile, $exam->id);
-                
+
                 if (!$config) {
                     return response()->json(['error' => 'This exam has not been formally assigned to your account or package.'], 403);
                 }
@@ -178,18 +190,23 @@ class ExamController extends Controller
                     }
                 } else {
                     // Fallback to config flags if no granular identifiers
-                    if ($skillName === 'listening' && $config->want_listening) $shouldInclude = true;
-                    if (($skillName === 'reading' || $skillName === 'reading comprehension') && $config->want_reading) $shouldInclude = true;
-                    if (($skillName === 'grammar' || $skillName === 'structure') && $config->want_grammar) $shouldInclude = true;
-                    if ($skillName === 'writing' && $config->want_writing) $shouldInclude = true;
-                    if ($skillName === 'speaking' && $config->want_speaking) $shouldInclude = true;
+                    if ($skillName === 'listening' && $config->want_listening)
+                        $shouldInclude = true;
+                    if (($skillName === 'reading' || $skillName === 'reading comprehension') && $config->want_reading)
+                        $shouldInclude = true;
+                    if (($skillName === 'grammar' || $skillName === 'structure') && $config->want_grammar)
+                        $shouldInclude = true;
+                    if ($skillName === 'writing' && $config->want_writing)
+                        $shouldInclude = true;
+                    if ($skillName === 'speaking' && $config->want_speaking)
+                        $shouldInclude = true;
                 }
 
                 if ($shouldInclude) {
                     $assignedSkills[] = $skill->id;
                 }
             }
-            
+
             if (empty($assignedSkills)) {
                 return response()->json(['error' => 'No skills have been activated for your exam attempt. Please contact an administrator.'], 422);
             }
@@ -197,7 +214,7 @@ class ExamController extends Controller
             // Determine starting index
             $startIndex = 0;
             if ($request->has('skill_id')) {
-                $foundIndex = array_search((int)$request->skill_id, $assignedSkills);
+                $foundIndex = array_search((int) $request->skill_id, $assignedSkills);
                 if ($foundIndex !== false) {
                     $startIndex = $foundIndex;
                 }
@@ -211,7 +228,8 @@ class ExamController extends Controller
                     'skill_ids' => $assignedSkills,
                     'current_skill_index' => $startIndex,
                     'current_level' => 1,
-                    'completed_skills' => []
+                    'completed_skills' => [],
+                    'current_skill_started_at' => null // Timer starts only when getNextBatch is called
                 ]
             ]);
         }
@@ -239,7 +257,7 @@ class ExamController extends Controller
             return response()->json(['error' => 'Exam configuration error: Skill not found.'], 500);
         }
 
-        $skillId  = $pos['skill_ids'][$pos['current_skill_index']];
+        $skillId = $pos['skill_ids'][$pos['current_skill_index']];
         $levelNum = $pos['current_level'];
 
         $level = \App\Models\Level::where('skill_id', $skillId)
@@ -256,7 +274,9 @@ class ExamController extends Controller
             ->toArray();
 
         // Ordering based on level's is_random flag
-        $orderMethod = $level->is_random ? 'inRandomOrder' : function($q) { return $q->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc'); };
+        $orderMethod = $level->is_random ? 'inRandomOrder' : function ($q) {
+            return $q->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
+        };
 
         // Find level-specific rules first, then fall back to skill-wide rules
         $rules = \App\Models\ExamQuestionRule::where('exam_id', $attempt->exam_id)
@@ -276,14 +296,14 @@ class ExamController extends Controller
         if ($rules->isNotEmpty()) {
             foreach ($rules as $rule) {
                 $standaloneQty = $rule->standalone_quantity ?? 0;
-                $passageQty    = $rule->passage_quantity    ?? 0;
-                $legacyQty     = $rule->quantity ?? 0;
+                $passageQty = $rule->passage_quantity ?? 0;
+                $legacyQty = $rule->quantity ?? 0;
 
                 // Fallback to Level defaults if rule is empty
                 if ($standaloneQty === 0 && $passageQty === 0 && $legacyQty === 0) {
                     $standaloneQty = $level->default_standalone_quantity ?? 0;
-                    $passageQty    = $level->default_passage_quantity    ?? 0;
-                    $legacyQty     = $level->default_question_count      ?? 0;
+                    $passageQty = $level->default_passage_quantity ?? 0;
+                    $legacyQty = $level->default_question_count ?? 0;
                 }
 
                 // --- Composition mode: both are specified ---
@@ -380,8 +400,8 @@ class ExamController extends Controller
         } else {
             // No rules at all — fallback to Level defaults
             $standaloneQty = $level->default_standalone_quantity ?? 0;
-            $passageQty    = $level->default_passage_quantity    ?? 0;
-            $legacyQty     = $level->default_question_count      ?? 5;
+            $passageQty = $level->default_passage_quantity ?? 0;
+            $legacyQty = $level->default_question_count ?? 0;
 
             if ($standaloneQty > 0 || $passageQty > 0) {
                 // 1. Fetch standalone questions
@@ -404,7 +424,7 @@ class ExamController extends Controller
 
                 // 2. Fetch passages
                 if ($passageQty > 0) {
-                    $answeredPassageIds = \App\Models\Question::whereIn('id', $answeredIds)
+                    $answeredPassageIds = Question::whereIn('id', $answeredIds)
                         ->whereNotNull('passage_id')
                         ->pluck('passage_id')
                         ->unique()
@@ -448,7 +468,11 @@ class ExamController extends Controller
                     ? $query->inRandomOrder()
                     : $query->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
 
-                $ruleQuestions = $query->take($legacyQty)->get();
+                if ($legacyQty > 0) {
+                    $ruleQuestions = $query->take($legacyQty)->get();
+                } else {
+                    $ruleQuestions = $query->get();
+                }
 
                 // Group expansion: If any selected question has a passage, we MUST fetch the whole passage group
                 // to avoid showing a passage with missing questions.
@@ -456,14 +480,14 @@ class ExamController extends Controller
                 foreach ($ruleQuestions as $q) {
                     if ($q->passage_id && !in_array($q->passage_id, $processedPassages)) {
                         $processedPassages[] = $q->passage_id;
-                        $passageQuestions = \App\Models\Question::where('passage_id', $q->passage_id)
+                        $passageQuestions = Question::where('passage_id', $q->passage_id)
                             ->with(['options', 'passage'])
                             ->orderBy('sort_order', 'asc')
                             ->orderBy('id', 'asc')
                             ->get();
-                        
+
                         // Only add questions from this passage that haven't been answered yet
-                        foreach($passageQuestions as $pq) {
+                        foreach ($passageQuestions as $pq) {
                             if (!in_array($pq->id, $answeredIds)) {
                                 $questions->push($pq);
                             }
@@ -472,15 +496,24 @@ class ExamController extends Controller
                         $questions->push($q);
                     }
                 }
-                
+
                 // Ensure unique collection (in case multiple questions from the same passage were in the initial take)
                 $questions = $questions->unique('id')->values();
             }
         }
 
+        // Deduplicate — prevents passage questions appearing twice if rules overlap
+        $questions = $questions->unique('id')->values();
+
+        // Shuffle options for each question so answer order is random on every attempt
+        $questions = $questions->map(function ($q) {
+            $q->setRelation('options', $q->options->shuffle());
+            return $q;
+        });
+
         if ($questions->isEmpty()) {
             return response()->json([
-                'error'    => "Empty Question Set: No questions found for level '{$level->name}' (Skill ID: {$skillId}). Please verify that questions are assigned to this level and linked to the exam.",
+                'error' => "Empty Question Set: No questions found for level '{$level->name}' (Skill ID: {$skillId}). Please verify that questions are assigned to this level and linked to the exam.",
                 'is_empty' => true,
                 'debug' => [
                     'skill_id' => $skillId,
@@ -491,11 +524,26 @@ class ExamController extends Controller
             ], 404);
         }
 
+        // --- FIX: Initialize timer ONLY when the first batch is fetched (Launch clicked) ---
+        if (!isset($pos['current_skill_started_at']) || $pos['current_skill_started_at'] === null) {
+            $pos['current_skill_started_at'] = now()->toIso8601String();
+            $attempt->update(['current_position' => $pos]);
+        }
+
+        $skillDuration = \Illuminate\Support\Facades\DB::table('exam_skill')
+            ->where('exam_id', $attempt->exam_id)
+            ->where('skill_id', $skillId)
+            ->value('duration') ?? 0;
+
         return response()->json([
-            'skill'           => \App\Models\Skill::find($skillId),
-            'level'           => $level,
-            'questions'       => $questions,
+            'skill' => \App\Models\Skill::find($skillId),
+            'level' => $level,
+            'questions' => $questions,
             'total_questions' => $this->getTotalSkillQuestions($attempt->exam_id, $skillId),
+            'timer_type' => $attempt->exam->timer_type ?? 'global',
+            'time_limit' => $attempt->exam->time_limit ?? 0,
+            'skill_duration' => $skillDuration,
+            'current_skill_started_at' => $pos['current_skill_started_at'],
         ]);
     }
 
@@ -505,41 +553,43 @@ class ExamController extends Controller
      */
     private function getTotalSkillQuestions(int $examId, int $skillId): int
     {
-        $levels = \App\Models\Level::where('skill_id', $skillId)
+        $exam = Exam::find($examId); // Load once outside the loop to avoid N+1
+
+        // Pre-load all rules for this exam+skill to avoid N+1 inside the loop
+        $allRules = ExamQuestionRule::where('exam_id', $examId)
+            ->where('skill_id', $skillId)
+            ->get();
+        $rulesByLevel = $allRules->whereNotNull('level_id')->groupBy('level_id');
+        $globalRules  = $allRules->whereNull('level_id');
+
+        $levels = Level::where('skill_id', $skillId)
             ->where('is_active', true)
             ->get();
 
         $total = 0;
         foreach ($levels as $level) {
-            // Find rules for this level
-            $rules = \App\Models\ExamQuestionRule::where('exam_id', $examId)
-                ->where('skill_id', $skillId)
-                ->where('level_id', $level->id)
-                ->get();
-
+            // Use pre-loaded rules — no extra queries
+            $rules = $rulesByLevel->get($level->id, collect());
             if ($rules->isEmpty()) {
-                $rules = \App\Models\ExamQuestionRule::where('exam_id', $examId)
-                    ->where('skill_id', $skillId)
-                    ->whereNull('level_id')
-                    ->get();
+                $rules = $globalRules;
             }
 
             if ($rules->isNotEmpty()) {
                 foreach ($rules as $rule) {
                     $total += ($rule->standalone_quantity ?? 0);
-                    
+
                     if ($rule->passage_quantity > 0) {
-                        $passages = \App\Models\Question::where('skill_id', $skillId)
+                        $passages = Question::where('skill_id', $skillId)
                             ->where('level_id', $level->id)
                             ->whereNotNull('passage_id')
                             ->select('passage_id')
                             ->distinct()
                             ->take($rule->passage_quantity)
                             ->pluck('passage_id');
-                        
-                        $total += \App\Models\Question::whereIn('passage_id', $passages)->count();
+
+                        $total += Question::whereIn('passage_id', $passages)->count();
                     }
-                    
+
                     // Legacy quantity fallback
                     if (($rule->quantity ?? 0) > 0 && ($rule->standalone_quantity ?? 0) == 0 && ($rule->passage_quantity ?? 0) == 0) {
                         $total += $rule->quantity;
@@ -549,22 +599,30 @@ class ExamController extends Controller
                 // Fallback to level defaults
                 $standalone = $level->default_standalone_quantity ?? 0;
                 $passageQty = $level->default_passage_quantity ?? 0;
-                $legacy     = $level->default_question_count ?? 5;
+                $legacy = $level->default_question_count ?? 0;
 
                 if ($standalone > 0 || $passageQty > 0) {
                     $total += $standalone;
                     if ($passageQty > 0) {
-                        $passages = \App\Models\Question::where('skill_id', $skillId)
+                        $passages = Question::where('skill_id', $skillId)
                             ->where('level_id', $level->id)
                             ->whereNotNull('passage_id')
                             ->select('passage_id')
                             ->distinct()
                             ->take($passageQty)
                             ->pluck('passage_id');
-                        $total += \App\Models\Question::whereIn('passage_id', $passages)->count();
+                        $total += Question::whereIn('passage_id', $passages)->count();
                     }
                 } else {
-                    $total += $legacy;
+                    if ($legacy > 0) {
+                        $total += $legacy;
+                    } else {
+                        // Unlimited mode (legacy = 0): use pre-loaded $exam — no extra query
+                        $total += $exam->questions()
+                            ->where('questions.skill_id', $skillId)
+                            ->where('questions.level_id', $level->id)
+                            ->count();
+                    }
                 }
             }
         }
@@ -601,24 +659,31 @@ class ExamController extends Controller
         $skillId = $pos['skill_ids'][$pos['current_skill_index']];
         $levelNum = $pos['current_level'];
 
-        $level = \App\Models\Level::where('skill_id', $skillId)
+        $level = Level::where('skill_id', $skillId)
             ->where('level_number', $levelNum)
             ->first();
 
         // --- Calculate score for this batch (Weighted by points) ---
         $earnedPoints = 0;
         $totalPossiblePoints = 0;
-        
+
+        // Pre-fetch all questions and options to avoid N+1 query problem
+        $questionIds = collect($request->answers)->pluck('question_id')->unique()->toArray();
+        $questionsMap = Question::with('options')->whereIn('id', $questionIds)->get()->keyBy('id');
+
         foreach ($request->answers as $index => $ans) {
-            $question = Question::find($ans['question_id']);
+            $question = $questionsMap->get($ans['question_id']);
+            if (!$question)
+                continue;
+
             $totalPossiblePoints += $question->points;
             $isCorrect = false;
 
             if ($question->type === 'mcq' && isset($ans['option_id'])) {
-                $option = $question->options()->find($ans['option_id']);
+                $option = $question->options->firstWhere('id', (int) $ans['option_id']);
                 $isCorrect = $option ? $option->is_correct : false;
             }
-            
+
             // Handle Audio Upload for Speaking tasks
             $mediaPath = null;
             if ($request->hasFile("answers.{$index}.audio_file")) {
@@ -626,50 +691,63 @@ class ExamController extends Controller
                 $mediaPath = $file->store("attempts/{$attempt->id}/answers", 'public');
             }
 
-            if ($isCorrect) $earnedPoints += $question->points;
+            if ($isCorrect) {
+                $earnedPoints += $question->points;
+            }
 
             StudentAnswer::updateOrCreate(
                 ['exam_attempt_id' => $attempt->id, 'question_id' => $question->id],
                 [
-                    'option_id'      => $ans['option_id'] ?? null,
-                    'text_answer'    => $ans['text_answer'] ?? null,
-                    'media_answer'   => $mediaPath,
-                    'is_correct'     => $isCorrect,
+                    'option_id' => $ans['option_id'] ?? null,
+                    'text_answer' => $ans['text_answer'] ?? null,
+                    'media_answer' => $mediaPath,
+                    'is_correct' => $isCorrect,
                     'points_awarded' => $isCorrect ? $question->points : 0,
                 ]
             );
         }
 
-        $batchScore    = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 0;
+        $batchScore = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 0;
         $passThreshold = $level->pass_threshold ?? 70;
-        $passed        = $batchScore >= $passThreshold;
+        $passed = $batchScore >= $passThreshold;
 
         $answeredIds = StudentAnswer::where('exam_attempt_id', $attempt->id)
             ->pluck('question_id')
             ->toArray();
 
-        $remainingQuestionsCount = \App\Models\Question::where('level_id', $level->id)
+        $remainingQuestionsCount = Question::where('exam_id', $attempt->exam_id)
+            ->where('skill_id', $skillId)
+            ->where('level_id', $level->id)
             ->whereNotIn('id', $answeredIds)
             ->count();
 
         // --- Log Level Performance (Movement Log) ---
-        \App\Models\ExamAttemptLevel::create([
+        ExamAttemptLevel::create([
             'exam_attempt_id' => $attempt->id,
-            'skill_id'        => $skillId,
-            'level_number'    => $levelNum,
-            'score'           => $batchScore,
-            'status'          => $passed ? 'passed' : 'failed',
+            'skill_id' => $skillId,
+            'level_number' => $levelNum,
+            'score' => $batchScore,
+            'status' => $passed ? 'passed' : 'failed',
         ]);
 
-        // --- Determine the student's exam mode ---
-        $student     = $attempt->student;          // relationship: ExamAttempt->student
-        $isAdaptive  = !$student->not_adaptive;    // not_adaptive = 1 means NOT adaptive
+        // --- Calculate Aggregate Skill Score (Sum of Max Score per Level) ---
+        // Since each level is out of 100 and there are 9 levels, the total is out of 900.
+        $totalSkillScore = \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->groupBy('level_number')
+            ->selectRaw('max(score) as max_score')
+            ->get()
+            ->sum('max_score');
 
-        $nextPos     = $pos;
+        // --- Determine the student's exam mode ---
+        $student = $attempt->student;          // relationship: ExamAttempt->student
+        $isAdaptive = !$student->not_adaptive;    // not_adaptive = 1 means NOT adaptive
+
+        $nextPos = $pos;
         $finishedExam = false;
-        $skillEnded   = false;
+        $skillEnded = false;
         $placementLevel = null;   // For not-adaptive: the level where student stopped
-        $placementScore = null;
+        $placementScore = $totalSkillScore; // Use the aggregate score for final report
 
         // Check if another level exists at all
         $nextLevelExists = \App\Models\Level::where('skill_id', $skillId)
@@ -691,9 +769,9 @@ class ExamController extends Controller
                         ['skill_id' => $skillId],
                         [
                             'max_level_reached' => $levelNum,
-                            'score'             => $batchScore,
-                            'status'            => 'completed', // They finished all levels
-                            'finished_at'       => now(),
+                            'score' => $totalSkillScore,
+                            'status' => 'completed', // They finished all levels
+                            'finished_at' => now(),
                         ]
                     );
                 }
@@ -706,39 +784,40 @@ class ExamController extends Controller
             // FAIL → check if retry is allowed
             // PASS → move to next level (if any), otherwise skill is done.
             if (!$passed) {
-                // Count how many times the student has already failed THIS level
-                $failCount = \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                    ->where('skill_id', $skillId)
-                    ->where('level_number', $levelNum)
-                    ->where('status', 'failed')
-                    ->count();
+                // Immediate failure logic as per user request: Stop skill on first level failure
+                $skillEnded = true;
+                $placementLevel = $levelNum;
+                $placementScore = $totalSkillScore;
 
-                // If the level allows retry AND this is their FIRST fail → give a second chance
-                // BUT only if there are actually more questions left to answer!
-                if ($level->allows_retry && $failCount <= 1 && $remainingQuestionsCount > 0) {
-                    // Stay on the same level — getNextBatch will serve fresh questions
-                } else {
-                    // Second fail (or retry not allowed) → Stop skill
-                    $skillEnded     = true;
-                    $placementLevel = $levelNum;
-                    $placementScore = $batchScore;
-
-                    $attempt->attemptSkills()->updateOrCreate(
-                        ['skill_id' => $skillId],
-                        [
-                            'max_level_reached'  => $levelNum,
-                            'score'              => $batchScore,
-                            'status'             => 'failed',
-                            'placement_level'    => $levelNum,
-                            'placement_score'    => $batchScore,
-                            'finished_at'        => now(),
-                        ]
-                    );
+                // --- NEW: Find the FIRST wrong question in this specific batch to record as the exit cause ---
+                $firstWrongQuestionId = null;
+                // $request->answers is the array of answers submitted in this request
+                foreach ($request->answers as $ans) {
+                    if (isset($ans['question_id']) && !($ans['is_correct'] ?? false)) {
+                        $firstWrongQuestionId = $ans['question_id'];
+                        break;
+                    }
                 }
+
+                if ($firstWrongQuestionId) {
+                    $attempt->update(['last_seen_question_id' => $firstWrongQuestionId]);
+                }
+
+                $attempt->attemptSkills()->updateOrCreate(
+                    ['skill_id' => $skillId],
+                    [
+                        'max_level_reached' => $levelNum,
+                        'score' => $totalSkillScore,
+                        'status' => 'failed',
+                        'placement_level' => max($levelNum - 1, 1),
+                        'placement_score' => $totalSkillScore,
+                        'finished_at' => now(),
+                    ]
+                );
             } elseif ($passed) {
                 // Check if this was a pass on a SECOND attempt (retry)
                 // If they failed once before at this same level, it's a retry pass.
-                $previousFailCount = \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                $previousFailCount = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
                     ->where('skill_id', $skillId)
                     ->where('level_number', $levelNum)
                     ->where('status', 'failed')
@@ -746,19 +825,19 @@ class ExamController extends Controller
 
                 if ($previousFailCount > 0) {
                     // Student PASSED on second attempt → Stop skill as per request
-                    $skillEnded     = true;
+                    $skillEnded = true;
                     $placementLevel = $levelNum;
-                    $placementScore = $batchScore;
+                    $placementScore = $totalSkillScore;
 
                     $attempt->attemptSkills()->updateOrCreate(
                         ['skill_id' => $skillId],
                         [
-                            'max_level_reached'  => $levelNum,
-                            'score'              => $batchScore,
-                            'status'             => 'completed',
-                            'placement_level'    => $levelNum,
-                            'placement_score'    => $batchScore,
-                            'finished_at'        => now(),
+                            'max_level_reached' => $levelNum,
+                            'score' => $totalSkillScore,
+                            'status' => 'completed',
+                            'placement_level' => $levelNum,
+                            'placement_score' => $totalSkillScore,
+                            'finished_at' => now(),
                         ]
                     );
                 } elseif ($remainingQuestionsCount == 0) {
@@ -767,23 +846,23 @@ class ExamController extends Controller
                         $nextPos['current_level'] = $levelNum + 1;
                     } else {
                         // Student PASSED the final level on first attempt → skill done
-                        $skillEnded     = true;
+                        $skillEnded = true;
                         $placementLevel = $levelNum;
-                        $placementScore = $batchScore;
-    
+                        $placementScore = $totalSkillScore;
+
                         $attempt->attemptSkills()->updateOrCreate(
                             ['skill_id' => $skillId],
                             [
-                            'max_level_reached'  => $levelNum,
-                            'score'              => $batchScore,
-                            'status'             => 'completed',
-                            'placement_level'    => $levelNum,
-                            'placement_score'    => $batchScore,
-                            'finished_at'        => now(),
-                        ]
-                    );
+                                'max_level_reached' => $levelNum,
+                                'score' => $totalSkillScore,
+                                'status' => 'completed',
+                                'placement_level' => $levelNum,
+                                'placement_score' => $totalSkillScore,
+                                'finished_at' => now(),
+                            ]
+                        );
+                    }
                 }
-            }
             }
         } // Close else for non-adaptive mode
 
@@ -792,6 +871,7 @@ class ExamController extends Controller
             if ($pos['current_skill_index'] < count($pos['skill_ids']) - 1) {
                 $nextPos['current_skill_index']++;
                 $nextPos['current_level'] = 1;
+                $nextPos['current_skill_started_at'] = null; // Timer should only start when they launch the next skill
             } else {
                 $finishedExam = true;
             }
@@ -804,16 +884,34 @@ class ExamController extends Controller
         }
 
         return response()->json([
-            'passed_level'    => $passed,
-            'batch_score'     => $batchScore,
-            'skill_ended'     => $skillEnded,
-            'finished_exam'   => $finishedExam,
+            'passed_level' => $passed,
+            'batch_score' => $batchScore,
+            'skill_ended' => $skillEnded,
+            'finished_exam' => $finishedExam,
             'placement_level' => $placementLevel,
             'placement_score' => $placementScore,
-            'is_adaptive'     => $isAdaptive,
+            'is_adaptive' => $isAdaptive,
             // retry_attempt: true triggers the "Second Chance" notification on the frontend
-            'retry_attempt'   => (!$passed && !$skillEnded && !$isAdaptive), 
-            'next_step'       => $finishedExam ? 'results' : ($skillEnded ? 'dashboard' : 'next_batch'),
+            'retry_attempt' => (!$passed && !$skillEnded && !$isAdaptive),
+            'next_step' => $finishedExam ? 'results' : ($skillEnded ? 'dashboard' : 'next_batch'),
         ]);
+    }
+
+    /**
+     * Update the last seen question ID for an attempt.
+     */
+    public function updateProgress(Request $request, ExamAttempt $attempt)
+    {
+        $request->validate([
+            'question_id' => 'required|exists:questions,id'
+        ]);
+
+        if ($attempt->status !== 'ongoing') {
+            return response()->json(['error' => 'Exam is not active.'], 403);
+        }
+
+        $attempt->update(['last_seen_question_id' => $request->question_id]);
+
+        return response()->json(['success' => true]);
     }
 }

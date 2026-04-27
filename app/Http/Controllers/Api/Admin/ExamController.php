@@ -22,10 +22,9 @@ class ExamController extends Controller
 
         // Attach breakdown logic
         $exams->each(function($exam) {
-            $exam->breakdown = DB::table('exam_questions')
-                ->join('questions', 'questions.id', '=', 'exam_questions.question_id')
+            $exam->breakdown = DB::table('questions')
                 ->join('levels', 'levels.id', '=', 'questions.level_id')
-                ->where('exam_questions.exam_id', $exam->id)
+                ->where('questions.exam_id', $exam->id)
                 ->select('questions.skill_id', 'levels.level_number as level_id', DB::raw('count(*) as count'))
                 ->groupBy('questions.skill_id', 'levels.level_number')
                 ->get();
@@ -99,7 +98,7 @@ class ExamController extends Controller
 
             // Sync direct question assignments
             if (!empty($validated['question_ids'])) {
-                $exam->questions()->sync($validated['question_ids']);
+                \App\Models\Question::whereIn('id', $validated['question_ids'])->update(['exam_id' => $exam->id]);
             }
 
             return response()->json([
@@ -186,7 +185,12 @@ class ExamController extends Controller
 
             // Sync direct question assignments
             if (isset($validated['question_ids'])) {
-                $exam->questions()->sync($validated['question_ids']);
+                // First, unassign old questions
+                \App\Models\Question::where('exam_id', $exam->id)->update(['exam_id' => null]);
+                // Then assign new ones
+                if (!empty($validated['question_ids'])) {
+                    \App\Models\Question::whereIn('id', $validated['question_ids'])->update(['exam_id' => $exam->id]);
+                }
             }
 
             return response()->json([
@@ -202,8 +206,8 @@ class ExamController extends Controller
     public function destroy(Exam $exam)
     {
         return DB::transaction(function () use ($exam) {
-            // Detach relationships in pivot tables
-            $exam->questions()->detach();
+            // Unassign questions and detach skills
+            $exam->questions()->update(['exam_id' => null]);
             $exam->skills()->detach();
             
             // Delete metadata

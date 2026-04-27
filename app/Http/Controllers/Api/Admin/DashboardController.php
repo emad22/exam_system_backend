@@ -22,10 +22,17 @@ class DashboardController extends Controller
             'live_students_count' => ExamAttempt::where('status', 'ongoing')
                 ->where('updated_at', '>=', now()->subMinutes(30))
                 ->count(),
-            'recent_attempts' => ExamAttempt::with(['student', 'exam'])
+            'recent_attempts' => ExamAttempt::with(['student.user', 'exam', 'attemptSkills.skill'])
                 ->orderBy('created_at', 'desc')
                 ->take(5)
-                ->get(),
+                ->get()
+                ->map(function($attempt) {
+                    $totalScore = $attempt->attemptSkills->sum('score');
+                    $attempt->total_score = $totalScore;
+                    // Assuming max is 900 * number of assigned skills, but let's just show the raw sum for now
+                    $attempt->accuracy = $attempt->attemptSkills->avg('score') ?? 0;
+                    return $attempt;
+                }),
         ]);
     }
 }

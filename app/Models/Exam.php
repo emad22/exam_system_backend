@@ -70,10 +70,8 @@ class Exam extends Model
             ->withTimestamps();
     }
 
-    public function questions(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    public function questions(): HasMany
     {
-        return $this->belongsToMany(Question::class, 'exam_questions')
-            ->withPivot('order', 'is_random')
-            ->withTimestamps();
+        return $this->hasMany(Question::class);
     }
 }

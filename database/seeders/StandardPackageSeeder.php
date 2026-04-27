@@ -24,7 +24,8 @@ class StandardPackageSeeder extends Seeder
             [
                 'skills_count' => 3,
                 'description' => 'Core assessment: Listening, Reading, Structure.',
-                'wp_package_id' => 'pkg_adult_3'
+                'wp_package_id' => 'pkg_adult_3',
+                'exam_id'=> '1',
             ]
         );
 
@@ -34,7 +35,8 @@ class StandardPackageSeeder extends Seeder
             [
                 'skills_count' => 4,
                 'description' => 'Enhanced assessment: Listening, Reading, Structure, Writing.',
-                'wp_package_id' => 'pkg_adult_4'
+                'wp_package_id' => 'pkg_adult_4',
+                'exam_id'=> '1',
             ]
         );
 
@@ -44,7 +46,8 @@ class StandardPackageSeeder extends Seeder
             [
                 'skills_count' => 5,
                 'description' => 'Full assessment: Listening, Reading, Structure, Writing, Speaking.',
-                'wp_package_id' => 'pkg_adult_5'
+                'wp_package_id' => 'pkg_adult_5',
+                'exam_id'=> '1',
             ]
         );
     }

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Level;
+use App\Models\Question;
 use App\Models\Student;
 use App\Models\User;
 use App\Models\Package;
@@ -175,8 +177,14 @@ class StudentController extends Controller
 
         // 1. Update Profile (Student)
         $studentUpdate = $request->only([
-            'package_id', 'exam_category_id', 'student_type', 'student_code',
-            'come_from', 'year_of_arabic', 'not_adaptive', 'partner_id'
+            'package_id',
+            'exam_category_id',
+            'student_type',
+            'student_code',
+            'come_from',
+            'year_of_arabic',
+            'not_adaptive',
+            'partner_id'
         ]);
 
         if (isset($validated['assigned_skills'])) {
@@ -237,7 +245,7 @@ class StudentController extends Controller
      */
     public function show(Student $student)
     {
-        return response()->json($student->load([
+        $student->load([
             'user',
             'package',
             'category',
@@ -246,7 +254,108 @@ class StudentController extends Controller
             'attempts.attemptLevels' => function ($q) {
                 $q->orderBy('created_at', 'asc');
             }
-        ]));
+        ]);
+
+        // Fetch level names for mapping (assuming names are consistent across skills for same level_number)
+        $levelMap = \App\Models\Level::where('skill_id', 1)->pluck('name', 'level_number')->toArray();
+
+        // Transform attempts to include clear outcome and total scores
+        $student->attempts->each(function ($attempt) use ($levelMap) {
+            $total = $attempt->attemptSkills->sum('score');
+            $count = $attempt->attemptSkills->count();
+            $attempt->total_score = $total;
+            $attempt->max_possible = $count * 900;
+            $attempt->score_display = $count > 0 ? "$total / " . ($count * 900) : "0 / 0";
+
+            // Map attempt skills to include level names based on ACTUAL achievement
+            if ($attempt->attemptSkills) {
+                $attempt->attemptSkills->each(function ($as) use ($levelMap) {
+                    // If they are still in the level or failed it, their achieved level is N-1
+                    $displayLevel = $as->status === 'completed' 
+                        ? $as->max_level_reached 
+                        : max($as->max_level_reached - 1, 1);
+
+                    $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
+                });
+            }
+
+            // Clean outcome text
+            if ($attempt->status === 'ongoing') {
+                $attempt->outcome_text = 'In Progress';
+            } else {
+                $attempt->outcome_text = $attempt->placement_level ? ($levelMap[$attempt->placement_level] ?? "Level {$attempt->placement_level}") : "Completed";
+            }
+
+            // --- PROGRESS TRACKING: Identify the Exit Point ---
+            $lastSeenQ = null;
+            if ($attempt->last_seen_question_id) {
+                $lastSeenQ = Question::with(['skill', 'options'])->find($attempt->last_seen_question_id);
+            }
+
+            if ($lastSeenQ) {
+                $correctOption = $lastSeenQ->options->where('is_correct', true)->first();
+                
+                // Fetch the student's actual answer for this question in this attempt
+                $studentAnsRecord = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
+                    ->where('question_id', $lastSeenQ->id)
+                    ->first();
+                
+                $studentChoice = 'No Answer Provided';
+                if ($studentAnsRecord) {
+                    if ($studentAnsRecord->option_id) {
+                        $opt = $lastSeenQ->options->firstWhere('id', $studentAnsRecord->option_id);
+                        $studentChoice = $opt ? strip_tags($opt->option_text) : 'Unknown Option';
+                    } elseif ($studentAnsRecord->text_answer) {
+                        $studentChoice = $studentAnsRecord->text_answer;
+                    }
+                }
+
+                // --- Fallback logic for question description ---
+                $displayContent = strip_tags($lastSeenQ->content ?? '');
+                if (empty($displayContent)) {
+                    $displayContent = $lastSeenQ->instructions ?? 'Audio/Media Question';
+                }
+
+                $attempt->last_activity = [
+                    'skill_name' => $lastSeenQ->skill->name,
+                    'level_number' => $lastSeenQ->level_id ? (Level::find($lastSeenQ->level_id)->level_number ?? '?') : '?',
+                    'level_name' => $lastSeenQ->level_id ? ($levelMap[Level::find($lastSeenQ->level_id)->level_number] ?? 'Unknown') : 'Unknown',
+                    'question_text' => $displayContent,
+                    'correct_answer' => $correctOption ? strip_tags($correctOption->option_text) : 'N/A',
+                    'student_answer' => $studentChoice,
+                    'question_id' => $lastSeenQ->id,
+                    'time' => $attempt->updated_at->diffForHumans()
+                ];
+            } else {
+                $pos = $attempt->current_position;
+                if ($pos && isset($pos['skill_ids'][$pos['current_skill_index']])) {
+                    $skill = Skill::find($pos['skill_ids'][$pos['current_skill_index']]);
+                    $attempt->last_activity = [
+                        'skill_name' => $skill ? $skill->name : 'Unknown',
+                        'level_number' => $pos['current_level'] ?? 1,
+                        'level_name' => $levelMap[$pos['current_level'] ?? 1] ?? "Level 1",
+                        'question_text' => 'Session Initialized',
+                        'question_id' => null
+                    ];
+                }
+            }
+
+            // --- NEW: Add Recent Performance (Last 5 Answers) ---
+            $attempt->recent_answers = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
+                ->with('question')
+                ->orderBy('created_at', 'desc')
+                ->take(5)
+                ->get()
+                ->map(function($ans) {
+                    return [
+                        'question_text' => strip_tags($ans->question->content),
+                        'is_correct' => (bool) $ans->is_correct,
+                        'time' => $ans->created_at->format('H:i:s'),
+                    ];
+                });
+        });
+
+        return response()->json($student);
     }
 
     /**
@@ -364,7 +473,7 @@ class StudentController extends Controller
                 // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
                 StudentExamConfig::where('student_id', $student->id)->delete();
                 Student::assignDefaultExam($student);
-                
+
                 // Sync package based on new skills
                 $student->syncPackageWithSkills();
 

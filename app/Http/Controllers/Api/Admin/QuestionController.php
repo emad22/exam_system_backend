@@ -15,7 +15,7 @@ class QuestionController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Question::with(['skill', 'options', 'passage', 'level', 'exams:id,title'])->withCount('exams');
+        $query = Question::with(['skill', 'options', 'passage', 'level', 'exam:id,title']);
 
         if ($request->has('skill_id')) {
             $query->where('skill_id', $request->skill_id);
@@ -26,7 +26,7 @@ class QuestionController extends Controller
         }
 
         if ($request->boolean('unassigned')) {
-            $query->doesntHave('exams');
+            $query->whereNull('exam_id');
         }
 
         return response()->json($query->latest()->paginate(50));
@@ -163,11 +163,6 @@ class QuestionController extends Controller
                             'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN)
                         ]);
                     }
-                }
-
-                // 5. Link to Exam pivot
-                if ($request->exam_id) {
-                    $question->exams()->syncWithoutDetaching([$request->exam_id]);
                 }
 
                 $createdQuestions[] = $question->id;
@@ -337,10 +332,6 @@ class QuestionController extends Controller
                     }
                 }
 
-                // 5. Link Exam
-                if ($request->exam_id) {
-                    $qInstance->exams()->syncWithoutDetaching([$request->exam_id]);
-                }
             }
 
             return response()->json([

@@ -17,7 +17,8 @@ class ExamAttempt extends Model
         'proctor_value', 
         'ip_address',
         'started_at',
-        'finished_at'
+        'finished_at',
+        'last_seen_question_id'
     ];
 
     protected $casts = [

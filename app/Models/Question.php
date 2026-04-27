@@ -40,11 +40,6 @@ class Question extends Model
         return $this->belongsTo(Skill::class);
     }
 
-    public function exams(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
-    {
-        return $this->belongsToMany(Exam::class, 'exam_questions');
-    }
-
     public function exam(): BelongsTo
     {
         return $this->belongsTo(Exam::class);
