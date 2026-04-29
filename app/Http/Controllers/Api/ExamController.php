@@ -583,8 +583,12 @@ class ExamController extends Controller
         $levelNum = $pos['current_level'];
 
         $level = Level::where('skill_id', $skillId)
-            ->where('id', $levelNum)
+            ->where('level_number', $levelNum)
             ->first();
+
+        if (!$level) {
+            return response()->json(['error' => "Level configuration not found for Level {$levelNum}."], 404);
+        }
 
         // --- Calculate score for this batch (Weighted by points) ---
         $earnedPoints = 0;
