@@ -38,20 +38,19 @@ class WordPressWebhookController extends Controller
             'exam_type' => 'nullable|string', // Support legacy WP slug (adult/children)
         ]);
 
-            // $package = Package::where('wp_package_id', $validated['package_id'])->first();
-            //    echo "iiiiiiiiiiiiiiiiiiiii ".$package;
-
+           
+             
         return DB::transaction(function () use ($validated) {
             // 1. Fetch Package for auto-skill assignment (Try WP ID first, then internal ID)
             $package = Package::where('wp_package_id', $validated['package_id'])->first();
-             
-       
+          
             if (!$package) {
                 $package = Package::find($validated['package_id']);
             }
 
             $assignedSkills = $package ? ($package->skills ?? []) : [];
             $finalPackageId = $package ? $package->id : null;
+
 
             // Resolve Category
             $categoryId = $validated['exam_category_id'] ?? null;
@@ -65,7 +64,12 @@ class WordPressWebhookController extends Controller
                 $categoryId = \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null;
             }
 
-            $password = Str::random(10);
+
+            $username = strtolower($validated['first_name']) . rand(1000,9999);
+           // dd("============== ".$username);
+           // $password = Str::random(10);
+            $password = strtolower($validated['first_name']).'@' . rand(10000,99999);
+          //  dd("************** ".$password);
             $user = User::create([
                // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
                 'first_name' => $validated['first_name'],
@@ -74,6 +78,8 @@ class WordPressWebhookController extends Controller
                 'phone' => $validated['phone'],
                 'address' => $validated['address'],
                 'country' => $validated['country'],
+                'last_name' => $validated['last_name'],
+                'username' => $username,
                 'password' => Hash::make($password),
                 'role' => 'student',
             ]);
@@ -99,6 +105,7 @@ class WordPressWebhookController extends Controller
                 'user_id' => $user->id,
                 'parent_code' => $student->parent_code,
                 'assigned_skills' => $assignedSkills,
+                'username' => $username,
                 'temp_password' => $password, // Useful for debugging or sending welcome email
             ], 201);
         });
