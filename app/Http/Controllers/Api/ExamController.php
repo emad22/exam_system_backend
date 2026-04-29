@@ -129,7 +129,7 @@ class ExamController extends Controller
         // --- NEW: Block Repeated Skill Attempts ---
         if ($request->has('skill_id') && !in_array($user->role, ['demo', 'deom'])) {
             $requestedSkillId = (int) $request->skill_id;
-            $hasCompletedSkill = \App\Models\ExamAttemptSkill::whereHas('attempt', function ($q) use ($studentProfile, $exam) {
+            $hasCompletedSkill = ExamAttemptSkill::whereHas('attempt', function ($q) use ($studentProfile, $exam) {
                 $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
             })->where('skill_id', $requestedSkillId)
                 ->whereIn('status', ['completed', 'failed']) // Statuses that mean "Done"
@@ -171,11 +171,11 @@ class ExamController extends Controller
                                 'current_position' => [
                                     'skill_ids' => $pos['skill_ids'],
                                     'current_skill_index' => $skillIndex,
-                                    'current_level' => $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('level_id') ? (int) $request->level_id : 1),
+                                    'current_level' => $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('id') ? (int) $request->level_id : 1),
                                     'current_skill_started_at' => null
                                 ]
                             ]);
-                            $pos = $attempt->current_position; 
+                            $pos = $attempt->current_position;
                         } else {
                             StudentAnswer::where('exam_attempt_id', $attempt->id)
                                 ->whereHas('question', function ($q) use ($requestedSkillId) {
@@ -185,8 +185,8 @@ class ExamController extends Controller
                             ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
                                 ->where('skill_id', $requestedSkillId)
                                 ->delete();
-                            
-                            $pos['current_level'] = $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('level_id') ? (int) $request->level_id : 1);
+
+                            $pos['current_level'] = $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('id') ? (int) $request->level_id : 1);
                         }
                     }
 
@@ -197,7 +197,7 @@ class ExamController extends Controller
                             $pos['current_level'] = 1;
                         }
                     }
-                    
+
                     $pos['current_skill_index'] = $skillIndex;
                     $attempt->update(['current_position' => $pos]);
                 }
@@ -229,7 +229,7 @@ class ExamController extends Controller
                     $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
                 }
             }
-            
+
             if (empty($allowedSkillIdentifiers)) {
                 $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
             }
@@ -289,7 +289,7 @@ class ExamController extends Controller
                 'current_position' => [
                     'skill_ids' => $assignedSkills,
                     'current_skill_index' => $startIndex,
-                    'current_level' => $this->getValidStartingLevel($exam->id, $assignedSkills[$startIndex] ?? 0, (in_array($user->role, ['demo', 'deom', 'staff']) && $request->has('level_id')) ? (int) $request->level_id : 1),
+                    'current_level' => $this->getValidStartingLevel($exam->id, $assignedSkills[$startIndex] ?? 0, (in_array($user->role, ['demo', 'deom', 'staff']) && $request->has('id')) ? (int) $request->level_id : 1),
                     'completed_skills' => [],
                     'current_skill_started_at' => null // Timer starts only when getNextBatch is called
                 ]
@@ -338,8 +338,6 @@ class ExamController extends Controller
         // instead of pulling a large array into memory.
         $attemptId = $attempt->id;
 
-
-
         // Find level-specific rules first, then fall back to skill-wide rules
         $rules = ExamQuestionRule::where('exam_id', $attempt->exam_id)
             ->where('skill_id', $skillId)
@@ -357,11 +355,13 @@ class ExamController extends Controller
 
         // 1. Normalize Rules: If no specific rules exist, create a virtual rule from Level defaults
         if ($rules->isEmpty()) {
-            $rules = collect([(object)[
-                'standalone_quantity' => $level->default_standalone_quantity ?? 0,
-                'passage_quantity' => $level->default_passage_quantity ?? 0,
-                'quantity' => $level->default_question_count ?? 0,
-            ]]);
+            $rules = collect([
+                (object) [
+                    'standalone_quantity' => $level->default_standalone_quantity ?? 0,
+                    'passage_quantity' => $level->default_passage_quantity ?? 0,
+                    'quantity' => $level->default_question_count ?? 0,
+                ]
+            ]);
         }
 
         $questions = collect();
@@ -403,7 +403,7 @@ class ExamController extends Controller
             // --- NEW: Fail-Safe for Demo Users ---
             if (in_array($user->role, ['demo', 'deom', 'staff']) && $levelNum > 1) {
                 \Illuminate\Support\Facades\Log::warning("Demo user reached end of questions at Level {$levelNum}. Auto-resetting to Level 1.");
-                
+
                 StudentAnswer::where('exam_attempt_id', $attempt->id)
                     ->whereHas('question', function ($q) use ($skillId) {
                         $q->where('skill_id', $skillId);
@@ -425,17 +425,17 @@ class ExamController extends Controller
                     $pos['current_skill_index'] = $nextSkillIndex;
                     $pos['current_level'] = 1;
                     $attempt->update(['current_position' => $pos]);
-                    
+
                     return $this->getNextBatch($request, $attempt, $retryCount + 1);
                 }
             }
 
             return response()->json([
-                'error' => "Empty Question Set: No questions found for level '{$level->name}' (Skill ID: {$skillId}). Please verify that questions are assigned to this level and linked to the exam.",
+                'error' => "Empty Question Set: No questions found for level '{$level->id}' (Skill ID: {$skillId}). Please verify that questions are assigned to this level and linked to the exam.",
                 'is_empty' => true,
                 'debug' => [
                     'skill_id' => $skillId,
-                    'level_id' => $level->id,
+                    'id' => $level->id,
                     'attempt_id' => $attempt->id,
                     'exam_id' => $attempt->exam_id
                 ]
@@ -482,8 +482,8 @@ class ExamController extends Controller
         $allRules = ExamQuestionRule::where('exam_id', $examId)
             ->where('skill_id', $skillId)
             ->get();
-        $rulesByLevel = $allRules->whereNotNull('level_id')->groupBy('level_id');
-        $globalRules  = $allRules->whereNull('level_id');
+        $rulesByLevel = $allRules->whereNotNull('level_id')->groupBy('id');
+        $globalRules = $allRules->whereNull('level_id');
 
         $levels = Level::where('skill_id', $skillId)
             ->where('is_active', true)
@@ -583,7 +583,7 @@ class ExamController extends Controller
         $levelNum = $pos['current_level'];
 
         $level = Level::where('skill_id', $skillId)
-            ->where('level_number', $levelNum)
+            ->where('id', $levelNum)
             ->first();
 
         // --- Calculate score for this batch (Weighted by points) ---
@@ -597,7 +597,8 @@ class ExamController extends Controller
 
         foreach ($request->answers as $index => $ans) {
             $question = $questionsMap->get($ans['question_id']);
-            if (!$question) continue;
+            if (!$question)
+                continue;
 
             $totalPossiblePoints += $question->points;
             $isCorrect = false;
@@ -605,15 +606,15 @@ class ExamController extends Controller
             // Handle MCQs
             if ($question->type === 'mcq' && isset($ans['option_id'])) {
                 $option = $question->options->firstWhere('id', (int) $ans['option_id']);
-                $isCorrect = $option ? (bool)$option->is_correct : false;
-            } 
+                $isCorrect = $option ? (bool) $option->is_correct : false;
+            }
             // Handle Drag & Drop (Gap Fill)
             else if ($question->type === 'drag_drop' && isset($ans['text_answer'])) {
                 $studentAnswers = json_decode($ans['text_answer'], true);
                 if (is_array($studentAnswers)) {
                     // Correct options in order of their ID (or sort_order if we had one)
                     $correctOptions = $question->options()->where('is_correct', true)->orderBy('id', 'asc')->pluck('option_text')->toArray();
-                    
+
                     if (count($studentAnswers) === count($correctOptions)) {
                         $isCorrect = true;
                         foreach ($studentAnswers as $i => $val) {
@@ -628,7 +629,7 @@ class ExamController extends Controller
             // Handle Word Selection / Click Word
             else if (in_array($question->type, ['word_selection', 'click_word'])) {
                 $studentSelected = $ans['selected_words'] ?? [];
-                
+
                 // If it came as a JSON string (legacy or alternate format), decode it
                 if (is_string($studentSelected)) {
                     $studentSelected = json_decode($studentSelected, true) ?? [];
@@ -637,7 +638,7 @@ class ExamController extends Controller
                 if (is_array($studentSelected)) {
                     $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
                     $incorrectOptions = $question->options()->where('is_correct', false)->pluck('option_text')->toArray();
-                    
+
                     // All correct words must be selected
                     $allCorrectSelected = true;
                     foreach ($correctOptions as $correct) {
@@ -646,7 +647,7 @@ class ExamController extends Controller
                             break;
                         }
                     }
-                    
+
                     // No incorrect words should be selected
                     $anyIncorrectSelected = false;
                     foreach ($studentSelected as $selected) {
@@ -655,7 +656,7 @@ class ExamController extends Controller
                             break;
                         }
                     }
-                    
+
                     $isCorrect = $allCorrectSelected && !$anyIncorrectSelected && count($studentSelected) === count($correctOptions);
                 }
             }
@@ -663,7 +664,7 @@ class ExamController extends Controller
             else if ($question->type === 'fill_blank') {
                 $studentAnswers = $ans['fill_blank_answers'] ?? [];
                 $correctOptions = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
-                
+
                 $isCorrect = true;
                 if (count($studentAnswers) < count($correctOptions)) {
                     $isCorrect = false;
@@ -680,7 +681,7 @@ class ExamController extends Controller
             else if ($question->type === 'drag_drop') {
                 $studentAnswers = $ans['drag_drop_answers'] ?? [];
                 $correctOptions = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
-                
+
                 $isCorrect = true;
                 if (count($studentAnswers) < count($correctOptions)) {
                     $isCorrect = false;
@@ -698,46 +699,44 @@ class ExamController extends Controller
                 $studentMatches = $ans['matching_answers'] ?? [];
                 if (is_string($studentMatches)) {
                     $studentMatches = json_decode($studentMatches, true) ?? [];
-                }
-                
-            else if ($question->type === 'matching') {
-                $studentMatches = $ans['matching_answers'] ?? [];
-                if (is_string($studentMatches)) {
-                    $studentMatches = json_decode($studentMatches, true) ?? [];
-                }
-                
-                $options = $question->options;
-                $isCorrect = true;
-                $pairCount = 0;
+                } else if ($question->type === 'matching') {
+                    $studentMatches = $ans['matching_answers'] ?? [];
+                    if (is_string($studentMatches)) {
+                        $studentMatches = json_decode($studentMatches, true) ?? [];
+                    }
 
-                foreach ($options as $opt) {
-                    $text = $opt->option_text;
-                    if (str_contains($text, '|')) {
-                        $pairCount++;
-                        $parts = explode('|', $text, 2);
-                        $expectedTarget = trim($parts[1] ?? '');
-                        
-                        // Student sends: { option_id: "Target Text" }
-                        $actualTarget = $studentMatches[$opt->id] ?? null;
-                        
-                        if (trim($actualTarget ?? '') !== $expectedTarget) {
-                            $isCorrect = false;
-                            break;
+                    $options = $question->options;
+                    $isCorrect = true;
+                    $pairCount = 0;
+
+                    foreach ($options as $opt) {
+                        $text = $opt->option_text;
+                        if (str_contains($text, '|')) {
+                            $pairCount++;
+                            $parts = explode('|', $text, 2);
+                            $expectedTarget = trim($parts[1] ?? '');
+
+                            // Student sends: { option_id: "Target Text" }
+                            $actualTarget = $studentMatches[$opt->id] ?? null;
+
+                            if (trim($actualTarget ?? '') !== $expectedTarget) {
+                                $isCorrect = false;
+                                break;
+                            }
                         }
                     }
+
+                    // Ensure student matched all required pairs
+                    if ($isCorrect && count($studentMatches) !== $pairCount) {
+                        $isCorrect = false;
+                    }
                 }
-                
-                // Ensure student matched all required pairs
-                if ($isCorrect && count($studentMatches) !== $pairCount) {
-                    $isCorrect = false;
-                }
-            }
             }
             // Handle Ordering
             else if ($question->type === 'ordering') {
                 $studentOrder = $ans['ordering_answers'] ?? [];
                 $correctOrder = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
-                
+
                 $isCorrect = true;
                 if (count($studentOrder) !== count($correctOrder)) {
                     $isCorrect = false;
@@ -760,7 +759,7 @@ class ExamController extends Controller
                 if (is_array($studentSelected)) {
                     $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
                     $incorrectOptions = $question->options()->where('is_correct', false)->pluck('option_text')->toArray();
-                    
+
                     $allCorrectSelected = true;
                     foreach ($correctOptions as $correct) {
                         if (!in_array($correct, $studentSelected)) {
@@ -768,7 +767,7 @@ class ExamController extends Controller
                             break;
                         }
                     }
-                    
+
                     $anyIncorrectSelected = false;
                     foreach ($studentSelected as $selected) {
                         if (in_array($selected, $incorrectOptions)) {
@@ -776,7 +775,7 @@ class ExamController extends Controller
                             break;
                         }
                     }
-                    
+
                     $isCorrect = $allCorrectSelected && !$anyIncorrectSelected && count($studentSelected) === count($correctOptions);
                 }
             }
@@ -920,7 +919,7 @@ class ExamController extends Controller
 
                     // --- NEW: Find the FIRST wrong question in this specific batch to record as the exit cause ---
                     $firstWrongQuestionId = null;
-                    
+
                     // $resultsMap was built during the evaluation loop above
                     foreach ($request->answers as $ans) {
                         $qid = $ans['question_id'];
@@ -1055,7 +1054,7 @@ class ExamController extends Controller
     public function results(ExamAttempt $attempt)
     {
         $attempt->load(['attemptSkills.skill']);
-        
+
         $results = $attempt->attemptSkills->map(function ($as) {
             return [
                 'name' => $as->skill->name,
@@ -1077,9 +1076,9 @@ class ExamController extends Controller
             ->where('skill_id', $skillId)
             ->where('level_id', $level->id)
             ->whereNull('passage_id')
-            ->leftJoin('student_answers', function($join) use ($attemptId) {
+            ->leftJoin('student_answers', function ($join) use ($attemptId) {
                 $join->on('questions.id', '=', 'student_answers.question_id')
-                     ->where('student_answers.exam_attempt_id', '=', $attemptId);
+                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
             })
             ->whereNull('student_answers.id')
             ->with('options')
@@ -1119,13 +1118,14 @@ class ExamController extends Controller
         }
 
         $ids = $passageQuery->take($qty)->pluck('questions.passage_id')->toArray();
-        if (empty($ids)) return collect();
+        if (empty($ids))
+            return collect();
 
         return Question::where('exam_id', $examId)
             ->whereIn('passage_id', $ids)
-            ->leftJoin('student_answers', function($join) use ($attemptId) {
+            ->leftJoin('student_answers', function ($join) use ($attemptId) {
                 $join->on('questions.id', '=', 'student_answers.question_id')
-                     ->where('student_answers.exam_attempt_id', '=', $attemptId);
+                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
             })
             ->whereNull('student_answers.id')
             ->with(['options', 'passage'])
@@ -1140,9 +1140,9 @@ class ExamController extends Controller
         $query = Question::where('exam_id', $examId)
             ->where('skill_id', $skillId)
             ->where('level_id', $level->id)
-            ->leftJoin('student_answers', function($join) use ($attemptId) {
+            ->leftJoin('student_answers', function ($join) use ($attemptId) {
                 $join->on('questions.id', '=', 'student_answers.question_id')
-                     ->where('student_answers.exam_attempt_id', '=', $attemptId);
+                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
             })
             ->whereNull('student_answers.id')
             ->with(['options', 'passage'])
@@ -1157,13 +1157,14 @@ class ExamController extends Controller
         $ruleQuestions = $query->take($qty)->get();
         $pIds = $ruleQuestions->whereNotNull('passage_id')->pluck('passage_id')->unique()->toArray();
 
-        if (empty($pIds)) return $ruleQuestions;
+        if (empty($pIds))
+            return $ruleQuestions;
 
         $allPassageGrouped = Question::where('exam_id', $examId)
             ->whereIn('passage_id', $pIds)
-            ->leftJoin('student_answers', function($join) use ($attemptId) {
+            ->leftJoin('student_answers', function ($join) use ($attemptId) {
                 $join->on('questions.id', '=', 'student_answers.question_id')
-                     ->where('student_answers.exam_attempt_id', '=', $attemptId);
+                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
             })
             ->whereNull('student_answers.id')
             ->with(['options', 'passage'])
@@ -1187,13 +1188,14 @@ class ExamController extends Controller
     }
 
     /**
-     * Helper to find the first valid level number that has questions if the requested level is empty
+     * Determine a valid starting level for a skill.
+     * If the requested level has no questions, find the lowest level that does.
      */
     private function getValidStartingLevel($examId, $skillId, $requestedLevelNumber)
     {
         // 1. Resolve the requested level_number to its actual Level ID in the DB
         $requestedLevel = Level::where('skill_id', $skillId)
-            ->where('id', $requestedLevelNumber)
+            ->where('level_number', $requestedLevelNumber)
             ->first();
 
         if ($requestedLevel) {
@@ -1201,26 +1203,25 @@ class ExamController extends Controller
                 ->where('skill_id', $skillId)
                 ->where('level_id', $requestedLevel->id)
                 ->exists();
-                
+
             if ($hasQuestions) {
                 return $requestedLevelNumber;
             }
         }
-        
+
         // 2. Find the first level ID that actually has questions for this skill
         $firstValidLevelId = Question::where('exam_id', $examId)
             ->where('skill_id', $skillId)
-            ->whereNotNull('level_id')
             ->orderBy('level_id', 'asc')
             ->value('level_id');
-            
+
         if ($firstValidLevelId) {
             $validLevelNum = Level::where('id', $firstValidLevelId)->value('level_number');
             if ($validLevelNum) {
                 return $validLevelNum;
             }
         }
-            
+
         return $requestedLevelNumber;
     }
 
@@ -1234,7 +1235,7 @@ class ExamController extends Controller
             return response()->json(['error' => 'Unauthorized. Only demo accounts can perform this action.'], 403);
         }
 
-        \App\Models\ExamAttempt::where('user_id', $user->id)
+        ExamAttempt::where('user_id', $user->id)
             ->where('exam_id', $exam->id)
             ->delete();
 

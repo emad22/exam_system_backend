@@ -19,11 +19,15 @@ class QuestionController extends Controller
     {
         $query = Question::with(['skill', 'options', 'passage', 'level', 'exam:id,title']);
 
-        if ($request->has('skill_id')) {
+        if ($request->has('skill_id') && $request->skill_id !== 'null' && $request->skill_id !== null) {
             $query->where('skill_id', $request->skill_id);
         }
 
-        if ($request->has('level_id')) {
+        if ($request->has('exam_id') && $request->exam_id !== 'null' && $request->exam_id !== null) {
+            $query->where('exam_id', $request->exam_id);
+        }
+
+        if ($request->has('level_id') && $request->level_id !== 'null' && $request->level_id !== null) {
             $query->where('level_id', $request->level_id);
         }
 
