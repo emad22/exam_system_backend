@@ -15,13 +15,16 @@ class StudentSkillsImport implements ToCollection, WithHeadingRow
         $allSkills = Skill::all();
         
         foreach ($rows as $row) {
+            $username = $row['username'] ?? null;
             $email = $row['email'] ?? null;
             $code = $row['student_code'] ?? null;
 
-            if (!$email && !$code) continue;
+            if (!$username && !$email && !$code) continue;
 
             $studentQuery = Student::query();
-            if ($email) {
+            if ($username) {
+                $studentQuery->whereHas('user', fn($q) => $q->where('username', trim($username)));
+            } elseif ($email) {
                 $studentQuery->whereHas('user', fn($q) => $q->where('email', trim($email)));
             } elseif ($code) {
                 $studentQuery->where('student_code', trim($code));

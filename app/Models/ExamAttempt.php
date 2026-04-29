@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class ExamAttempt extends Model
 {
     protected $fillable = [
+        'user_id',
         'student_id', 
         'exam_id', 
         'status', 
@@ -30,6 +31,11 @@ class ExamAttempt extends Model
     public function student(): BelongsTo
     {
         return $this->belongsTo(Student::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function exam(): BelongsTo

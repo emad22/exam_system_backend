@@ -25,7 +25,7 @@ class StudentSkillsExport implements FromCollection, WithHeadings, WithMapping
 
     public function headings(): array
     {
-        $headers = ['Email'];
+        $headers = ['Username'];
         foreach ($this->skills as $skill) {
             $headers[] = $skill->name;
         }
@@ -34,7 +34,7 @@ class StudentSkillsExport implements FromCollection, WithHeadings, WithMapping
 
     public function map($student): array
     {
-        $row = [$student->user ? $student->user->email : 'N/A'];
+        $row = [$student->user ? $student->user->username : 'N/A'];
         
         $assigned = array_map('strtoupper', array_filter((array) $student->assigned_skills));
 

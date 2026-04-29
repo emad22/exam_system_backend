@@ -40,6 +40,7 @@ class StaffController extends Controller
         $validated = $request->validate([
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
+            'username' => 'required|string|max:255|unique:users',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
             'role' => 'required|in:admin,teacher,supervisor,demo,partner',
@@ -55,6 +56,7 @@ class StaffController extends Controller
         $staff = User::create([
             'first_name' => $validated['first_name'],
             'last_name' => $validated['last_name'],
+            'username' => $validated['username'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'role' => $validated['role'],
@@ -91,6 +93,7 @@ class StaffController extends Controller
         $validated = $request->validate([
             'first_name' => 'sometimes|required|string|max:255',
             'last_name' => 'sometimes|required|string|max:255',
+            'username' => 'sometimes|required|string|max:255|unique:users,username,' . $user->id,
             'email' => 'sometimes|required|email|unique:users,email,' . $user->id,
             'role' => 'sometimes|required|in:admin,teacher,supervisor,demo,partner',
             'password' => 'sometimes|nullable|string|min:6',
@@ -105,6 +108,7 @@ class StaffController extends Controller
 
         if (isset($validated['first_name'])) $user->first_name = $validated['first_name'];
         if (isset($validated['last_name'])) $user->last_name = $validated['last_name'];
+        if (isset($validated['username'])) $user->username = $validated['username'];
         if (isset($validated['email'])) $user->email = $validated['email'];
         if (isset($validated['role'])) $user->role = $validated['role'];
         if (isset($validated['phone'])) $user->phone = $validated['phone'];

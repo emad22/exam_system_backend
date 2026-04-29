@@ -26,11 +26,13 @@ class Student extends Model
         'assigned_skills',
         'registration_source',
         'wordpress_user_id',
-        'partner_id', 
+        'partner_id',
+        'allows_retry',
     ];
 
     protected $casts = [
         'not_adaptive' => 'boolean',
+        'allows_retry' => 'boolean',
         'birth_date' => 'date',
         'assigned_skills' => 'array',
     ];

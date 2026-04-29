@@ -32,6 +32,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/attempts/{attempt}', function (\App\Models\ExamAttempt $attempt) {
             return $attempt->load(['exam', 'student']);
         });
+        Route::get('/attempts/{attempt}/results', [\App\Http\Controllers\Api\ExamController::class, 'results']);
+        Route::post('/exams/{exam}/reset-demo', [\App\Http\Controllers\Api\ExamController::class, 'resetDemo']);
     });
 
     // Admin/Teacher/Supervisor Routes

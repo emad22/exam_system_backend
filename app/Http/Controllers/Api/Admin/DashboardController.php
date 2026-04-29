@@ -22,7 +22,7 @@ class DashboardController extends Controller
             'live_students_count' => ExamAttempt::where('status', 'ongoing')
                 ->where('updated_at', '>=', now()->subMinutes(30))
                 ->count(),
-            'recent_attempts' => ExamAttempt::with(['student.user', 'exam', 'attemptSkills.skill'])
+            'recent_attempts' => ExamAttempt::with(['student.user', 'user', 'exam', 'attemptSkills.skill'])
                 ->orderBy('created_at', 'desc')
                 ->take(5)
                 ->get()

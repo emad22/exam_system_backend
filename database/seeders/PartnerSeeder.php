@@ -13,7 +13,7 @@ class PartnerSeeder extends Seeder
     public function run(): void
     {
         $user = \App\Models\User::create([
-            "username" => "Arabacademy Partner",
+            "username" => "arabacademy",
             'first_name' => 'Arabacademy',
             'last_name' => 'Partner',
             'email' => 'partner@arabacademy.com',
