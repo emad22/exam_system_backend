@@ -20,7 +20,7 @@ class PackageSeeder extends Seeder
                 'skills_count' => 3,
                 'description' => 'Listening, Reading, and Grammar (Structure).',
                 'skills' => ['LIST', 'READ', 'GRAM'],
-                'wp_package_id' => 'pkg_3_skills'
+                'wp_package_id' => '6542'
             ]
         );
 
@@ -32,7 +32,7 @@ class PackageSeeder extends Seeder
                 'skills_count' => 4,
                 'description' => 'Listening, Reading, Grammar, and Writing.',
                 'skills' => ['LIST', 'READ', 'GRAM', 'WRIT'],
-                'wp_package_id' => 'pkg_4_skills'
+                'wp_package_id' => '6544'
             ]
         );
 
@@ -44,7 +44,7 @@ class PackageSeeder extends Seeder
                 'skills_count' => 5,
                 'description' => 'Listening, Reading, Grammar, Writing, and Speaking.',
                 'skills' => ['LIST', 'READ', 'GRAM', 'WRIT', 'SPEK'],
-                'wp_package_id' => 'pkg_5_skills'
+                'wp_package_id' => '6546'
             ]
         );
 
