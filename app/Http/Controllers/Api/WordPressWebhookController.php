@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+
 class WordPressWebhookController extends Controller
 {
     /**
@@ -64,11 +65,13 @@ class WordPressWebhookController extends Controller
                 $categoryId = \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null;
             }
 
+          $base = str_replace('-', '', Str::slug($validated['first_name']));
 
-            $username = strtolower($validated['first_name']) . rand(1000,9999);
-           // dd("============== ".$username);
-           // $password = Str::random(10);
-            $password = strtolower($validated['first_name']).'@' . rand(10000,99999);
+            do {
+                $username = $base . random_int(1000,9999);
+            } while (User::where('username',$username)->exists());
+            
+            $password = $base.'@' . rand(10000,99999);
           //  dd("************** ".$password);
             $user = User::create([
                // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
