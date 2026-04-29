@@ -8,6 +8,7 @@ use App\Models\Question;
 use App\Models\Skill;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class QuestionController extends Controller
 {
@@ -38,7 +39,12 @@ class QuestionController extends Controller
      */
     public function store(Request $request)
     {
-        $request->validate([
+        $data = $request->all();
+        if (isset($data['questions']) && is_string($data['questions'])) {
+            $data['questions'] = json_decode($data['questions'], true);
+        }
+
+        $validator = Validator::make($data, [
             'skill_id' => 'required|exists:skills,id',
             'exam_id' => 'required|exists:exams,id',
             'level_id' => 'required|integer|min:1|max:9',
@@ -58,12 +64,20 @@ class QuestionController extends Controller
             // Questions Batch
             'questions' => 'required|array|min:1',
             'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
-            'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
+            'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
             'questions.*.sort_order' => 'nullable|integer',
             'questions.*.options' => 'nullable|array',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
+        }
+
+        $validated = $validator->validated();
+        // Replace request questions with decoded ones for the rest of the logic
+        $request->merge(['questions' => $validated['questions']]);
 
         // Logic check for MCQ/TrueFalse for all questions in the batch
         foreach ($request->questions as $index => $qData) {
@@ -199,7 +213,12 @@ class QuestionController extends Controller
      */
     public function update(Request $request, Question $question)
     {
-        $request->validate([
+        $data = $request->all();
+        if (isset($data['questions']) && is_string($data['questions'])) {
+            $data['questions'] = json_decode($data['questions'], true);
+        }
+
+        $validator = Validator::make($data, [
             'skill_id' => 'required|exists:skills,id',
             'exam_id' => 'required|exists:exams,id',
             'level_id' => 'required|integer|min:1|max:9',
@@ -217,15 +236,22 @@ class QuestionController extends Controller
             'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
 
             // Questions Batch
-            'questions' => 'nullable|array',
-            'questions.*.id' => 'nullable|exists:questions,id',
+            'questions' => 'required|array|min:1',
+            'questions.*.id' => 'nullable|integer',
             'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
-            'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
+            'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
             'questions.*.sort_order' => 'nullable|integer',
             'questions.*.options' => 'nullable|array',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
+        }
+
+        $validated = $validator->validated();
+        $request->merge(['questions' => $validated['questions']]);
 
         return DB::transaction(function () use ($request, $question) {
             $passageId = $question->passage_id;

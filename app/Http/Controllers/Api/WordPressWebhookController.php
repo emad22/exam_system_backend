@@ -27,7 +27,8 @@ class WordPressWebhookController extends Controller
         }
 
         $validated = $request->validate([
-            'email' => 'required|email|unique:users,email',
+            'username' => 'nullable|string|unique:users,username',
+            'email' => 'nullable|email',
             'first_name' => 'required|string',
             'last_name' => 'required|string',
             'package_id' => 'required|exists:packages,wp_package_id',
@@ -77,7 +78,8 @@ class WordPressWebhookController extends Controller
                // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
                 'first_name' => $validated['first_name'],
                 'last_name' => $validated['last_name'],
-                'email' => $validated['email'],
+                'username' => $validated['username'] ?? ('wp_' . $validated['wp_user_id'] . '_' . Str::random(5)),
+                'email' => $validated['email'] ?? null,
                 'phone' => $validated['phone'],
                 'address' => $validated['address'],
                 'country' => $validated['country'],

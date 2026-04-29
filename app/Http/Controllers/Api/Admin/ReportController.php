@@ -32,6 +32,14 @@ class ReportController extends Controller
             'attemptSkills.skill', 
             'attemptLevels' => function($q) {
                 $q->orderBy('created_at', 'asc');
+            },
+            'answers' => function($q) {
+                $q->with([
+                    'question' => function($sq) {
+                        $sq->with(['passage', 'options']);
+                    },
+                    'option'
+                ])->orderBy('created_at', 'asc');
             }
         ]);
         

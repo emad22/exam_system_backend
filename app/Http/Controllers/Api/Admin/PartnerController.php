@@ -38,7 +38,7 @@ class PartnerController extends Controller
         $validated = $request->validate([
                 'first_name' => 'sometimes|required|string|max:255',
                 'last_name' => 'sometimes|required|string|max:255',
-                'email' => 'sometimes|required|email|unique:users,email,' . ($student->user_id ?? 0),
+                'email' => 'sometimes|nullable|email',
                 'phone' => 'sometimes|nullable|string|max:20',
                 'password' => 'required|min:6',
                 'partner_name' => 'required|string',

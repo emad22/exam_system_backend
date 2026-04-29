@@ -1192,12 +1192,12 @@ class ExamController extends Controller
     private function getValidStartingLevel($examId, $skillId, $requestedLevelNumber)
     {
         // 1. Resolve the requested level_number to its actual Level ID in the DB
-        $requestedLevel = \App\Models\Level::where('skill_id', $skillId)
-            ->where('level_number', $requestedLevelNumber)
+        $requestedLevel = Level::where('skill_id', $skillId)
+            ->where('id', $requestedLevelNumber)
             ->first();
 
         if ($requestedLevel) {
-            $hasQuestions = \App\Models\Question::where('exam_id', $examId)
+            $hasQuestions = Question::where('exam_id', $examId)
                 ->where('skill_id', $skillId)
                 ->where('level_id', $requestedLevel->id)
                 ->exists();
@@ -1208,14 +1208,14 @@ class ExamController extends Controller
         }
         
         // 2. Find the first level ID that actually has questions for this skill
-        $firstValidLevelId = \App\Models\Question::where('exam_id', $examId)
+        $firstValidLevelId = Question::where('exam_id', $examId)
             ->where('skill_id', $skillId)
             ->whereNotNull('level_id')
             ->orderBy('level_id', 'asc')
             ->value('level_id');
             
         if ($firstValidLevelId) {
-            $validLevelNum = \App\Models\Level::where('id', $firstValidLevelId)->value('level_number');
+            $validLevelNum = Level::where('id', $firstValidLevelId)->value('level_number');
             if ($validLevelNum) {
                 return $validLevelNum;
             }
