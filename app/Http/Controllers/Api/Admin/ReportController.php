@@ -13,7 +13,7 @@ class ReportController extends Controller
      */
     public function index(Request $request)
     {
-        $attempts = ExamAttempt::with(['student.user', 'exam'])
+        $attempts = ExamAttempt::with(['student.user', 'user', 'exam'])
             ->where('status', 'completed')
             ->orderBy('finished_at', 'desc')
             ->paginate(15);
@@ -27,6 +27,7 @@ class ReportController extends Controller
     {
         $attempt->load([
             'student.user', 
+            'user',
             'exam', 
             'attemptSkills.skill', 
             'attemptLevels' => function($q) {

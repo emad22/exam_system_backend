@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Level;
 use App\Models\Question;
 use App\Models\Skill;
 use Illuminate\Http\Request;
@@ -56,7 +57,7 @@ class QuestionController extends Controller
 
             // Questions Batch
             'questions' => 'required|array|min:1',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
             'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
@@ -66,7 +67,7 @@ class QuestionController extends Controller
 
         // Logic check for MCQ/TrueFalse for all questions in the batch
         foreach ($request->questions as $index => $qData) {
-            if (in_array($qData['type'], ['mcq', 'true_false'])) {
+            if (in_array($qData['type'], ['mcq', 'true_false', 'drag_drop', 'word_selection', 'click_word', 'fill_blank', 'matching', 'ordering', 'highlight', 'listening'])) {
                 if (!isset($qData['options']) || count($qData['options']) < 2) {
                     return response()->json(['message' => "Options are required for question #".($index+1)], 422);
                 }
@@ -110,10 +111,19 @@ class QuestionController extends Controller
                 $passageId = $passage->id;
             }
 
-            // 2. Map Slider Level to Level ID
-            $actualLevelId = \App\Models\Level::where('skill_id', $request->skill_id)
-                ->where('level_number', $request->level_id)
-                ->value('id') ?? $request->level_id;
+            // 2. Map Slider Level to Level ID (or dynamically create it if missing)
+            $level = Level::firstOrCreate(
+                [
+                    'skill_id' => $request->skill_id,
+                    'level_number' => $request->level_id
+                ],
+                [
+                    'default_standalone_quantity' => 0,
+                    'default_passage_quantity' => 0,
+                    'default_question_count' => 0
+                ]
+            );
+            $actualLevelId = $level->id;
 
             $createdQuestions = [];
 
@@ -209,7 +219,7 @@ class QuestionController extends Controller
             // Questions Batch
             'questions' => 'nullable|array',
             'questions.*.id' => 'nullable|exists:questions,id',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
             'questions.*.content' => 'nullable|string',  // nullable: content may be empty when question IS a media file
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
@@ -263,10 +273,19 @@ class QuestionController extends Controller
                 $passageId = $passage->id;
             }
 
-            // 2. Map Level
-            $actualLevelId = \App\Models\Level::where('skill_id', $request->skill_id)
-                ->where('level_number', $request->level_id)
-                ->value('id') ?? $request->level_id;
+            // 2. Map Level (or dynamically create it if missing)
+            $level = \App\Models\Level::firstOrCreate(
+                [
+                    'skill_id' => $request->skill_id,
+                    'level_number' => $request->level_id
+                ],
+                [
+                    'default_standalone_quantity' => 0,
+                    'default_passage_quantity' => 0,
+                    'default_question_count' => 0
+                ]
+            );
+            $actualLevelId = $level->id;
 
             // 3. Process Batch if provided, else single update
             $questionsData = $request->questions ?? [

@@ -45,7 +45,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             $user = User::create([
                 'first_name' => $data['first_name'] ?? '',
                 'last_name' => $data['last_name'] ?? '',
-                'username' => ($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? ''),
+                'username' => $data['username'] ,
                 'email' => $data['email'],
                 'phone' => $data['phone'] ?? null,
                 'gender' => $data['gender'] ?? null,
@@ -103,6 +103,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 'student_type' => $data['student_type'] ?? null,
                 'year_of_arabic' => $data['year_of_arabic'] ?? null,
                 'not_adaptive' => isset($data['not_adaptive']) ? (bool)$data['not_adaptive'] : true,
+                'allows_retry' => isset($data['allows_retry']) ? $this->parseBoolean($data['allows_retry']) : false,
                 'package_id' => $this->packageId ?? $data['package_id'] ?? null,
                 'exam_category_id' => $data['exam_category_id'] ?? (\App\Models\ExamCategory::where('is_active', true)->first()->id ?? null),
                 'assigned_skills' => $assignedSkills,
@@ -119,6 +120,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
     {
         return [
             'email' => 'required|email|unique:users,email',
+            'username' => 'nullable|string|unique:users,username',
             'first_name' => 'required|string',
             'last_name' => 'required|string',
             'exam_category_id' => 'nullable|exists:exam_categories,id',

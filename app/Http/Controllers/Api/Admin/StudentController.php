@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Level;
 use App\Models\Question;
 use App\Models\Student;
+use App\Models\StudentExamConfig;
 use App\Models\User;
 use App\Models\Package;
 use App\Models\Skill;
@@ -52,6 +53,7 @@ class StudentController extends Controller
             'student_type' => 'nullable|string|max:50',
             'year_of_arabic' => 'nullable|integer',
             'not_adaptive' => 'nullable|boolean',
+            'allows_retry' => 'sometimes|boolean',
 
 
             'exam_id' => 'nullable|exists:exams,id',
@@ -60,6 +62,7 @@ class StudentController extends Controller
             'assigned_skills.*' => 'nullable',
             'package_id' => 'nullable|exists:packages,id',
             'partner_id' => 'nullable|exists:partners,id',
+            'username' => 'required|string|max:255|unique:users',
             'password' => 'required|string|min:6',
         ]);
 
@@ -77,7 +80,7 @@ class StudentController extends Controller
         $user = User::create([
             'first_name' => $validated['first_name'],
             'last_name' => $validated['last_name'],
-            'username' => $validated['first_name'] . ' ' . $validated['last_name'],
+            'username' => $validated['username'],
             'email' => $validated['email'],
             'phone' => $validated['phone'] ?? null,
             'gender' => $validated['gender'] ?? null,
@@ -118,6 +121,7 @@ class StudentController extends Controller
             'student_type' => $validated['student_type'] ?? null,
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
             'not_adaptive' => $validated['not_adaptive'] ?? true,
+            'allows_retry' => $validated['allows_retry'] ?? false,
             'package_id' => $validated['package_id'] ?? null,
             'exam_category_id' => $examCategoryId,
             'assigned_skills' => $assignedSkills,
@@ -157,12 +161,14 @@ class StudentController extends Controller
             'student_type' => 'sometimes|nullable|string|max:50',
             'year_of_arabic' => 'sometimes|nullable|integer',
             'not_adaptive' => 'sometimes|nullable|boolean',
+            'allows_retry' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
             'package_id' => 'sometimes|nullable|exists:packages,id',
             'exam_category_id' => 'sometimes|required|exists:exam_categories,id',
             'assigned_skills' => 'sometimes|array',
             'assigned_skills.*' => 'nullable',
             'partner_id' => 'sometimes|nullable|exists:partners,id',
+            'username' => 'sometimes|required|string|max:255|unique:users,username,' . ($student->user_id ?? 0),
             'password' => 'sometimes|nullable|string|min:6',
         ]);
 
@@ -184,6 +190,7 @@ class StudentController extends Controller
             'come_from',
             'year_of_arabic',
             'not_adaptive',
+            'allows_retry',
             'partner_id'
         ]);
 
@@ -213,6 +220,7 @@ class StudentController extends Controller
                     'country',
                     'religion',
                     'occupation',
+                    'username',
                     'is_active'
                 ]);
 
@@ -220,8 +228,8 @@ class StudentController extends Controller
                     $userUpdate['birth_date'] = \Carbon\Carbon::parse($validated['birth_date'])->toDateString();
                 }
 
-                if (isset($validated['first_name']) || isset($validated['last_name'])) {
-                    $userUpdate['username'] = ($validated['first_name'] ?? $user->first_name) . ' ' . ($validated['last_name'] ?? $user->last_name);
+                if (isset($validated['username'])) {
+                    $userUpdate['username'] = $validated['username'];
                 }
 
                 if (!empty($validated['password'])) {
@@ -267,15 +275,40 @@ class StudentController extends Controller
             $attempt->max_possible = $count * 900;
             $attempt->score_display = $count > 0 ? "$total / " . ($count * 900) : "0 / 0";
 
-            // Map attempt skills to include level names based on ACTUAL achievement
+            // Map attempt skills to include level names and specific termination points
             if ($attempt->attemptSkills) {
-                $attempt->attemptSkills->each(function ($as) use ($levelMap) {
-                    // If they are still in the level or failed it, their achieved level is N-1
+                $attempt->attemptSkills->each(function ($as) use ($levelMap, $attempt) {
+                    // achieved level logic
                     $displayLevel = $as->status === 'completed' 
                         ? $as->max_level_reached 
                         : max($as->max_level_reached - 1, 1);
-
                     $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
+
+                    // Find the last question seen for THIS specific skill
+                    $lastAns = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
+                        ->whereHas('question', function($q) use ($as) {
+                            $q->where('skill_id', $as->skill_id);
+                        })
+                        ->with(['question.options'])
+                        ->orderBy('created_at', 'desc')
+                        ->first();
+
+                    if ($lastAns && $as->status !== 'completed') {
+                        $q = $lastAns->question;
+                        $correctOpt = $q->options->where('is_correct', true)->first();
+                        $displayContent = strip_tags($q->content ?? '');
+                        if (empty($displayContent)) {
+                            $displayContent = $q->instructions ?? 'Audio/Media Question';
+                        }
+
+                        $as->termination_point = [
+                            'question_id' => $q->id,
+                            'level_number' => $q->level_id ? (\App\Models\Level::find($q->level_id)->level_number ?? '?') : '?',
+                            'question_text' => $displayContent,
+                            'correct_answer' => $correctOpt ? strip_tags($correctOpt->option_text) : 'N/A',
+                            'student_answer' => $lastAns->option_id ? strip_tags($q->options->firstWhere('id', $lastAns->option_id)->option_text ?? 'N/A') : ($lastAns->text_answer ?? 'N/A')
+                        ];
+                    }
                 });
             }
 
@@ -447,7 +480,7 @@ class StudentController extends Controller
     {
         $request->validate([
             'emails' => 'required|array',
-            'emails.*' => 'email',
+            'emails.*' => 'string',
             'skills' => 'required|array',
             'skills.*' => 'nullable',
         ]);
@@ -460,8 +493,11 @@ class StudentController extends Controller
             ->unique()
             ->toArray();
 
-        // Get users with matching emails who are students
-        $users = User::whereIn('email', $request->emails)->whereHas('student')->with('student')->get();
+        // Get users with matching emails or usernames who are students
+        $users = User::where(function($q) use ($request) {
+            $q->whereIn('email', $request->emails)
+              ->orWhereIn('username', $request->emails);
+        })->whereHas('student')->with('student')->get();
         $updatedCount = 0;
 
         foreach ($users as $user) {
@@ -495,6 +531,7 @@ class StudentController extends Controller
         $headers = [
             'first_name',
             'last_name',
+            'username',
             'email',
             'phone',
             'gender',
@@ -527,6 +564,7 @@ class StudentController extends Controller
             fputcsv($file, [
                 'John',
                 'Doe',
+                'johndoe123',
                 'john.doe@example.com',
                 '123456789',
                 'male',

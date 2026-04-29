@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ExamAttemptLevel;
+use App\Models\ExamAttemptSkill;
 use App\Models\Skill;
 use App\Models\ExamQuestionRule;
 use App\Models\Question;
@@ -31,13 +33,33 @@ class SkillController extends Controller
             'short_code' => 'nullable|string|max:10|unique:skills',
             'description' => 'nullable|string',
             'icon' => 'nullable|string',
+            'levels_count' => 'nullable|integer|min:0|max:100',
         ]);
 
         $skill = Skill::create($validated);
 
+        if (!empty($validated['levels_count']) && $validated['levels_count'] > 0) {
+            for ($i = 1; $i <= $validated['levels_count']; $i++) {
+                Level::create([
+                    'skill_id' => $skill->id,
+                    'name' => "Level $i",
+                    'level_number' => $i,
+                    'min_score' => ($i - 1) * 100 + 1,
+                    'max_score' => $i * 100,
+                    'pass_threshold' => 70,
+                    'default_question_count' => 0,
+                    'is_active' => true,
+                    'allows_retry' => false,
+                    'is_random' => false,
+                    'default_passage_quantity' => 0,
+                    'default_standalone_quantity' => 0,
+                ]);
+            }
+        }
+
         return response()->json([
-            'message' => 'Skill created successfully.',
-            'skill' => $skill
+            'message' => 'Skill and initial levels created successfully.',
+            'skill' => $skill->load('levels')
         ], 201);
     }
 
@@ -70,17 +92,21 @@ class SkillController extends Controller
         try {
             // Delete related questions and rules
             ExamQuestionRule::where('skill_id', $skill->id)->delete();
-            
+
             // Delete questions
-            $questionIds = Question::where('skill_id', $skill->id)->pluck('id');
-            QuestionOption::whereIn('question_id', $questionIds)->delete();
-            Question::whereIn('id', $questionIds)->delete();
+            // $questionIds = Question::where('skill_id', $skill->id)->pluck('id');
+            // QuestionOption::whereIn('question_id', $questionIds)->delete();
+            // Question::whereIn('id', $questionIds)->delete();
 
             // Clear from exams
             DB::table('exam_skill')->where('skill_id', $skill->id)->delete();
-            
+
             // Clear levels
             Level::where('skill_id', $skill->id)->delete();
+
+            // Clear attempt results
+            ExamAttemptLevel::where('skill_id', $skill->id)->delete();
+            ExamAttemptSkill::where('skill_id', $skill->id)->delete();
 
             $skill->delete();
 
@@ -131,7 +157,7 @@ class SkillController extends Controller
 
             // Sync: Optional - Delete levels not in the request? 
             // Better to handle deletion explicitly through the destroy method to avoid accidental data loss.
-            
+
             foreach ($validated['levels'] as $levelData) {
                 Level::updateOrCreate(
                     ['id' => $levelData['id'] ?? null, 'skill_id' => $skill->id],
