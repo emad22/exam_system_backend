@@ -14,9 +14,9 @@ class ReportController extends Controller
     public function index(Request $request)
     {
         $attempts = ExamAttempt::with(['student.user', 'user', 'exam'])
-            ->where('status', 'completed')
-            ->orderBy('finished_at', 'desc')
-            ->paginate(15);
+            ->whereIn('status', ['completed', 'ongoing'])
+            ->orderBy('updated_at', 'desc')
+            ->paginate(30);
         return response()->json($attempts);
     }
 
@@ -36,7 +36,7 @@ class ReportController extends Controller
             'answers' => function($q) {
                 $q->with([
                     'question' => function($sq) {
-                        $sq->with(['passage', 'options']);
+                        $sq->with(['passage', 'options', 'skill']);
                     },
                     'option'
                 ])->orderBy('created_at', 'asc');

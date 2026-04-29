@@ -122,12 +122,12 @@ class ExamController extends Controller
         $user = $request->user();
         $studentProfile = $user->student;
 
-        if (!$studentProfile && !in_array($user->role, ['demo', 'deom'])) {
+        if (!$studentProfile && !in_array($user->role, ['demo', 'deom', 'staff'])) {
             return response()->json(['error' => 'Student profile not found.'], 404);
         }
 
         // --- NEW: Block Repeated Skill Attempts ---
-        if ($request->has('skill_id') && !in_array($user->role, ['demo', 'deom'])) {
+        if ($request->has('skill_id') && !in_array($user->role, ['demo', 'deom', 'staff'])) {
             $requestedSkillId = (int) $request->skill_id;
             $hasCompletedSkill = ExamAttemptSkill::whereHas('attempt', function ($q) use ($studentProfile, $exam) {
                 $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
@@ -141,7 +141,7 @@ class ExamController extends Controller
         }
         // ------------------------------------------
 
-        $attempt = ExamAttempt::where(in_array($user->role, ['demo', 'deom']) ? 'user_id' : 'student_id', in_array($user->role, ['demo', 'deom']) ? $user->id : $studentProfile->id)
+        $attempt = ExamAttempt::where(in_array($user->role, ['demo', 'deom', 'staff']) ? 'user_id' : 'student_id', in_array($user->role, ['demo', 'deom', 'staff']) ? $user->id : $studentProfile->id)
             ->where('exam_id', $exam->id)
             ->where('status', 'ongoing')
             ->first();
@@ -171,7 +171,7 @@ class ExamController extends Controller
                                 'current_position' => [
                                     'skill_ids' => $pos['skill_ids'],
                                     'current_skill_index' => $skillIndex,
-                                    'current_level' => $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('id') ? (int) $request->level_id : 1),
+                                    'current_level' => $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('level_id') ? (int) $request->level_id : 1),
                                     'current_skill_started_at' => null
                                 ]
                             ]);
@@ -186,14 +186,14 @@ class ExamController extends Controller
                                 ->where('skill_id', $requestedSkillId)
                                 ->delete();
 
-                            $pos['current_level'] = $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('id') ? (int) $request->level_id : 1);
+                            $pos['current_level'] = $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('level_id') ? (int) $request->level_id : 1);
                         }
                     }
 
                     // --- FIX: If switching to a NEW skill, reset the timer start time to null ---
                     if ($pos['current_skill_index'] !== $skillIndex) {
                         $pos['current_skill_started_at'] = null;
-                        if (!in_array($user->role, ['demo', 'deom'])) {
+                        if (!in_array($user->role, ['demo', 'deom', 'staff'])) {
                             $pos['current_level'] = 1;
                         }
                     }
@@ -209,7 +209,7 @@ class ExamController extends Controller
                 ->first();
 
             // If no config exists, try to auto-assign it (e.g. from package or defaults)
-            if (!$config && !in_array($user->role, ['demo', 'deom'])) {
+            if (!$config && !in_array($user->role, ['demo', 'deom', 'staff'])) {
                 $config = \App\Models\Student::assignDefaultExam($studentProfile, $exam->id);
 
                 if (!$config) {
@@ -283,13 +283,13 @@ class ExamController extends Controller
 
             $attempt = ExamAttempt::create([
                 'student_id' => $studentProfile ? $studentProfile->id : null,
-                'user_id' => in_array($user->role, ['demo', 'deom']) ? $user->id : null,
+                'user_id' => in_array($user->role, ['demo', 'deom', 'staff']) ? $user->id : null,
                 'exam_id' => $exam->id,
                 'status' => 'ongoing',
                 'current_position' => [
                     'skill_ids' => $assignedSkills,
                     'current_skill_index' => $startIndex,
-                    'current_level' => $this->getValidStartingLevel($exam->id, $assignedSkills[$startIndex] ?? 0, (in_array($user->role, ['demo', 'deom', 'staff']) && $request->has('id')) ? (int) $request->level_id : 1),
+                    'current_level' => $this->getValidStartingLevel($exam->id, $assignedSkills[$startIndex] ?? 0, (in_array($user->role, ['demo', 'deom', 'staff']) && $request->has('level_id')) ? (int) $request->level_id : 1),
                     'completed_skills' => [],
                     'current_skill_started_at' => null // Timer starts only when getNextBatch is called
                 ]
@@ -353,40 +353,32 @@ class ExamController extends Controller
 
 
 
-        // 1. Normalize Rules: If no specific rules exist, create a virtual rule from Level defaults
-        if ($rules->isEmpty()) {
-            $rules = collect([
-                (object) [
-                    'standalone_quantity' => $level->default_standalone_quantity ?? 0,
-                    'passage_quantity' => $level->default_passage_quantity ?? 0,
-                    'quantity' => $level->default_question_count ?? 0,
-                ]
-            ]);
-        }
-
         $questions = collect();
 
-        foreach ($rules as $rule) {
-            $sQty = $rule->standalone_quantity ?? 0;
-            $pQty = $rule->passage_quantity ?? 0;
-            $lQty = $rule->quantity ?? 0;
+        // 1. Fetch questions based on Rules
+        if ($rules->isEmpty()) {
+            // If no specific exam rules exist, treat as Unlimited: fetch all available questions for this level/skill/exam
+            $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, 0));
+        } else {
+            foreach ($rules as $rule) {
+                $sQty = $rule->standalone_quantity ?? 0;
+                $pQty = $rule->passage_quantity ?? 0;
+                $lQty = $rule->quantity ?? 0;
 
-            // Normalize: If all are 0, use defaults
-            if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
-                $sQty = $level->default_standalone_quantity ?? 0;
-                $pQty = $level->default_passage_quantity ?? 0;
-                $lQty = $level->default_question_count ?? 0;
-            }
-
-            if ($sQty > 0 || $pQty > 0) {
-                if ($sQty > 0) {
-                    $questions = $questions->concat($this->fetchStandaloneBatch($attempt->exam_id, $attemptId, $skillId, $level, $sQty));
+                // Normalize: If all are 0, treat as Unlimited
+                if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
+                    $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, 0));
+                } else {
+                    if ($sQty > 0) {
+                        $questions = $questions->concat($this->fetchStandaloneBatch($attempt->exam_id, $attemptId, $skillId, $level, $sQty));
+                    }
+                    if ($pQty > 0) {
+                        $questions = $questions->concat($this->fetchPassageBatch($attempt->exam_id, $attemptId, $skillId, $level, $pQty));
+                    }
+                    if ($lQty > 0) {
+                        $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, $lQty));
+                    }
                 }
-                if ($pQty > 0) {
-                    $questions = $questions->concat($this->fetchPassageBatch($attempt->exam_id, $attemptId, $skillId, $level, $pQty));
-                }
-            } else if ($lQty > 0) {
-                $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, $lQty));
             }
         }
 
@@ -476,22 +468,21 @@ class ExamController extends Controller
      */
     private function getTotalSkillQuestions(int $examId, int $skillId): int
     {
-        $exam = Exam::find($examId); // Load once outside the loop to avoid N+1
-
-        // Pre-load all rules for this exam+skill to avoid N+1 inside the loop
-        $allRules = ExamQuestionRule::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->get();
-        $rulesByLevel = $allRules->whereNotNull('level_id')->groupBy('id');
-        $globalRules = $allRules->whereNull('level_id');
+        $exam = Exam::find($examId);
+        if (!$exam) return 0;
 
         $levels = Level::where('skill_id', $skillId)
             ->where('is_active', true)
             ->get();
 
+        $allRules = ExamQuestionRule::where('exam_id', $examId)
+            ->where('skill_id', $skillId)
+            ->get();
+        $rulesByLevel = $allRules->whereNotNull('level_id')->groupBy('level_id');
+        $globalRules = $allRules->whereNull('level_id');
+
         $total = 0;
         foreach ($levels as $level) {
-            // Use pre-loaded rules — no extra queries
             $rules = $rulesByLevel->get($level->id, collect());
             if ($rules->isEmpty()) {
                 $rules = $globalRules;
@@ -499,54 +490,61 @@ class ExamController extends Controller
 
             if ($rules->isNotEmpty()) {
                 foreach ($rules as $rule) {
-                    $total += ($rule->standalone_quantity ?? 0);
+                    $sQty = $rule->standalone_quantity ?? 0;
+                    $pQty = $rule->passage_quantity ?? 0;
+                    $lQty = $rule->quantity ?? 0;
 
-                    if ($rule->passage_quantity > 0) {
-                        $passages = Question::where('skill_id', $skillId)
+                    // Fetch actual available counts for this level/exam
+                    $actualStandalone = Question::where('exam_id', $examId)
+                        ->where('skill_id', $skillId)
+                        ->where('level_id', $level->id)
+                        ->whereNull('passage_id')
+                        ->count();
+
+                    // Standalone contribution
+                    if ($sQty > 0) {
+                        $total += min($sQty, $actualStandalone);
+                    } else if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
+                        // If everything is 0, it's unlimited -> take all
+                        $total += $actualStandalone;
+                    }
+
+                    // Passage contribution
+                    if ($pQty > 0) {
+                        $passages = Question::where('exam_id', $examId)
+                            ->where('skill_id', $skillId)
                             ->where('level_id', $level->id)
                             ->whereNotNull('passage_id')
                             ->select('passage_id')
                             ->distinct()
-                            ->take($rule->passage_quantity)
+                            ->take($pQty)
                             ->pluck('passage_id');
-
-                        $total += Question::whereIn('passage_id', $passages)->count();
+                        
+                        $total += Question::where('exam_id', $examId)->whereIn('passage_id', $passages)->count();
+                    } else if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
+                        // Unlimited passages
+                        $total += Question::where('exam_id', $examId)
+                            ->where('skill_id', $skillId)
+                            ->where('level_id', $level->id)
+                            ->whereNotNull('passage_id')
+                            ->count();
                     }
 
-                    // Legacy quantity fallback
-                    if (($rule->quantity ?? 0) > 0 && ($rule->standalone_quantity ?? 0) == 0 && ($rule->passage_quantity ?? 0) == 0) {
-                        $total += $rule->quantity;
+                    // Legacy quantity fallback (only if s/p are not set)
+                    if ($lQty > 0 && $sQty === 0 && $pQty === 0) {
+                        $actualTotal = Question::where('exam_id', $examId)
+                            ->where('skill_id', $skillId)
+                            ->where('level_id', $level->id)
+                            ->count();
+                        $total += min($lQty, $actualTotal);
                     }
                 }
             } else {
-                // Fallback to level defaults
-                $standalone = $level->default_standalone_quantity ?? 0;
-                $passageQty = $level->default_passage_quantity ?? 0;
-                $legacy = $level->default_question_count ?? 0;
-
-                if ($standalone > 0 || $passageQty > 0) {
-                    $total += $standalone;
-                    if ($passageQty > 0) {
-                        $passages = Question::where('skill_id', $skillId)
-                            ->where('level_id', $level->id)
-                            ->whereNotNull('passage_id')
-                            ->select('passage_id')
-                            ->distinct()
-                            ->take($passageQty)
-                            ->pluck('passage_id');
-                        $total += Question::whereIn('passage_id', $passages)->count();
-                    }
-                } else {
-                    if ($legacy > 0) {
-                        $total += $legacy;
-                    } else {
-                        // Unlimited mode (legacy = 0): use pre-loaded $exam — no extra query
-                        $total += $exam->questions()
-                            ->where('questions.skill_id', $skillId)
-                            ->where('questions.level_id', $level->id)
-                            ->count();
-                    }
-                }
+                // Unlimited mode: No rules at all, take all questions in DB for this level
+                $total += Question::where('exam_id', $examId)
+                    ->where('skill_id', $skillId)
+                    ->where('level_id', $level->id)
+                    ->count();
             }
         }
 
@@ -845,24 +843,6 @@ class ExamController extends Controller
             ->whereNotIn('id', $answeredIds)
             ->count();
 
-        // --- Log Level Performance (Movement Log) ---
-        ExamAttemptLevel::create([
-            'exam_attempt_id' => $attempt->id,
-            'skill_id' => $skillId,
-            'level_number' => $levelNum,
-            'score' => $batchScore,
-            'status' => $passed ? 'passed' : 'failed',
-        ]);
-
-        // --- Calculate Aggregate Skill Score (Sum of Max Score per Level) ---
-        // Since each level is out of 100 and there are 9 levels, the total is out of 900.
-        $totalSkillScore = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-            ->where('skill_id', $skillId)
-            ->groupBy('level_number')
-            ->selectRaw('max(score) as max_score')
-            ->get()
-            ->sum('max_score');
-
         // --- Determine the student's exam mode ---
         $student = $attempt->student;          // relationship: ExamAttempt->student
         $isAdaptive = true; // Default to adaptive
@@ -874,12 +854,79 @@ class ExamController extends Controller
         $finishedExam = false;
         $skillEnded = false;
         $placementLevel = null;   // For not-adaptive: the level where student stopped
-        $placementScore = $totalSkillScore; // Use the aggregate score for final report
+        
+        // Calculate the ACTUAL total score for this LEVEL so far (across all batches)
+        $levelTotalPossible = Question::where('exam_id', $attempt->exam_id)
+            ->where('skill_id', $skillId)
+            ->where('level_id', $level->id)
+            ->sum('points');
+            
+        $levelEarned = StudentAnswer::where('exam_attempt_id', $attempt->id)
+            ->whereIn('question_id', function($q) use ($attempt, $skillId, $level) {
+                $q->select('id')->from('questions')
+                  ->where('exam_id', $attempt->exam_id)
+                  ->where('skill_id', $skillId)
+                  ->where('level_id', $level->id);
+            })
+            ->sum('points_awarded');
+            
+        $currentLevelScore = $levelTotalPossible > 0 ? round(($levelEarned / $levelTotalPossible) * 100, 2) : 0;
 
-        // Check if another level exists at all
+        // We only log to ExamAttemptLevel when the student is LEAVING the level:
+        // 1. In Adaptive: When remainingQuestionsCount == 0
+        // 2. In Non-Adaptive: When remainingQuestionsCount == 0 OR when they fail (since failure stops the skill)
+        $shouldLogEntry = false;
+        if ($isAdaptive) {
+            if ($remainingQuestionsCount == 0) $shouldLogEntry = true;
+        } else {
+            if ($remainingQuestionsCount == 0 || !$passed) $shouldLogEntry = true;
+        }
+
+        if ($shouldLogEntry) {
+            ExamAttemptLevel::updateOrCreate(
+                [
+                    'exam_attempt_id' => $attempt->id,
+                    'skill_id' => $skillId,
+                    'level_number' => $levelNum,
+                ],
+                [
+                    'score' => $currentLevelScore,
+                    'status' => $currentLevelScore >= $passThreshold ? 'passed' : 'failed',
+                ]
+            );
+        }
+
+        // --- Calculate Aggregate Skill Score (Sum of Max Score per Level) ---
+        $totalSkillPoints = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->groupBy('level_number')
+            ->selectRaw('max(score) as max_score')
+            ->get()
+            ->sum('max_score');
+        
+        // Dynamic divisor: (Number of active levels in this skill * 100)
+        $levelCount = Level::where('skill_id', $skillId)->where('is_active', true)->count();
+        $maxPossiblePoints = max($levelCount * 100, 100); // Avoid division by zero
+        
+        $totalSkillScore = round(($totalSkillPoints / $maxPossiblePoints) * 100, 2);
+        $placementScore = $totalSkillScore; // Use the percentage for final report
+
+        // Update overall_score of the attempt as the average of all skill percentages
+        $allSkillsScore = $attempt->attemptSkills()->where('skill_id', '!=', $skillId)->pluck('score')->toArray();
+        $allSkillsScore[] = $totalSkillScore;
+        $overallScore = count($allSkillsScore) > 0 ? round(array_sum($allSkillsScore) / count($allSkillsScore), 2) : 0;
+        $attempt->update(['overall_score' => $overallScore]);
+
+        // Strictly check if the IMMEDIATE next level (levelNum + 1) exists AND has questions
         $nextLevelExists = Level::where('skill_id', $skillId)
             ->where('level_number', $levelNum + 1)
+            ->where('is_active', true)
+            ->whereHas('questions', function($q) use ($attempt) {
+                $q->where('exam_id', $attempt->exam_id);
+            })
             ->exists();
+        
+        $nextLevelNumber = $levelNum + 1;
 
         if ($isAdaptive) {
             // ===== ADAPTIVE MODE =====
@@ -887,8 +934,8 @@ class ExamController extends Controller
             // Stop only when there are no more levels.
             if ($remainingQuestionsCount == 0) {
                 if ($nextLevelExists) {
-                    // Move to next level
-                    $nextPos['current_level'] = $levelNum + 1;
+                    // Move to next level with questions
+                    $nextPos['current_level'] = $nextLevelNumber;
                 } else {
                     // Done with this skill (reached the last level)
                     $skillEnded = true;
@@ -980,7 +1027,7 @@ class ExamController extends Controller
                 } elseif ($remainingQuestionsCount == 0) {
                     if ($nextLevelExists) {
                         // Student PASSED on first attempt and there is a higher level → advance
-                        $nextPos['current_level'] = $levelNum + 1;
+                        $nextPos['current_level'] = $nextLevelNumber;
                     } else {
                         // Student PASSED the final level on first attempt → skill done
                         $skillEnded = true;
@@ -1094,7 +1141,11 @@ class ExamController extends Controller
             $query->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
         }
 
-        return $query->take($qty)->get();
+        if ($qty > 0) {
+            $query->take($qty);
+        }
+
+        return $query->get();
     }
 
     private function fetchPassageBatch($examId, $attemptId, $skillId, $level, $qty)
@@ -1121,7 +1172,11 @@ class ExamController extends Controller
             $passageQuery->orderBy('questions.passage_id', 'asc');
         }
 
-        $ids = $passageQuery->take($qty)->pluck('questions.passage_id')->toArray();
+        if ($qty > 0) {
+            $ids = $passageQuery->take($qty)->pluck('questions.passage_id')->toArray();
+        } else {
+            $ids = $passageQuery->pluck('questions.passage_id')->toArray();
+        }
         if (empty($ids))
             return collect();
 
@@ -1158,7 +1213,11 @@ class ExamController extends Controller
             $query->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
         }
 
-        $ruleQuestions = $query->take($qty)->get();
+        if ($qty > 0) {
+            $query->take($qty);
+        }
+
+        $ruleQuestions = $query->get();
         $pIds = $ruleQuestions->whereNotNull('passage_id')->pluck('passage_id')->unique()->toArray();
 
         if (empty($pIds))
@@ -1213,20 +1272,14 @@ class ExamController extends Controller
             }
         }
 
-        // 2. Find the first level ID that actually has questions for this skill
-        $firstValidLevelId = Question::where('exam_id', $examId)
+        // 2. Find the first level by level_number that actually has questions for this skill
+        $firstValidLevelNum = Question::where('exam_id', $examId)
             ->where('skill_id', $skillId)
-            ->orderBy('level_id', 'asc')
-            ->value('level_id');
+            ->join('levels', 'levels.id', '=', 'questions.level_id')
+            ->orderBy('levels.level_number', 'asc')
+            ->value('levels.level_number');
 
-        if ($firstValidLevelId) {
-            $validLevelNum = Level::where('id', $firstValidLevelId)->value('level_number');
-            if ($validLevelNum) {
-                return $validLevelNum;
-            }
-        }
-
-        return $requestedLevelNumber;
+        return $firstValidLevelNum ?: $requestedLevelNumber;
     }
 
     /**

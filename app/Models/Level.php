@@ -43,4 +43,9 @@ class Level extends Model
     {
         return $this->belongsTo(Skill::class);
     }
+
+    public function questions()
+    {
+        return $this->hasMany(Question::class, 'level_id');
+    }
 }
