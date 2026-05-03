@@ -72,7 +72,7 @@ class WordPressWebhookController extends Controller
                 $username = $base . random_int(1000,9999);
             } while (User::where('username',$username)->exists());
             
-            $password = $base.'@' . rand(10000,99999);
+            $password = $base.'@' . random_int(10000,99999);
           //  dd("************** ".$password);
             $user = User::create([
                // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],

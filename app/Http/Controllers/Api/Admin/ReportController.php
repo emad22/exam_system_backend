@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExamAttempt;
+use App\Models\ExamAttemptSkill;
+use App\Models\ExamAttemptLevel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ReportController extends Controller
 {
@@ -25,6 +28,7 @@ class ReportController extends Controller
      */
     public function show(ExamAttempt $attempt)
     {
+    //  dd("I3m here...............");
         $attempt->load([
             'student.user', 
             'user',
@@ -52,10 +56,40 @@ class ReportController extends Controller
     public function resetAttempt(Request $request, ExamAttempt $attempt)
     {
         try {
-            $attempt->update(['status' => 'voided']);
-            return response()->json(['message' => 'Exam attempt voided successfully. Student can now retake the exam.']);
+            DB::beginTransaction();
+                // Cascading delete is preferred if relationships are properly set, 
+                // but we'll do it explicitly here for safety with student answers.
+                \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
+                \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
+                 \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->delete();
+                $attempt->delete();
+            DB::commit();
+            return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to void attempt: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            return response()->json(['error' => 'Failed to reset candidate progress: ' . $e->getMessage()], 500);
         }
     }
+
+    public function resetAttemptٍSkill(Request $request, ExamAttempt $attempt, ExamAttemptSkill $skill)
+    {
+        try {
+            DB::beginTransaction();
+                // Cascading delete is preferred if relationships are properly set, 
+                // but we'll do it explicitly here for safety with student answers.
+               // \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skill->id)->delete();
+
+                \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->where('skill_id', $skill->id)->delete();
+                \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skill->id)->delete();
+                \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
+              //  $attempt->delete();
+            DB::commit();
+            return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Failed to reset candidate progress: ' . $e->getMessage()], 500);
+        }
+    }
+
+
 }

@@ -57,11 +57,6 @@ Route::middleware('auth:sanctum')->group(function () {
         // Exam Management
         Route::get('/exams', [Admin\ExamController::class, 'index']);
 
-       // Route::post('/WordPressWebhookController', [WordPressWebhookController::class, 'register']);
-
-
-
-
         // partner Management
         Route::get('/partners', [PartnerController::class, 'index']);
         Route::post('/partners', [PartnerController::class, 'store']);
@@ -108,9 +103,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/media/upload', [Admin\QuestionController::class, 'uploadMedia']);
 
         // Reports & Attempts
+       // Route::post('/reports/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt']);
+        Route::post('/reports/{attempt}/reset', [\App\Http\Controllers\Api\Admin\ReportController::class, 'resetAttempt']);
         Route::get('/reports', [Admin\ReportController::class, 'index']);
         Route::get('/reports/{attempt}', [Admin\ReportController::class, 'show']);
-        Route::post('/attempts/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt']);
+       
+        
+        
+
+       // Route::post('/admin/reports/{attempt}/reset', [ReportController::class, 'resetAttempt']);
+        // Route::post('/students/{student}/reset-attempts', [Admin\StudentController::class, 'resetExamAttempts']);
 
         // Staff Management (Admin Only)
         Route::middleware(AdminRole::class)->group(function () {
