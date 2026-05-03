@@ -3,9 +3,13 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ExamAttempt;
+use App\Models\ExamAttemptLevel;
+use App\Models\ExamAttemptSkill;
 use App\Models\Level;
 use App\Models\Question;
 use App\Models\Student;
+use App\Models\StudentAnswer;
 use App\Models\StudentExamConfig;
 use App\Models\User;
 use App\Models\Package;
@@ -639,13 +643,12 @@ class StudentController extends Controller
             DB::beginTransaction();
 
             // 1. Find all attempts
-            $attempts = \App\Models\ExamAttempt::where('student_id', $student->id)->get();
+            $attempts = ExamAttempt::where('student_id', $student->id)->get();
 
             foreach ($attempts as $attempt) {
-                // Cascading delete is preferred if relationships are properly set, 
-                // but we'll do it explicitly here for safety with student answers.
-                \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
-                \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
+                StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
+                ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->delete();
+                ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
                 $attempt->delete();
             }
 

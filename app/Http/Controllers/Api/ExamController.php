@@ -7,39 +7,42 @@ use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\ExamAttemptLevel;
 use App\Models\ExamAttemptSkill;
-use App\Models\ExamQuestionRule;
 use App\Models\Level;
 use App\Models\Question;
+use App\Models\Skill;
 use App\Models\StudentAnswer;
 use App\Models\StudentExamConfig;
+use App\Services\AttemptService;
+use App\Services\ExamService;
+use App\Services\QuestionService;
+use App\Services\ScoringService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ExamController extends Controller
 {
-    /**
-     * List exams available for the student
-     */
+    public function __construct(
+        private readonly ExamService     $examService,
+        private readonly QuestionService $questionService,
+        private readonly ScoringService  $scoringService,
+        private readonly AttemptService  $attemptService,
+    ) {}
+
+    // =========================================================================
+    // 1. LIST EXAMS
+    // =========================================================================
+
     public function index(Request $request)
     {
         $user = $request->user();
 
-        // Admin role
         if ($user->role === 'admin') {
             return response()->json(Exam::with('category', 'skills')->get());
         }
 
-        // Demo role
-        if (in_array($user->role, ['demo', 'deom'])) {
-            $exams = Exam::with(['category', 'skills'])->get();
-            $exams->each(function ($exam) use ($user) {
-                $exam->latest_attempt = ExamAttempt::where('user_id', $user->id)
-                    ->where('exam_id', $exam->id)
-                    ->orderBy('created_at', 'desc')
-                    ->first();
-                $exam->completed_skill_ids = [];
-            });
-            return response()->json($exams);
+        if ($this->examService->isDemoUser($user)) {
+            return response()->json($this->buildDemoExamList($user));
         }
 
         $studentProfile = $user->student;
@@ -47,7 +50,6 @@ class ExamController extends Controller
             return response()->json([]);
         }
 
-        // Filter exams based on what has been explicitly assigned or is in their package
         $assignedExamIds = $studentProfile->configs()->pluck('exam_id')->toArray();
 
         if ($studentProfile->package && $studentProfile->package->exam_id) {
@@ -56,334 +58,127 @@ class ExamController extends Controller
             }
         }
 
-        $exams = Exam::whereIn('id', $assignedExamIds)
-            ->with(['language', 'skills'])
-            ->get();
+        $exams = Exam::whereIn('id', $assignedExamIds)->with(['language', 'skills'])->get();
 
-        // Priority 1: Specifically assigned in students table
-        $allowedSkillIdentifiers = array_filter((array) $studentProfile->assigned_skills);
+        $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
 
-        // Priority 2: Skills defined in the package_id in students table
-        if (empty($allowedSkillIdentifiers) && $studentProfile->package && $studentProfile->package->skills) {
-            $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
-        }
+        // Pre-load attempts and completed skills in 2 queries (no N+1)
+        $latestAttempts = ExamAttempt::where('student_id', $studentProfile->id)
+            ->whereIn('exam_id', $assignedExamIds)
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->groupBy('exam_id')
+            ->map(fn($g) => $g->first());
 
-        // Priority 3: All skills in the exam linked with the package
-        if (empty($allowedSkillIdentifiers) && $studentProfile->package && $studentProfile->package->exam) {
-            $allowedSkillIdentifiers = $studentProfile->package->exam->skills->pluck('name')->toArray();
-        }
+        $attemptIds = $latestAttempts->pluck('id')->filter()->toArray();
+        $completedSkillsByAttempt = ExamAttemptSkill::whereIn('exam_attempt_id', $attemptIds)
+            ->whereIn('status', ['completed', 'failed'])
+            ->get()
+            ->groupBy('exam_attempt_id')
+            ->map(fn($g) => $g->pluck('skill_id')->unique()->values());
 
-        // Attach attempt status and filter visible skills
-        $exams->each(function ($exam) use ($studentProfile, $allowedSkillIdentifiers) {
-            // Restore the skill filtering logic
+        $exams->each(function ($exam) use ($allowedSkillIdentifiers, $latestAttempts, $completedSkillsByAttempt) {
             if (!empty($allowedSkillIdentifiers)) {
-                $filteredSkills = $exam->skills->filter(function ($skill) use ($allowedSkillIdentifiers) {
-                    $skillName = strtolower(trim($skill->name));
-                    $skillCode = strtolower(trim($skill->short_code));
-
-                    foreach ($allowedSkillIdentifiers as $idOrCode) {
-                        $match = strtolower(trim($idOrCode));
-                        if ($skill->id == $match || $skillName == $match || $skillCode == $match) {
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-                $exam->setRelation('skills', $filteredSkills->values());
+                $exam->setRelation(
+                    'skills',
+                    $this->examService->filterSkills($exam->skills, $allowedSkillIdentifiers)
+                );
             }
 
-            // 1. Get the latest attempt for the "Resume" logic
-            $exam->latest_attempt = ExamAttempt::where('student_id', $studentProfile->id)
-                ->where('exam_id', $exam->id)
-                ->with('attemptSkills')
-                ->orderBy('created_at', 'desc')
-                ->first();
-
-            // 2. Aggregate COMPLETED skill IDs ONLY for the latest attempt (if it exists)
-            if ($exam->latest_attempt) {
-                $exam->completed_skill_ids = \App\Models\ExamAttemptSkill::where('exam_attempt_id', $exam->latest_attempt->id)
-                    ->whereIn('status', ['completed', 'failed'])
-                    ->pluck('skill_id')
-                    ->unique()
-                    ->values();
-            } else {
-                $exam->completed_skill_ids = [];
-            }
+            $exam->latest_attempt     = $latestAttempts->get($exam->id);
+            $exam->completed_skill_ids = $exam->latest_attempt
+                ? $completedSkillsByAttempt->get($exam->latest_attempt->id, collect())->values()
+                : [];
         });
 
         return response()->json($exams);
     }
 
-    /**
-     * Start or Resume Exam Attempt
-     */
+    // =========================================================================
+    // 2. START / RESUME EXAM
+    // =========================================================================
+
     public function start(Request $request, Exam $exam)
     {
-        $user = $request->user();
+        $user           = $request->user();
+        $isDemo         = $this->examService->isDemoUser($user);
         $studentProfile = $user->student;
 
-        if (!$studentProfile && !in_array($user->role, ['demo', 'deom', 'staff'])) {
+        if (!$studentProfile && !$isDemo) {
             return response()->json(['error' => 'Student profile not found.'], 404);
         }
 
-        // --- NEW: Block Repeated Skill Attempts ---
-        if ($request->has('skill_id') && !in_array($user->role, ['demo', 'deom', 'staff'])) {
-            $requestedSkillId = (int) $request->skill_id;
-            $hasCompletedSkill = ExamAttemptSkill::whereHas('attempt', function ($q) use ($studentProfile, $exam) {
-                $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id);
-            })->where('skill_id', $requestedSkillId)
-                ->whereIn('status', ['completed', 'failed']) // Statuses that mean "Done"
-                ->exists();
+        // Block repeated skill attempts for real students
+        if ($request->has('skill_id') && !$isDemo) {
+            $requestedSkillId    = (int) $request->skill_id;
+            $hasCompletedSkill   = ExamAttemptSkill::whereHas('attempt', fn($q) =>
+                $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id)
+            )->where('skill_id', $requestedSkillId)
+             ->whereIn('status', ['completed', 'failed'])
+             ->exists();
 
             if ($hasCompletedSkill) {
                 return response()->json(['error' => 'You have already completed the evaluation for this specific module.'], 403);
             }
         }
-        // ------------------------------------------
 
-        $attempt = ExamAttempt::where(in_array($user->role, ['demo', 'deom', 'staff']) ? 'user_id' : 'student_id', in_array($user->role, ['demo', 'deom', 'staff']) ? $user->id : $studentProfile->id)
+        $ownerKey   = $isDemo ? 'user_id' : 'student_id';
+        $ownerId    = $isDemo ? $user->id : $studentProfile->id;
+
+        $attempt = ExamAttempt::where($ownerKey, $ownerId)
             ->where('exam_id', $exam->id)
             ->where('status', 'ongoing')
             ->first();
 
         if ($attempt) {
-            // Case: RESUME but with a specific skill request
-            if ($request->has('skill_id')) {
-                $requestedSkillId = (int) $request->skill_id;
-                $pos = $attempt->current_position;
-                $skillIndex = array_search($requestedSkillId, $pos['skill_ids']);
-
-                if ($skillIndex !== false) {
-                    // --- NEW: For Demo users, if they re-enter a FINISHED skill, close the current attempt and start a fresh one ---
-                    // This preserves the "Report" of the previous run while allowing a fresh start.
-                    if (in_array($user->role, ['demo', 'deom', 'staff'])) {
-                        $isFinished = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-                            ->where('skill_id', $requestedSkillId)
-                            ->whereIn('status', ['completed', 'failed'])
-                            ->exists();
-
-                        if ($isFinished) {
-                            $attempt->update(['status' => 'completed', 'finished_at' => now()]);
-                            $attempt = ExamAttempt::create([
-                                'user_id' => $user->id,
-                                'exam_id' => $exam->id,
-                                'status' => 'ongoing',
-                                'current_position' => [
-                                    'skill_ids' => $pos['skill_ids'],
-                                    'current_skill_index' => $skillIndex,
-                                    'current_level' => $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('level_id') ? (int) $request->level_id : 1),
-                                    'current_skill_started_at' => null
-                                ]
-                            ]);
-                            $pos = $attempt->current_position;
-                        } else {
-                            StudentAnswer::where('exam_attempt_id', $attempt->id)
-                                ->whereHas('question', function ($q) use ($requestedSkillId) {
-                                    $q->where('skill_id', $requestedSkillId);
-                                })->delete();
-
-                            ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                                ->where('skill_id', $requestedSkillId)
-                                ->delete();
-
-                            $pos['current_level'] = $this->getValidStartingLevel($exam->id, $requestedSkillId, $request->has('level_id') ? (int) $request->level_id : 1);
-                        }
-                    }
-
-                    // --- FIX: If switching to a NEW skill, reset the timer start time to null ---
-                    if ($pos['current_skill_index'] !== $skillIndex) {
-                        $pos['current_skill_started_at'] = null;
-                        if (!in_array($user->role, ['demo', 'deom', 'staff'])) {
-                            $pos['current_level'] = 1;
-                        }
-                    }
-
-                    $pos['current_skill_index'] = $skillIndex;
-                    $attempt->update(['current_position' => $pos]);
-                }
-            }
+            $attempt = $this->handleResumeAttempt($request, $attempt, $exam, $user, $isDemo);
         } else {
-            // 1. Fetch the granular config for this specific student/exam pairing
-            $config = StudentExamConfig::where('student_id', $studentProfile->id ?? 0)
-                ->where('exam_id', $exam->id)
-                ->first();
-
-            // If no config exists, try to auto-assign it (e.g. from package or defaults)
-            if (!$config && !in_array($user->role, ['demo', 'deom', 'staff'])) {
-                $config = \App\Models\Student::assignDefaultExam($studentProfile, $exam->id);
-
-                if (!$config) {
-                    return response()->json(['error' => 'This exam has not been formally assigned to your account or package.'], 403);
-                }
+            $attempt = $this->createNewAttempt($request, $exam, $user, $studentProfile, $isDemo);
+            if (!$attempt) {
+                return response()->json(['error' => 'This exam has not been formally assigned to your account or package.'], 403);
             }
-
-            // 2. Map allowed skills to actual skill IDs available in this exam
-            $examSkills = $exam->skills;
-            $assignedSkills = [];
-
-            // Get allowed skill identifiers (IDs, names, or codes)
-            $allowedSkillIdentifiers = [];
-            if ($studentProfile) {
-                $allowedSkillIdentifiers = array_filter((array) $studentProfile->assigned_skills);
-                if (empty($allowedSkillIdentifiers) && $studentProfile->package) {
-                    $allowedSkillIdentifiers = array_filter((array) $studentProfile->package->skills);
-                }
-            }
-
-            if (empty($allowedSkillIdentifiers)) {
-                $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
-            }
-
-            foreach ($examSkills as $skill) {
-                $skillName = strtolower(trim($skill->name));
-                $skillCode = strtolower(trim($skill->short_code));
-                $shouldInclude = false;
-
-                if (!empty($allowedSkillIdentifiers)) {
-                    foreach ($allowedSkillIdentifiers as $idOrCode) {
-                        $match = strtolower(trim($idOrCode));
-                        if ($skill->id == $match || $skillName == $match || $skillCode == $match) {
-                            $shouldInclude = true;
-                            break;
-                        }
-                    }
-                } else if ($config) {
-                    // Fallback to config flags if no granular identifiers
-                    if ($skillName === 'listening' && $config->want_listening)
-                        $shouldInclude = true;
-                    if (($skillName === 'reading' || $skillName === 'reading comprehension') && $config->want_reading)
-                        $shouldInclude = true;
-                    if (($skillName === 'grammar' || $skillName === 'structure') && $config->want_grammar)
-                        $shouldInclude = true;
-                    if ($skillName === 'writing' && $config->want_writing)
-                        $shouldInclude = true;
-                    if ($skillName === 'speaking' && $config->want_speaking)
-                        $shouldInclude = true;
-                } else {
-                    $shouldInclude = true;
-                }
-
-                if ($shouldInclude) {
-                    $assignedSkills[] = $skill->id;
-                }
-            }
-
-            if (empty($assignedSkills)) {
+            if ($attempt === 'no_skills') {
                 return response()->json(['error' => 'No skills have been activated for your exam attempt. Please contact an administrator.'], 422);
             }
-
-            // Determine starting index
-            $startIndex = 0;
-            if ($request->has('skill_id')) {
-                $foundIndex = array_search((int) $request->skill_id, $assignedSkills);
-                if ($foundIndex !== false) {
-                    $startIndex = $foundIndex;
-                }
-            }
-
-            $attempt = ExamAttempt::create([
-                'student_id' => $studentProfile ? $studentProfile->id : null,
-                'user_id' => in_array($user->role, ['demo', 'deom', 'staff']) ? $user->id : null,
-                'exam_id' => $exam->id,
-                'status' => 'ongoing',
-                'current_position' => [
-                    'skill_ids' => $assignedSkills,
-                    'current_skill_index' => $startIndex,
-                    'current_level' => $this->getValidStartingLevel($exam->id, $assignedSkills[$startIndex] ?? 0, (in_array($user->role, ['demo', 'deom', 'staff']) && $request->has('level_id')) ? (int) $request->level_id : 1),
-                    'completed_skills' => [],
-                    'current_skill_started_at' => null // Timer starts only when getNextBatch is called
-                ]
-            ]);
         }
 
         return response()->json([
-            'attempt' => $attempt->load('exam'),
-            'assigned_skills' => \App\Models\Skill::whereIn('id', $attempt->current_position['skill_ids'])->get()
+            'attempt'         => $attempt->load('exam'),
+            'assigned_skills' => Skill::whereIn('id', $attempt->current_position['skill_ids'])->get(),
         ]);
     }
 
-    /**
-     * Fetch questions for the current level in the current skill.
-     * Supports composition rules (standalone_quantity + passage_quantity) and is_random per level.
-     */
-    public function getNextBatch(Request $request, ExamAttempt $attempt, $retryCount = 0)
+    // =========================================================================
+    // 3. GET NEXT BATCH
+    // =========================================================================
+
+    public function getNextBatch(Request $request, ExamAttempt $attempt, int $retryCount = 0)
     {
         if ($retryCount > 10) {
             return response()->json(['error' => 'Infinite recursion detected. Please ensure your exam has questions assigned.'], 500);
         }
+
         $user = $request->user();
-        \Illuminate\Support\Facades\Log::info("getNextBatch hit for Attempt ID: " . $attempt->id);
+        Log::info("getNextBatch hit for Attempt ID: " . $attempt->id);
 
         if ($attempt->status !== 'ongoing') {
             return response()->json(['error' => 'Exam is not active.'], 403);
         }
 
         $pos = $attempt->current_position ?? [];
-        if (!isset($pos['skill_ids']) || !isset($pos['skill_ids'][$pos['current_skill_index']])) {
+        if (!isset($pos['skill_ids'][$pos['current_skill_index']])) {
             return response()->json(['error' => 'Exam configuration error: Skill not found.'], 500);
         }
 
-        $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+        $skillId  = $pos['skill_ids'][$pos['current_skill_index']];
         $levelNum = $pos['current_level'];
 
-        $level = Level::where('skill_id', $skillId)
-            ->where('level_number', $levelNum)
-            ->first();
-
+        $level = Level::where('skill_id', $skillId)->where('level_number', $levelNum)->first();
         if (!$level) {
             return response()->json(['error' => "Configuration missing for Level {$levelNum}."], 404);
         }
 
-        // Exclude already-answered questions using an efficient Left Join in the main queries
-        // instead of pulling a large array into memory.
-        $attemptId = $attempt->id;
-
-        // Find level-specific rules first, then fall back to skill-wide rules
-        $rules = ExamQuestionRule::where('exam_id', $attempt->exam_id)
-            ->where('skill_id', $skillId)
-            ->where('level_id', $level->id)
-            ->get();
-
-        if ($rules->isEmpty()) {
-            $rules = ExamQuestionRule::where('exam_id', $attempt->exam_id)
-                ->where('skill_id', $skillId)
-                ->whereNull('level_id')
-                ->get();
-        }
-
-
-
-        $questions = collect();
-
-        // 1. Fetch questions based on Rules
-        if ($rules->isEmpty()) {
-            // If no specific exam rules exist, treat as Unlimited: fetch all available questions for this level/skill/exam
-            $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, 0));
-        } else {
-            foreach ($rules as $rule) {
-                $sQty = $rule->standalone_quantity ?? 0;
-                $pQty = $rule->passage_quantity ?? 0;
-                $lQty = $rule->quantity ?? 0;
-
-                // Normalize: If all are 0, treat as Unlimited
-                if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
-                    $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, 0));
-                } else {
-                    if ($sQty > 0) {
-                        $questions = $questions->concat($this->fetchStandaloneBatch($attempt->exam_id, $attemptId, $skillId, $level, $sQty));
-                    }
-                    if ($pQty > 0) {
-                        $questions = $questions->concat($this->fetchPassageBatch($attempt->exam_id, $attemptId, $skillId, $level, $pQty));
-                    }
-                    if ($lQty > 0) {
-                        $questions = $questions->concat($this->fetchLegacyBatch($attempt->exam_id, $attemptId, $skillId, $level, $lQty));
-                    }
-                }
-            }
-        }
-
-        // Final Deduplication & Cleanup
-        $questions = $questions->unique('id')->values();
+        $questions = $this->questionService->fetchBatchForLevel($attempt->exam_id, $attempt->id, $skillId, $level);
 
         // Shuffle options
         $questions = $questions->map(function ($q) {
@@ -392,184 +187,48 @@ class ExamController extends Controller
         });
 
         if ($questions->isEmpty()) {
-            // --- NEW: Fail-Safe for Demo Users ---
-            if (in_array($user->role, ['demo', 'deom', 'staff']) && $levelNum > 1) {
-                \Illuminate\Support\Facades\Log::warning("Demo user reached end of questions at Level {$levelNum}. Auto-resetting to Level 1.");
-
-                StudentAnswer::where('exam_attempt_id', $attempt->id)
-                    ->whereHas('question', function ($q) use ($skillId) {
-                        $q->where('skill_id', $skillId);
-                    })->delete();
-
-                ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
-                $pos['current_level'] = 1;
-                $attempt->update(['current_position' => $pos]);
-                return $this->getNextBatch($request, $attempt, $retryCount + 1);
-            }
-
-            // --- NEW: Fail-Safe for Demo Users (Level 1 Empty) ---
-            if (in_array($user->role, ['demo', 'deom', 'staff']) && $levelNum == 1) {
-                $skills = $attempt->exam->skills()->orderBy('id', 'asc')->get();
-                $nextSkillIndex = $pos['current_skill_index'] + 1;
-
-                if ($nextSkillIndex < $skills->count()) {
-                    \Illuminate\Support\Facades\Log::info("Demo Level 1 empty for Skill Index {$pos['current_skill_index']}. Auto-advancing to next skill.");
-                    $pos['current_skill_index'] = $nextSkillIndex;
-                    $pos['current_level'] = 1;
-                    $attempt->update(['current_position' => $pos]);
-
-                    return $this->getNextBatch($request, $attempt, $retryCount + 1);
-                }
-            }
-
-            return response()->json([
-                'error' => "Empty Question Set: No questions found for level '{$level->id}' (Skill ID: {$skillId}). Please verify that questions are assigned to this level and linked to the exam.",
-                'is_empty' => true,
-                'debug' => [
-                    'skill_id' => $skillId,
-                    'id' => $level->id,
-                    'attempt_id' => $attempt->id,
-                    'exam_id' => $attempt->exam_id
-                ]
-            ], 404);
+            return $this->handleEmptyBatch($request, $attempt, $pos, $skillId, $levelNum, $level, $retryCount);
         }
 
-        // --- FIX: Initialize timer ONLY when the first batch is fetched (Launch clicked) ---
-        if (!isset($pos['current_skill_started_at']) || $pos['current_skill_started_at'] === null) {
+        // Initialize per-skill timer on first batch fetch
+        if (empty($pos['current_skill_started_at'])) {
             $pos['current_skill_started_at'] = now()->toIso8601String();
             $attempt->update(['current_position' => $pos]);
         }
 
-        $skillDuration = \Illuminate\Support\Facades\DB::table('exam_skill')
+        $skillDuration = DB::table('exam_skill')
             ->where('exam_id', $attempt->exam_id)
             ->where('skill_id', $skillId)
             ->value('duration') ?? 0;
 
-        // --- NEW: Force 0 duration for demo/staff to disable frontend timer ---
-        $isDemo = in_array($user->role, ['demo', 'deom', 'staff']);
-        $finalDuration = $isDemo ? 0 : $skillDuration;
+        $isDemo = $this->examService->isDemoUser($user);
 
         return response()->json([
-            'skill' => \App\Models\Skill::find($skillId),
-            'level' => $level,
-            'questions' => $questions,
-            'total_questions' => $this->getTotalSkillQuestions($attempt->exam_id, $skillId),
-            'timer_type' => $attempt->exam->timer_type ?? 'global',
-            'time_limit' => $attempt->exam->time_limit ?? 0,
-            'skill_duration' => $finalDuration,
+            'skill'                    => Skill::find($skillId),
+            'level'                    => $level,
+            'questions'                => $questions,
+            'total_questions'          => $this->questionService->getTotalLevelQuestions($attempt->exam_id, $skillId, $level->id),
+            'timer_type'               => $attempt->exam->timer_type ?? 'global',
+            'time_limit'               => $attempt->exam->time_limit ?? 0,
+            'skill_duration'           => $isDemo ? 0 : $skillDuration,
             'current_skill_started_at' => $pos['current_skill_started_at'],
         ]);
     }
 
+    // =========================================================================
+    // 4. SUBMIT BATCH
+    // =========================================================================
 
-    /**
-     * Calculate total expected questions for a skill in an exam.
-     * Used for the global question counter on the frontend.
-     */
-    private function getTotalSkillQuestions(int $examId, int $skillId): int
-    {
-        $exam = Exam::find($examId);
-        if (!$exam) return 0;
-
-        $levels = Level::where('skill_id', $skillId)
-            ->where('is_active', true)
-            ->get();
-
-        $allRules = ExamQuestionRule::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->get();
-        $rulesByLevel = $allRules->whereNotNull('level_id')->groupBy('level_id');
-        $globalRules = $allRules->whereNull('level_id');
-
-        $total = 0;
-        foreach ($levels as $level) {
-            $rules = $rulesByLevel->get($level->id, collect());
-            if ($rules->isEmpty()) {
-                $rules = $globalRules;
-            }
-
-            if ($rules->isNotEmpty()) {
-                foreach ($rules as $rule) {
-                    $sQty = $rule->standalone_quantity ?? 0;
-                    $pQty = $rule->passage_quantity ?? 0;
-                    $lQty = $rule->quantity ?? 0;
-
-                    // Fetch actual available counts for this level/exam
-                    $actualStandalone = Question::where('exam_id', $examId)
-                        ->where('skill_id', $skillId)
-                        ->where('level_id', $level->id)
-                        ->whereNull('passage_id')
-                        ->count();
-
-                    // Standalone contribution
-                    if ($sQty > 0) {
-                        $total += min($sQty, $actualStandalone);
-                    } else if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
-                        // If everything is 0, it's unlimited -> take all
-                        $total += $actualStandalone;
-                    }
-
-                    // Passage contribution
-                    if ($pQty > 0) {
-                        $passages = Question::where('exam_id', $examId)
-                            ->where('skill_id', $skillId)
-                            ->where('level_id', $level->id)
-                            ->whereNotNull('passage_id')
-                            ->select('passage_id')
-                            ->distinct()
-                            ->take($pQty)
-                            ->pluck('passage_id');
-                        
-                        $total += Question::where('exam_id', $examId)->whereIn('passage_id', $passages)->count();
-                    } else if ($sQty === 0 && $pQty === 0 && $lQty === 0) {
-                        // Unlimited passages
-                        $total += Question::where('exam_id', $examId)
-                            ->where('skill_id', $skillId)
-                            ->where('level_id', $level->id)
-                            ->whereNotNull('passage_id')
-                            ->count();
-                    }
-
-                    // Legacy quantity fallback (only if s/p are not set)
-                    if ($lQty > 0 && $sQty === 0 && $pQty === 0) {
-                        $actualTotal = Question::where('exam_id', $examId)
-                            ->where('skill_id', $skillId)
-                            ->where('level_id', $level->id)
-                            ->count();
-                        $total += min($lQty, $actualTotal);
-                    }
-                }
-            } else {
-                // Unlimited mode: No rules at all, take all questions in DB for this level
-                $total += Question::where('exam_id', $examId)
-                    ->where('skill_id', $skillId)
-                    ->where('level_id', $level->id)
-                    ->count();
-            }
-        }
-
-        return max($total, 0);
-    }
-
-    /**
-     * Submit a batch of answers — handles both Adaptive and Not-Adaptive logic.
-     *
-     * ADAPTIVE:     Always continues to the next level after a pass.
-     *               Stops only after passing or failing Level 9.
-     *
-     * NOT-ADAPTIVE: If student PASSES a level → move to next level (ascending).
-     *               If student FAILS a level → STOP this skill immediately.
-     *               That failing level is recorded as the student's placement level.
-     */
     public function submitBatch(Request $request, ExamAttempt $attempt)
     {
-        \Illuminate\Support\Facades\Log::info('Submit Batch Request:', $request->all());
+        Log::info('Submit Batch Request:', $request->all());
+
         $request->validate([
-            'answers' => 'required|array',
-            'answers.*.question_id' => 'required|exists:questions,id',
-            'answers.*.option_id' => 'nullable|exists:question_options,id',
-            'answers.*.text_answer' => 'nullable|string',
-            'answers.*.audio_file' => 'nullable|file|max:20480', // Max 20MB
+            'answers'                => 'required|array',
+            'answers.*.question_id'  => 'required|exists:questions,id',
+            'answers.*.option_id'    => 'nullable|exists:question_options,id',
+            'answers.*.text_answer'  => 'nullable|string',
+            'answers.*.audio_file'   => 'nullable|file|max:20480',
         ]);
 
         $pos = $attempt->current_position ?? [];
@@ -577,488 +236,87 @@ class ExamController extends Controller
             return response()->json(['error' => 'Current position is invalid.'], 500);
         }
 
-        $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+        $skillId  = $pos['skill_ids'][$pos['current_skill_index']];
         $levelNum = $pos['current_level'];
 
-        $level = Level::where('skill_id', $skillId)
-            ->where('level_number', $levelNum)
-            ->first();
-
+        $level = Level::where('skill_id', $skillId)->where('level_number', $levelNum)->first();
         if (!$level) {
             return response()->json(['error' => "Level configuration not found for Level {$levelNum}."], 404);
         }
 
-        // --- Calculate score for this batch (Weighted by points) ---
-        $earnedPoints = 0;
-        $totalPossiblePoints = 0;
-        $resultsMap = []; // To track which questions were wrong
-
-        // Pre-fetch all questions and options to avoid N+1 query problem
-        $questionIds = collect($request->answers)->pluck('question_id')->unique()->toArray();
+        // ── Grade answers ──────────────────────────────────────────────────────
+        $questionIds  = collect($request->answers)->pluck('question_id')->unique()->toArray();
         $questionsMap = Question::with('options')->whereIn('id', $questionIds)->get()->keyBy('id');
+
+        $earnedPoints        = 0;
+        $totalPossiblePoints = 0;
+        $resultsMap          = [];
 
         foreach ($request->answers as $index => $ans) {
             $question = $questionsMap->get($ans['question_id']);
-            if (!$question)
-                continue;
+            if (!$question) continue;
 
             $totalPossiblePoints += $question->points;
-            $isCorrect = false;
-
-            // Handle MCQs
-            if ($question->type === 'mcq' && isset($ans['option_id'])) {
-                $option = $question->options->firstWhere('id', (int) $ans['option_id']);
-                $isCorrect = $option ? (bool) $option->is_correct : false;
-            }
-            // Handle Drag & Drop (Gap Fill)
-            else if ($question->type === 'drag_drop' && isset($ans['text_answer'])) {
-                $studentAnswers = json_decode($ans['text_answer'], true);
-                if (is_array($studentAnswers)) {
-                    // Correct options in order of their ID (or sort_order if we had one)
-                    $correctOptions = $question->options()->where('is_correct', true)->orderBy('id', 'asc')->pluck('option_text')->toArray();
-
-                    if (count($studentAnswers) === count($correctOptions)) {
-                        $isCorrect = true;
-                        foreach ($studentAnswers as $i => $val) {
-                            if (trim(strtolower($val)) !== trim(strtolower($correctOptions[$i] ?? ''))) {
-                                $isCorrect = false;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            // Handle Word Selection / Click Word
-            else if (in_array($question->type, ['word_selection', 'click_word'])) {
-                $studentSelected = $ans['selected_words'] ?? [];
-
-                // If it came as a JSON string (legacy or alternate format), decode it
-                if (is_string($studentSelected)) {
-                    $studentSelected = json_decode($studentSelected, true) ?? [];
-                }
-
-                if (is_array($studentSelected)) {
-                    $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
-                    $incorrectOptions = $question->options()->where('is_correct', false)->pluck('option_text')->toArray();
-
-                    // All correct words must be selected
-                    $allCorrectSelected = true;
-                    foreach ($correctOptions as $correct) {
-                        if (!in_array($correct, $studentSelected)) {
-                            $allCorrectSelected = false;
-                            break;
-                        }
-                    }
-
-                    // No incorrect words should be selected
-                    $anyIncorrectSelected = false;
-                    foreach ($studentSelected as $selected) {
-                        if (in_array($selected, $incorrectOptions)) {
-                            $anyIncorrectSelected = true;
-                            break;
-                        }
-                    }
-
-                    $isCorrect = $allCorrectSelected && !$anyIncorrectSelected && count($studentSelected) === count($correctOptions);
-                }
-            }
-            // Handle Fill in the Blank
-            else if ($question->type === 'fill_blank') {
-                $studentAnswers = $ans['fill_blank_answers'] ?? [];
-                $correctOptions = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
-
-                $isCorrect = true;
-                if (count($studentAnswers) < count($correctOptions)) {
-                    $isCorrect = false;
-                } else {
-                    foreach ($correctOptions as $i => $correctVal) {
-                        if (trim(strtolower($studentAnswers[$i] ?? '')) !== trim(strtolower($correctVal))) {
-                            $isCorrect = false;
-                            break;
-                        }
-                    }
-                }
-            }
-            // Handle Drag & Drop
-            else if ($question->type === 'drag_drop') {
-                $studentAnswers = $ans['drag_drop_answers'] ?? [];
-                $correctOptions = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
-
-                $isCorrect = true;
-                if (count($studentAnswers) < count($correctOptions)) {
-                    $isCorrect = false;
-                } else {
-                    foreach ($correctOptions as $i => $correctVal) {
-                        if (trim($studentAnswers[$i] ?? '') !== trim($correctVal)) {
-                            $isCorrect = false;
-                            break;
-                        }
-                    }
-                }
-            }
-            // Handle Matching
-            else if ($question->type === 'matching') {
-                $studentMatches = $ans['matching_answers'] ?? [];
-                if (is_string($studentMatches)) {
-                    $studentMatches = json_decode($studentMatches, true) ?? [];
-                } else if ($question->type === 'matching') {
-                    $studentMatches = $ans['matching_answers'] ?? [];
-                    if (is_string($studentMatches)) {
-                        $studentMatches = json_decode($studentMatches, true) ?? [];
-                    }
-
-                    $options = $question->options;
-                    $isCorrect = true;
-                    $pairCount = 0;
-
-                    foreach ($options as $opt) {
-                        $text = $opt->option_text;
-                        if (str_contains($text, '|')) {
-                            $pairCount++;
-                            $parts = explode('|', $text, 2);
-                            $expectedTarget = trim($parts[1] ?? '');
-
-                            // Student sends: { option_id: "Target Text" }
-                            $actualTarget = $studentMatches[$opt->id] ?? null;
-
-                            if (trim($actualTarget ?? '') !== $expectedTarget) {
-                                $isCorrect = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    // Ensure student matched all required pairs
-                    if ($isCorrect && count($studentMatches) !== $pairCount) {
-                        $isCorrect = false;
-                    }
-                }
-            }
-            // Handle Ordering
-            else if ($question->type === 'ordering') {
-                $studentOrder = $ans['ordering_answers'] ?? [];
-                $correctOrder = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
-
-                $isCorrect = true;
-                if (count($studentOrder) !== count($correctOrder)) {
-                    $isCorrect = false;
-                } else {
-                    foreach ($correctOrder as $i => $correctVal) {
-                        if (trim($studentOrder[$i] ?? '') !== trim($correctVal)) {
-                            $isCorrect = false;
-                            break;
-                        }
-                    }
-                }
-            }
-            // Handle Highlight (evaluated like word selection)
-            else if ($question->type === 'highlight') {
-                $studentSelected = $ans['highlight_answers'] ?? [];
-                if (is_string($studentSelected)) {
-                    $studentSelected = json_decode($studentSelected, true) ?? [];
-                }
-
-                if (is_array($studentSelected)) {
-                    $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
-                    $incorrectOptions = $question->options()->where('is_correct', false)->pluck('option_text')->toArray();
-
-                    $allCorrectSelected = true;
-                    foreach ($correctOptions as $correct) {
-                        if (!in_array($correct, $studentSelected)) {
-                            $allCorrectSelected = false;
-                            break;
-                        }
-                    }
-
-                    $anyIncorrectSelected = false;
-                    foreach ($studentSelected as $selected) {
-                        if (in_array($selected, $incorrectOptions)) {
-                            $anyIncorrectSelected = true;
-                            break;
-                        }
-                    }
-
-                    $isCorrect = $allCorrectSelected && !$anyIncorrectSelected && count($studentSelected) === count($correctOptions);
-                }
-            }
-            // Handle Text answers (Legacy Gap Fill, etc.)
-            else if ($question->type !== 'mcq' && isset($ans['text_answer'])) {
-                $correctText = $question->options()->where('is_correct', true)->value('option_text');
-                $isCorrect = trim(strtolower($ans['text_answer'] ?? '')) === trim(strtolower($correctText ?? ''));
-            }
-
-            // Track result for "Exit Point" detection
+            $isCorrect            = $this->scoringService->gradeAnswer($question, $ans);
             $resultsMap[$question->id] = $isCorrect;
-
-            // Handle Audio Upload for Speaking tasks (if applicable)
-            $mediaPath = null;
-            if ($request->hasFile("answers.{$index}.audio_file")) {
-                $file = $request->file("answers.{$index}.audio_file");
-                $mediaPath = $file->store("attempts/{$attempt->id}/answers", 'public');
-            }
 
             if ($isCorrect) {
                 $earnedPoints += $question->points;
             }
 
-            // --- NEW: Serialize complex answers for storage ---
-            $textAnswer = $ans['text_answer'] ?? null;
-            if (in_array($question->type, ['word_selection', 'click_word'])) {
-                $textAnswer = json_encode($ans['selected_words'] ?? []);
-            } else if ($question->type === 'drag_drop') {
-                $textAnswer = json_encode($ans['drag_drop_answers'] ?? []);
-            } else if ($question->type === 'fill_blank') {
-                $textAnswer = json_encode($ans['fill_blank_answers'] ?? []);
-            } else if ($question->type === 'matching') {
-                $textAnswer = is_string($ans['matching_answers'] ?? null) ? $ans['matching_answers'] : json_encode($ans['matching_answers'] ?? []);
-            } else if ($question->type === 'ordering') {
-                $textAnswer = json_encode($ans['ordering_answers'] ?? []);
-            } else if ($question->type === 'highlight') {
-                $textAnswer = json_encode($ans['highlight_answers'] ?? []);
-            }
+            $mediaPath  = $this->scoringService->storeAudioFile($request, $attempt->id, $index);
+            $textAnswer = $this->scoringService->serializeAnswerForStorage($question, $ans);
 
             StudentAnswer::updateOrCreate(
                 ['exam_attempt_id' => $attempt->id, 'question_id' => $question->id],
                 [
-                    'option_id' => $ans['option_id'] ?? null,
-                    'text_answer' => $textAnswer,
-                    'media_answer' => $mediaPath,
-                    'is_correct' => $isCorrect,
+                    'skill_id'       => $skillId,
+                    'option_id'      => $ans['option_id'] ?? null,
+                    'text_answer'    => $textAnswer,
+                    'media_answer'   => $mediaPath,
+                    'is_correct'     => $isCorrect,
                     'points_awarded' => $isCorrect ? $question->points : 0,
                 ]
             );
         }
 
-        $batchScore = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 0;
-        $passThreshold = $level->pass_threshold ?? 70;
-        $passed = $batchScore >= $passThreshold;
+        // ── Score & progression ────────────────────────────────────────────────
+        $passThreshold  = $level->pass_threshold ?? 70;
+        $batchScore     = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 0;
+        $passed         = $batchScore >= $passThreshold;
 
-        $answeredIds = StudentAnswer::where('exam_attempt_id', $attempt->id)
-            ->pluck('question_id')
-            ->toArray();
+        $levelScore        = $this->attemptService->computeLevelScore($attempt, $skillId, $level);
+        $remainingCount    = $this->attemptService->countRemainingQuestions($attempt, $skillId, $level);
 
-        $remainingQuestionsCount = Question::where('exam_id', $attempt->exam_id)
-            ->where('skill_id', $skillId)
-            ->where('level_id', $level->id)
-            ->whereNotIn('id', $answeredIds)
-            ->count();
+        $student   = $attempt->student;
+        $isAdaptive = $student ? !$student->not_adaptive : true;
 
-        // --- Determine the student's exam mode ---
-        $student = $attempt->student;          // relationship: ExamAttempt->student
-        $isAdaptive = true; // Default to adaptive
-        if ($student) {
-            $isAdaptive = !$student->not_adaptive;    // not_adaptive = 1 means NOT adaptive
+        // Determine whether we should log an ExamAttemptLevel entry
+        $shouldLog = $isAdaptive ? ($remainingCount === 0) : ($remainingCount === 0 || !$passed);
+        if ($shouldLog) {
+            $this->attemptService->logLevelResult($attempt, $skillId, $level, $levelScore, $passThreshold);
         }
 
-        $nextPos = $pos;
+        $skillScore   = $this->attemptService->computeSkillScore($attempt, $skillId);
+        $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
+
+        $nextLevelExists = $this->attemptService->nextLevelExists($attempt->exam_id, $skillId, $levelNum);
+        $nextPos         = $pos;
+        $skillEnded      = false;
+        $placementLevel  = null;
+
+        [$nextPos, $skillEnded, $placementLevel] = $this->resolveProgression(
+            $attempt, $pos, $level, $skillId, $levelNum,
+            $passed, $isAdaptive, $remainingCount, $nextLevelExists,
+            $skillScore, $student, $request->answers, $resultsMap
+        );
+
+        // Move to next skill / finish exam
         $finishedExam = false;
-        $skillEnded = false;
-        $placementLevel = null;   // For not-adaptive: the level where student stopped
-        
-        // Calculate the ACTUAL total score for this LEVEL so far (across all batches)
-        $levelTotalPossible = Question::where('exam_id', $attempt->exam_id)
-            ->where('skill_id', $skillId)
-            ->where('level_id', $level->id)
-            ->sum('points');
-            
-        $levelEarned = StudentAnswer::where('exam_attempt_id', $attempt->id)
-            ->whereIn('question_id', function($q) use ($attempt, $skillId, $level) {
-                $q->select('id')->from('questions')
-                  ->where('exam_id', $attempt->exam_id)
-                  ->where('skill_id', $skillId)
-                  ->where('level_id', $level->id);
-            })
-            ->sum('points_awarded');
-            
-        $currentLevelScore = $levelTotalPossible > 0 ? round(($levelEarned / $levelTotalPossible) * 100, 2) : 0;
-
-        // We only log to ExamAttemptLevel when the student is LEAVING the level:
-        // 1. In Adaptive: When remainingQuestionsCount == 0
-        // 2. In Non-Adaptive: When remainingQuestionsCount == 0 OR when they fail (since failure stops the skill)
-        $shouldLogEntry = false;
-        if ($isAdaptive) {
-            if ($remainingQuestionsCount == 0) $shouldLogEntry = true;
-        } else {
-            if ($remainingQuestionsCount == 0 || !$passed) $shouldLogEntry = true;
-        }
-
-        if ($shouldLogEntry) {
-            ExamAttemptLevel::updateOrCreate(
-                [
-                    'exam_attempt_id' => $attempt->id,
-                    'skill_id' => $skillId,
-                    'level_number' => $levelNum,
-                ],
-                [
-                    'score' => $currentLevelScore,
-                    'status' => $currentLevelScore >= $passThreshold ? 'passed' : 'failed',
-                ]
-            );
-        }
-
-        // --- Calculate Aggregate Skill Score (Sum of Max Score per Level) ---
-        $totalSkillPoints = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-            ->where('skill_id', $skillId)
-            ->groupBy('level_number')
-            ->selectRaw('max(score) as max_score')
-            ->get()
-            ->sum('max_score');
-        
-        // Dynamic divisor: (Number of active levels in this skill * 100)
-        $levelCount = Level::where('skill_id', $skillId)->where('is_active', true)->count();
-        $maxPossiblePoints = max($levelCount * 100, 100); // Avoid division by zero
-        
-        $totalSkillScore = round(($totalSkillPoints / $maxPossiblePoints) * 100, 2);
-        $placementScore = $totalSkillScore; // Use the percentage for final report
-
-        // Update overall_score of the attempt as the average of all skill percentages
-        $allSkillsScore = $attempt->attemptSkills()->where('skill_id', '!=', $skillId)->pluck('score')->toArray();
-        $allSkillsScore[] = $totalSkillScore;
-        $overallScore = count($allSkillsScore) > 0 ? round(array_sum($allSkillsScore) / count($allSkillsScore), 2) : 0;
-        $attempt->update(['overall_score' => $overallScore]);
-
-        // Strictly check if the IMMEDIATE next level (levelNum + 1) exists AND has questions
-        $nextLevelExists = Level::where('skill_id', $skillId)
-            ->where('level_number', $levelNum + 1)
-            ->where('is_active', true)
-            ->whereHas('questions', function($q) use ($attempt) {
-                $q->where('exam_id', $attempt->exam_id);
-            })
-            ->exists();
-        
-        $nextLevelNumber = $levelNum + 1;
-
-        if ($isAdaptive) {
-            // ===== ADAPTIVE MODE =====
-            // Continue upward through all levels, regardless of passing or failing.
-            // Stop only when there are no more levels.
-            if ($remainingQuestionsCount == 0) {
-                if ($nextLevelExists) {
-                    // Move to next level with questions
-                    $nextPos['current_level'] = $nextLevelNumber;
-                } else {
-                    // Done with this skill (reached the last level)
-                    $skillEnded = true;
-                    $attempt->attemptSkills()->updateOrCreate(
-                        ['skill_id' => $skillId],
-                        [
-                            'max_level_reached' => $levelNum,
-                            'score' => $totalSkillScore,
-                            'status' => 'completed', // They finished all levels
-                            'finished_at' => now(),
-                        ]
-                    );
-                }
-            } else {
-                // More questions left in this level, stay here
-                $nextPos['current_level'] = $levelNum;
-            }
-        } else {
-            // ===== NOT-ADAPTIVE MODE =====
-            // FAIL → check if retry is allowed
-            // PASS → move to next level (if any), otherwise skill is done.
-            if (!$passed) {
-                // If student has retry permission AND the level allows retry, allow them to stay on the same level
-                // Note: getNextBatch automatically excludes answered questions, so they will get a fresh batch.
-                if ($student->allows_retry && $level->allows_retry) {
-                    $skillEnded = false;
-                    $nextPos['current_level'] = $levelNum; // Stay on current level to retry
-                } else {
-                    $skillEnded = true;
-                    $placementLevel = $levelNum;
-                    $placementScore = $totalSkillScore;
-
-                    // --- NEW: Find the FIRST wrong question in this specific batch to record as the exit cause ---
-                    $firstWrongQuestionId = null;
-
-                    // $resultsMap was built during the evaluation loop above
-                    foreach ($request->answers as $ans) {
-                        $qid = $ans['question_id'];
-                        if (isset($resultsMap[$qid]) && !$resultsMap[$qid]) {
-                            $firstWrongQuestionId = $qid;
-                            break;
-                        }
-                    }
-
-                    if ($firstWrongQuestionId) {
-                        $attempt->update(['last_seen_question_id' => $firstWrongQuestionId]);
-                    } else if (count($request->answers) > 0) {
-                        $attempt->update(['last_seen_question_id' => end($request->answers)['question_id']]);
-                    }
-
-                    $attempt->attemptSkills()->updateOrCreate(
-                        ['skill_id' => $skillId],
-                        [
-                            'max_level_reached' => $levelNum,
-                            'score' => $totalSkillScore,
-                            'status' => 'failed',
-                            'placement_level' => max($levelNum - 1, 1),
-                            'placement_score' => $totalSkillScore,
-                            'finished_at' => now(),
-                        ]
-                    );
-                }
-            } elseif ($passed) {
-                // Check if this was a pass on a SECOND attempt (retry)
-                // If they failed once before at this same level, it's a retry pass.
-                $previousFailCount = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                    ->where('skill_id', $skillId)
-                    ->where('level_number', $levelNum)
-                    ->where('status', 'failed')
-                    ->count();
-
-                if ($previousFailCount > 0) {
-                    // Student PASSED on second attempt → Stop skill as per request
-                    $skillEnded = true;
-                    $placementLevel = $levelNum;
-                    $placementScore = $totalSkillScore;
-
-                    $attempt->attemptSkills()->updateOrCreate(
-                        ['skill_id' => $skillId],
-                        [
-                            'max_level_reached' => $levelNum,
-                            'score' => $totalSkillScore,
-                            'status' => 'completed',
-                            'placement_level' => $levelNum,
-                            'placement_score' => $totalSkillScore,
-                            'finished_at' => now(),
-                        ]
-                    );
-                } elseif ($remainingQuestionsCount == 0) {
-                    if ($nextLevelExists) {
-                        // Student PASSED on first attempt and there is a higher level → advance
-                        $nextPos['current_level'] = $nextLevelNumber;
-                    } else {
-                        // Student PASSED the final level on first attempt → skill done
-                        $skillEnded = true;
-                        $placementLevel = $levelNum;
-                        $placementScore = $totalSkillScore;
-
-                        $attempt->attemptSkills()->updateOrCreate(
-                            ['skill_id' => $skillId],
-                            [
-                                'max_level_reached' => $levelNum,
-                                'score' => $totalSkillScore,
-                                'status' => 'completed',
-                                'placement_level' => $levelNum,
-                                'placement_score' => $totalSkillScore,
-                                'finished_at' => now(),
-                            ]
-                        );
-                    }
-                }
-            }
-        } // Close else for non-adaptive mode
-
-        // Move to next skill or finish exam
         if ($skillEnded) {
-            if ($pos['current_skill_index'] < count($pos['skill_ids']) - 1) {
-                $nextPos['current_skill_index']++;
-                $nextPos['current_level'] = 1;
-                $nextPos['current_skill_started_at'] = null; // Timer should only start when they launch the next skill
-            } else {
-                $finishedExam = true;
-            }
+            $advanced      = $this->attemptService->advanceToNextSkillOrFinish($attempt, $nextPos);
+            $nextPos       = $advanced['next_pos'];
+            $finishedExam  = $advanced['finished_exam'];
         }
 
         $attempt->update(['current_position' => $nextPos]);
@@ -1068,27 +326,25 @@ class ExamController extends Controller
         }
 
         return response()->json([
-            'passed_level' => $passed,
-            'batch_score' => $batchScore,
-            'skill_ended' => $skillEnded,
+            'passed_level'  => $passed,
+            'batch_score'   => $batchScore,
+            'skill_ended'   => $skillEnded,
             'finished_exam' => $finishedExam,
             'placement_level' => $placementLevel,
-            'placement_score' => $placementScore,
-            'is_adaptive' => $isAdaptive,
-            // retry_attempt: true triggers the "Second Chance" notification on the frontend
+            'placement_score' => $skillScore,
+            'is_adaptive'   => $isAdaptive,
             'retry_attempt' => (!$passed && !$skillEnded && !$isAdaptive),
-            'next_step' => $finishedExam ? 'results' : ($skillEnded ? 'dashboard' : 'next_batch'),
+            'next_step'     => $finishedExam ? 'results' : ($skillEnded ? 'dashboard' : 'next_batch'),
         ]);
     }
 
-    /**
-     * Update the last seen question ID for an attempt.
-     */
+    // =========================================================================
+    // 5. MISC PUBLIC ENDPOINTS
+    // =========================================================================
+
     public function updateProgress(Request $request, ExamAttempt $attempt)
     {
-        $request->validate([
-            'question_id' => 'required|exists:questions,id'
-        ]);
+        $request->validate(['question_id' => 'required|exists:questions,id']);
 
         if ($attempt->status !== 'ongoing') {
             return response()->json(['error' => 'Exam is not active.'], 403);
@@ -1099,203 +355,336 @@ class ExamController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /**
-     * Get the final results summary for an attempt.
-     */
+    public function timeout(ExamAttempt $attempt)
+    {
+        if ($attempt->status === 'ongoing') {
+            $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+        }
+
+        return response()->json(['success' => true, 'next_step' => 'dashboard']);
+    }
+
     public function results(ExamAttempt $attempt)
     {
         $attempt->load(['attemptSkills.skill']);
 
-        $results = $attempt->attemptSkills->map(function ($as) {
-            return [
-                'name' => $as->skill->name,
-                'level' => $as->max_level_reached,
-                'score' => $as->score,
-            ];
-        });
-
-        return response()->json([
-            'skill_results' => $results
+        $results = $attempt->attemptSkills->map(fn($as) => [
+            'name'  => $as->skill->name,
+            'level' => $as->max_level_reached,
+            'score' => $as->score,
         ]);
+
+        return response()->json(['skill_results' => $results]);
     }
 
-    // --- Private Helper Methods for Batch Generation ---
-
-    private function fetchStandaloneBatch($examId, $attemptId, $skillId, $level, $qty)
-    {
-        $query = Question::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->where('level_id', $level->id)
-            ->whereNull('passage_id')
-            ->leftJoin('student_answers', function ($join) use ($attemptId) {
-                $join->on('questions.id', '=', 'student_answers.question_id')
-                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
-            })
-            ->whereNull('student_answers.id')
-            ->with('options')
-            ->select('questions.*');
-
-        if ($level->is_random) {
-            $query->inRandomOrder();
-        } else {
-            $query->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
-        }
-
-        if ($qty > 0) {
-            $query->take($qty);
-        }
-
-        return $query->get();
-    }
-
-    private function fetchPassageBatch($examId, $attemptId, $skillId, $level, $qty)
-    {
-        // Fetch IDs of passages already touched by this student (very small array compared to question IDs)
-        $answeredPassageIds = StudentAnswer::where('exam_attempt_id', $attemptId)
-            ->join('questions', 'questions.id', '=', 'student_answers.question_id')
-            ->whereNotNull('questions.passage_id')
-            ->distinct()
-            ->pluck('questions.passage_id')
-            ->toArray();
-
-        $passageQuery = Question::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->where('level_id', $level->id)
-            ->whereNotNull('passage_id')
-            ->whereNotIn('passage_id', $answeredPassageIds)
-            ->select('questions.passage_id')
-            ->distinct();
-
-        if ($level->is_random) {
-            $passageQuery->inRandomOrder();
-        } else {
-            $passageQuery->orderBy('questions.passage_id', 'asc');
-        }
-
-        if ($qty > 0) {
-            $ids = $passageQuery->take($qty)->pluck('questions.passage_id')->toArray();
-        } else {
-            $ids = $passageQuery->pluck('questions.passage_id')->toArray();
-        }
-        if (empty($ids))
-            return collect();
-
-        return Question::where('exam_id', $examId)
-            ->whereIn('passage_id', $ids)
-            ->leftJoin('student_answers', function ($join) use ($attemptId) {
-                $join->on('questions.id', '=', 'student_answers.question_id')
-                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
-            })
-            ->whereNull('student_answers.id')
-            ->with(['options', 'passage'])
-            ->orderBy('questions.sort_order', 'asc')
-            ->orderBy('questions.id', 'asc')
-            ->select('questions.*')
-            ->get();
-    }
-
-    private function fetchLegacyBatch($examId, $attemptId, $skillId, $level, $qty)
-    {
-        $query = Question::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->where('level_id', $level->id)
-            ->leftJoin('student_answers', function ($join) use ($attemptId) {
-                $join->on('questions.id', '=', 'student_answers.question_id')
-                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
-            })
-            ->whereNull('student_answers.id')
-            ->with(['options', 'passage'])
-            ->select('questions.*');
-
-        if ($level->is_random) {
-            $query->inRandomOrder();
-        } else {
-            $query->orderBy('questions.sort_order', 'asc')->orderBy('questions.id', 'asc');
-        }
-
-        if ($qty > 0) {
-            $query->take($qty);
-        }
-
-        $ruleQuestions = $query->get();
-        $pIds = $ruleQuestions->whereNotNull('passage_id')->pluck('passage_id')->unique()->toArray();
-
-        if (empty($pIds))
-            return $ruleQuestions;
-
-        $allPassageGrouped = Question::where('exam_id', $examId)
-            ->whereIn('passage_id', $pIds)
-            ->leftJoin('student_answers', function ($join) use ($attemptId) {
-                $join->on('questions.id', '=', 'student_answers.question_id')
-                    ->where('student_answers.exam_attempt_id', '=', $attemptId);
-            })
-            ->whereNull('student_answers.id')
-            ->with(['options', 'passage'])
-            ->orderBy('questions.sort_order', 'asc')
-            ->orderBy('questions.id', 'asc')
-            ->select('questions.*')
-            ->get()
-            ->groupBy('passage_id');
-
-        $final = collect();
-        $done = [];
-        foreach ($ruleQuestions as $q) {
-            if ($q->passage_id && !in_array($q->passage_id, $done)) {
-                $done[] = $q->passage_id;
-                $final = $final->concat($allPassageGrouped->get($q->passage_id, collect()));
-            } elseif (!$q->passage_id) {
-                $final->push($q);
-            }
-        }
-        return $final;
-    }
-
-    /**
-     * Determine a valid starting level for a skill.
-     * If the requested level has no questions, find the lowest level that does.
-     */
-    private function getValidStartingLevel($examId, $skillId, $requestedLevelNumber)
-    {
-        // 1. Resolve the requested level_number to its actual Level ID in the DB
-        $requestedLevel = Level::where('skill_id', $skillId)
-            ->where('level_number', $requestedLevelNumber)
-            ->first();
-
-        if ($requestedLevel) {
-            $hasQuestions = Question::where('exam_id', $examId)
-                ->where('skill_id', $skillId)
-                ->where('level_id', $requestedLevel->id)
-                ->exists();
-
-            if ($hasQuestions) {
-                return $requestedLevelNumber;
-            }
-        }
-
-        // 2. Find the first level by level_number that actually has questions for this skill
-        $firstValidLevelNum = Question::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->join('levels', 'levels.id', '=', 'questions.level_id')
-            ->orderBy('levels.level_number', 'asc')
-            ->value('levels.level_number');
-
-        return $firstValidLevelNum ?: $requestedLevelNumber;
-    }
-
-    /**
-     * Reset exam progress for demo users
-     */
     public function resetDemo(Request $request, Exam $exam)
     {
         $user = $request->user();
-        if (!in_array(strtolower($user->role), ['demo', 'deom', 'staff'])) {
+
+        if (!$this->examService->isDemoUser($user)) {
             return response()->json(['error' => 'Unauthorized. Only demo accounts can perform this action.'], 403);
         }
 
-        ExamAttempt::where('user_id', $user->id)
-            ->where('exam_id', $exam->id)
-            ->delete();
+        ExamAttempt::where('user_id', $user->id)->where('exam_id', $exam->id)->delete();
 
         return response()->json(['message' => 'Demo progress reset successfully']);
+    }
+
+    // =========================================================================
+    // PRIVATE HELPERS
+    // =========================================================================
+
+    private function buildDemoExamList($user): array
+    {
+        $exams   = Exam::with(['category', 'skills'])->get();
+        $examIds = $exams->pluck('id')->toArray();
+
+        $demoAttempts = ExamAttempt::where('user_id', $user->id)
+            ->whereIn('exam_id', $examIds)
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->groupBy('exam_id')
+            ->map(fn($g) => $g->first());
+
+        $exams->each(function ($exam) use ($demoAttempts) {
+            $exam->latest_attempt      = $demoAttempts->get($exam->id);
+            $exam->completed_skill_ids = [];
+        });
+
+        return $exams->toArray();
+    }
+
+    private function handleResumeAttempt(Request $request, ExamAttempt $attempt, Exam $exam, $user, bool $isDemo): ExamAttempt
+    {
+        if (!$request->has('skill_id')) {
+            return $attempt;
+        }
+
+        $requestedSkillId = (int) $request->skill_id;
+        $pos              = $attempt->current_position;
+        $skillIndex       = array_search($requestedSkillId, $pos['skill_ids']);
+
+        if ($skillIndex === false) {
+            return $attempt;
+        }
+
+        if ($isDemo) {
+            $isFinished = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $requestedSkillId)
+                ->whereIn('status', ['completed', 'failed'])
+                ->exists();
+
+            $requestedLevel = $request->has('level_id')
+                ? $this->questionService->getValidStartingLevel($exam->id, $requestedSkillId, (int) $request->level_id)
+                : 1;
+
+            if ($isFinished) {
+                $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+                $attempt = ExamAttempt::create([
+                    'user_id'          => $user->id,
+                    'exam_id'          => $exam->id,
+                    'status'           => 'ongoing',
+                    'current_position' => [
+                        'skill_ids'               => $pos['skill_ids'],
+                        'current_skill_index'     => $skillIndex,
+                        'current_level'           => $requestedLevel,
+                        'current_skill_started_at' => null,
+                    ],
+                ]);
+                return $attempt;
+            }
+
+            // Clear previous answers for this skill so they can retry
+            StudentAnswer::where('exam_attempt_id', $attempt->id)
+                ->whereHas('question', fn($q) => $q->where('skill_id', $requestedSkillId))
+                ->delete();
+
+            ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $requestedSkillId)
+                ->delete();
+
+            $pos['current_level'] = $requestedLevel;
+        }
+
+        if ($pos['current_skill_index'] !== $skillIndex) {
+            $pos['current_skill_started_at'] = null;
+            if (!$isDemo) {
+                $pos['current_level'] = 1;
+            }
+        }
+
+        $pos['current_skill_index'] = $skillIndex;
+        $attempt->update(['current_position' => $pos]);
+
+        return $attempt;
+    }
+
+    private function createNewAttempt(Request $request, Exam $exam, $user, $studentProfile, bool $isDemo): ExamAttempt|string|null
+    {
+        if (!$isDemo) {
+            $config = StudentExamConfig::where('student_id', $studentProfile->id ?? 0)
+                ->where('exam_id', $exam->id)
+                ->first();
+
+            if (!$config) {
+                $config = \App\Models\Student::assignDefaultExam($studentProfile, $exam->id);
+                if (!$config) {
+                    return null;
+                }
+            }
+        } else {
+            $config = null;
+        }
+
+        $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
+
+        if (empty($allowedSkillIdentifiers)) {
+            $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
+        }
+
+        $assignedSkills = [];
+        foreach ($exam->skills as $skill) {
+            $skillName = strtolower(trim($skill->name));
+
+            if (!empty($allowedSkillIdentifiers)) {
+                $shouldInclude = $this->examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers);
+            } elseif ($config) {
+                $shouldInclude = ($skillName === 'listening' && $config->want_listening)
+                    || (in_array($skillName, ['reading', 'reading comprehension']) && $config->want_reading)
+                    || (in_array($skillName, ['grammar', 'structure']) && $config->want_grammar)
+                    || ($skillName === 'writing' && $config->want_writing)
+                    || ($skillName === 'speaking' && $config->want_speaking);
+            } else {
+                $shouldInclude = true;
+            }
+
+            if ($shouldInclude) {
+                $assignedSkills[] = $skill->id;
+            }
+        }
+
+        if (empty($assignedSkills)) {
+            return 'no_skills';
+        }
+
+        $startIndex = 0;
+        if ($request->has('skill_id')) {
+            $found = array_search((int) $request->skill_id, $assignedSkills);
+            if ($found !== false) {
+                $startIndex = $found;
+            }
+        }
+
+        $startingLevel = $this->questionService->getValidStartingLevel(
+            $exam->id,
+            $assignedSkills[$startIndex] ?? 0,
+            ($isDemo && $request->has('level_id')) ? (int) $request->level_id : 1
+        );
+
+        return ExamAttempt::create([
+            'student_id'       => $studentProfile?->id,
+            'user_id'          => $isDemo ? $user->id : null,
+            'exam_id'          => $exam->id,
+            'status'           => 'ongoing',
+            'current_position' => [
+                'skill_ids'               => $assignedSkills,
+                'current_skill_index'     => $startIndex,
+                'current_level'           => $startingLevel,
+                'completed_skills'        => [],
+                'current_skill_started_at' => null,
+            ],
+        ]);
+    }
+
+    private function handleEmptyBatch(Request $request, ExamAttempt $attempt, array $pos, int $skillId, int $levelNum, Level $level, int $retryCount)
+    {
+        $user   = $request->user();
+        $isDemo = $this->examService->isDemoUser($user);
+
+        if ($isDemo && $levelNum > 1) {
+            Log::warning("Demo: end of questions at Level {$levelNum}. Resetting to Level 1.");
+
+            StudentAnswer::where('exam_attempt_id', $attempt->id)
+                ->whereHas('question', fn($q) => $q->where('skill_id', $skillId))
+                ->delete();
+
+            ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $skillId)
+                ->delete();
+
+            $pos['current_level'] = 1;
+            $attempt->update(['current_position' => $pos]);
+
+            return $this->getNextBatch($request, $attempt, $retryCount + 1);
+        }
+
+        if ($isDemo && $levelNum === 1) {
+            $skills         = $attempt->exam->skills()->orderBy('id')->get();
+            $nextSkillIndex = $pos['current_skill_index'] + 1;
+
+            if ($nextSkillIndex < $skills->count()) {
+                Log::info("Demo Level 1 empty for Skill Index {$pos['current_skill_index']}. Auto-advancing.");
+                $pos['current_skill_index'] = $nextSkillIndex;
+                $pos['current_level']       = 1;
+                $attempt->update(['current_position' => $pos]);
+
+                return $this->getNextBatch($request, $attempt, $retryCount + 1);
+            }
+        }
+
+        return response()->json([
+            'error'    => "Empty Question Set: No questions found for level '{$level->id}' (Skill ID: {$skillId}).",
+            'is_empty' => true,
+            'debug'    => [
+                'skill_id'   => $skillId,
+                'id'         => $level->id,
+                'attempt_id' => $attempt->id,
+                'exam_id'    => $attempt->exam_id,
+            ],
+        ], 404);
+    }
+
+    /**
+     * Resolve the next position and skill-end state based on adaptive/non-adaptive mode.
+     *
+     * @return array{0: array, 1: bool, 2: int|null}  [nextPos, skillEnded, placementLevel]
+     */
+    private function resolveProgression(
+        ExamAttempt $attempt,
+        array $pos,
+        Level $level,
+        int $skillId,
+        int $levelNum,
+        bool $passed,
+        bool $isAdaptive,
+        int $remainingCount,
+        bool $nextLevelExists,
+        float $skillScore,
+        $student,
+        array $rawAnswers,
+        array $resultsMap
+    ): array {
+        $nextPos        = $pos;
+        $skillEnded     = false;
+        $placementLevel = null;
+
+        if ($isAdaptive) {
+            if ($remainingCount === 0) {
+                if ($nextLevelExists) {
+                    $nextPos['current_level'] = $levelNum + 1;
+                } else {
+                    $skillEnded = true;
+                    $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $levelNum, 'completed');
+                }
+            } else {
+                $nextPos['current_level'] = $levelNum;
+            }
+        } else {
+            // Non-adaptive
+            if (!$passed) {
+                if ($student?->allows_retry && $level->allows_retry) {
+                    $nextPos['current_level'] = $levelNum; // stay for retry
+                } else {
+                    $skillEnded     = true;
+                    $placementLevel = $levelNum;
+                    $this->recordExitQuestion($attempt, $rawAnswers, $resultsMap);
+                    $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $levelNum, 'failed', max($levelNum - 1, 1));
+                }
+            } elseif ($passed) {
+                if ($this->attemptService->hasPreviousFailure($attempt, $skillId, $levelNum)) {
+                    $skillEnded     = true;
+                    $placementLevel = $levelNum;
+                    $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $levelNum, 'completed', $levelNum);
+                } elseif ($remainingCount === 0) {
+                    if ($nextLevelExists) {
+                        $nextPos['current_level'] = $levelNum + 1;
+                    } else {
+                        $skillEnded     = true;
+                        $placementLevel = $levelNum;
+                        $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $levelNum, 'completed', $levelNum);
+                    }
+                }
+            }
+        }
+
+        return [$nextPos, $skillEnded, $placementLevel];
+    }
+
+    private function recordExitQuestion(ExamAttempt $attempt, array $rawAnswers, array $resultsMap): void
+    {
+        $firstWrongId = null;
+        foreach ($rawAnswers as $ans) {
+            $qid = $ans['question_id'];
+            if (isset($resultsMap[$qid]) && !$resultsMap[$qid]) {
+                $firstWrongId = $qid;
+                break;
+            }
+        }
+
+        $lastId = $firstWrongId ?? (count($rawAnswers) > 0 ? end($rawAnswers)['question_id'] : null);
+
+        if ($lastId) {
+            $attempt->update(['last_seen_question_id' => $lastId]);
+        }
     }
 }

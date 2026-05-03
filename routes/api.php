@@ -28,6 +28,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/exams/{exam}/start', [\App\Http\Controllers\Api\ExamController::class, 'start']);
         Route::get('/attempts/{attempt}/next-batch', [\App\Http\Controllers\Api\ExamController::class, 'getNextBatch']);
         Route::post('/attempts/{attempt}/submit-batch', [\App\Http\Controllers\Api\ExamController::class, 'submitBatch']);
+        Route::post('/attempts/{attempt}/timeout', [\App\Http\Controllers\Api\ExamController::class, 'timeout']);
         Route::post('/attempts/{attempt}/update-progress', [\App\Http\Controllers\Api\ExamController::class, 'updateProgress']);
         Route::get('/attempts/{attempt}', function (\App\Models\ExamAttempt $attempt) {
             return $attempt->load(['exam', 'student']);
