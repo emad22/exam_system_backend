@@ -237,6 +237,8 @@ class ExamController extends Controller
         }
 
         $skillId  = $pos['skill_ids'][$pos['current_skill_index']];
+
+        
         $levelNum = $pos['current_level'];
 
         $level = Level::where('skill_id', $skillId)->where('level_number', $levelNum)->first();
@@ -314,7 +316,7 @@ class ExamController extends Controller
         // Move to next skill / finish exam
         $finishedExam = false;
         if ($skillEnded) {
-            $advanced      = $this->attemptService->advanceToNextSkillOrFinish($attempt, $nextPos);
+            $advanced      = $this->attemptService->advanceToNextSkillOrFinish($attempt, $nextPos, $skillId);
             $nextPos       = $advanced['next_pos'];
             $finishedExam  = $advanced['finished_exam'];
         }

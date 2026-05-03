@@ -133,9 +133,15 @@ class AttemptService
      *
      * @return array{next_pos: array, finished_exam: bool}
      */
-    public function advanceToNextSkillOrFinish(ExamAttempt $attempt, array $pos): array
+    public function advanceToNextSkillOrFinish(ExamAttempt $attempt, array $pos, int $completedSkillId): array
     {
         $nextPos = $pos;
+
+        // Ensure completed_skills is an array
+        $nextPos['completed_skills'] = $nextPos['completed_skills'] ?? [];
+        if (!in_array($completedSkillId, $nextPos['completed_skills'])) {
+            $nextPos['completed_skills'][] = $completedSkillId;
+        }
 
         if ($pos['current_skill_index'] < count($pos['skill_ids']) - 1) {
             $nextPos['current_skill_index']++;

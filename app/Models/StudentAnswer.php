@@ -9,6 +9,7 @@ class StudentAnswer extends Model
 {
     protected $fillable = [
         'exam_attempt_id', 
+        'skill_id',
         'question_id', 
         'option_id', 
         'text_answer', 

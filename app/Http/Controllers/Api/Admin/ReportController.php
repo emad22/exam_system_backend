@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ExamAttempt;
 use App\Models\ExamAttemptSkill;
 use App\Models\ExamAttemptLevel;
+use App\Models\StudentAnswer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -28,25 +29,25 @@ class ReportController extends Controller
      */
     public function show(ExamAttempt $attempt)
     {
-    //  dd("I3m here...............");
+        //  dd("I3m here...............");
         $attempt->load([
-            'student.user', 
+            'student.user',
             'user',
-            'exam', 
-            'attemptSkills.skill', 
-            'attemptLevels' => function($q) {
+            'exam',
+            'attemptSkills.skill',
+            'attemptLevels' => function ($q) {
                 $q->orderBy('created_at', 'asc');
             },
-            'answers' => function($q) {
+            'answers' => function ($q) {
                 $q->with([
-                    'question' => function($sq) {
+                    'question' => function ($sq) {
                         $sq->with(['passage', 'options', 'skill']);
                     },
                     'option'
                 ])->orderBy('created_at', 'asc');
             }
         ]);
-        
+
         return response()->json($attempt);
     }
 
@@ -57,12 +58,12 @@ class ReportController extends Controller
     {
         try {
             DB::beginTransaction();
-                // Cascading delete is preferred if relationships are properly set, 
-                // but we'll do it explicitly here for safety with student answers.
-                \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
-                \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
-                 \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->delete();
-                $attempt->delete();
+            // Cascading delete is preferred if relationships are properly set, 
+            // but we'll do it explicitly here for safety with student answers.
+            StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
+            ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
+            ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->delete();
+            $attempt->delete();
             DB::commit();
             return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
         } catch (\Exception $e) {
@@ -71,23 +72,51 @@ class ReportController extends Controller
         }
     }
 
-    public function resetAttemptٍSkill(Request $request, ExamAttempt $attempt, ExamAttemptSkill $skill)
+    public function resetAttemptSkill(Request $request, ExamAttempt $attempt, $skill)
     {
         try {
             DB::beginTransaction();
-                // Cascading delete is preferred if relationships are properly set, 
-                // but we'll do it explicitly here for safety with student answers.
-               // \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skill->id)->delete();
 
-                \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->where('skill_id', $skill->id)->delete();
-                \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skill->id)->delete();
-                \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
-              //  $attempt->delete();
+            $skillId = (int) $skill;
+
+            if ($attempt->status == "completed") {
+                $attempt->status = "ongoing";
+                $attempt->finished_at = null;
+            }
+
+            // 1. Update current_position to remove from completed_skills and rewind index
+            $pos = $attempt->current_position ?? [];
+            if (isset($pos['completed_skills'])) {
+                $pos['completed_skills'] = array_values(array_filter($pos['completed_skills'], fn($id) => $id != $skillId));
+            }
+
+            // Find the index of the reset skill to rewind the student to it
+            if (isset($pos['skill_ids'])) {
+                $resetIndex = array_search($skillId, $pos['skill_ids']);
+                if ($resetIndex !== false && (!isset($pos['current_skill_index']) || $resetIndex < $pos['current_skill_index'])) {
+                    $pos['current_skill_index'] = $resetIndex;
+                    $pos['current_level'] = 1;
+                    $pos['current_skill_started_at'] = null;
+                }
+            }
+
+            $attempt->current_position = $pos;
+            $attempt->save();
+
+            ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
+            ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
+            StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
+
+            // Recalculate Overall Score
+            $remainingScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->pluck('score')->toArray();
+            $overall = count($remainingScores) > 0 ? array_sum($remainingScores) / count($remainingScores) : 0;
+            $attempt->update(['overall_score' => $overall]);
+
             DB::commit();
-            return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
+            return response()->json(['message' => 'Skill progress has been successfully reset. The candidate can now retake this skill.']);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => 'Failed to reset candidate progress: ' . $e->getMessage()], 500);
+            return response()->json(['error' => 'Failed to reset skill progress: ' . $e->getMessage()], 500);
         }
     }
 

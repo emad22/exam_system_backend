@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Admin\ReportController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\QuestionImportController;
 use Illuminate\Http\Request;
@@ -40,7 +41,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Admin/Teacher/Supervisor Routes
     Route::prefix('admin')->middleware(StaffRole::class)->group(function () {
         Route::get('/stats', [Admin\DashboardController::class, 'stats']);
-        
+
         // Student Management
         Route::get('/students', [Admin\StudentController::class, 'index']);
         Route::get('/students/template', [Admin\StudentController::class, 'downloadTemplate']);
@@ -53,7 +54,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/students/{student}', [Admin\StudentController::class, 'show']);
         Route::patch('/students/{student}', [Admin\StudentController::class, 'update']);
         Route::delete('/students/{student}', [Admin\StudentController::class, 'destroy']);
-        Route::post('/students/{student}/reset-attempts', [Admin\StudentController::class, 'resetExamAttempts']);
+        Route::post('/students/{student}/reset', [Admin\StudentController::class, 'resetExamAttempts']);
 
         // Exam Management
         Route::get('/exams', [Admin\ExamController::class, 'index']);
@@ -67,9 +68,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/partners/{partner}', [PartnerController::class, 'destroy']);
         Route::post('/partners/{partner}/hold', [PartnerController::class, 'deactivatePartnerStudents']);
         Route::post('/partners/{partner}/unhold', [PartnerController::class, 'unholdPartner']);
-        
 
-        
+
+
         Route::post('/exams', [Admin\ExamController::class, 'store']);
         Route::get('/exams/{exam}', [Admin\ExamController::class, 'show']);
         Route::patch('/exams/{exam}', [Admin\ExamController::class, 'update']);
@@ -103,17 +104,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/questions/bulk-level', [Admin\QuestionController::class, 'bulkUpdateLevel']);
         Route::post('/media/upload', [Admin\QuestionController::class, 'uploadMedia']);
 
-        // Reports & Attempts
-       // Route::post('/reports/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt']);
-        Route::post('/reports/{attempt}/reset', [\App\Http\Controllers\Api\Admin\ReportController::class, 'resetAttempt']);
-        Route::get('/reports', [Admin\ReportController::class, 'index']);
-        Route::get('/reports/{attempt}', [Admin\ReportController::class, 'show']);
-       
-        
-        
+        Route::post('/reports/{attempt}/reset', [ReportController::class, 'resetAttempt']);
+        Route::post('/reports/{attempt}/skills/{skill}/reset', [ReportController::class, 'resetAttemptSkill']);
+        Route::get('/reports', [ReportController::class, 'index']);
+        Route::get('/reports/{attempt}', [ReportController::class, 'show']);
 
-       // Route::post('/admin/reports/{attempt}/reset', [ReportController::class, 'resetAttempt']);
-        // Route::post('/students/{student}/reset-attempts', [Admin\StudentController::class, 'resetExamAttempts']);
+
+
 
         // Staff Management (Admin Only)
         Route::middleware(AdminRole::class)->group(function () {
@@ -126,7 +123,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Utilities
         Route::get('/languages', [Admin\LanguageController::class, 'index']);
-        
+
         // Package Management
         Route::get('/packages', [Admin\PackageController::class, 'index']);
         Route::post('/packages', [Admin\PackageController::class, 'store']);
@@ -158,4 +155,4 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
 // WordPress Webhook (Public)
-Route::post('/webhook/wordpress/student-registration', [\App\Http\Controllers\Api\WordPressWebhookController::class, 'register']);
+Route::post('/webhook/wordpress/student-registration', [WordPressWebhookController::class, 'register']);
