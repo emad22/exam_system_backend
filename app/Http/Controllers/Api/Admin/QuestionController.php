@@ -17,7 +17,7 @@ class QuestionController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Question::with(['skill', 'options', 'passage', 'level', 'exam:id,title']);
+        $query = Question::with(['skill', 'options', 'passage', 'level', 'exam:id,title', 'creator:id,first_name,last_name', 'updater:id,first_name,last_name']);
 
         if ($request->has('skill_id') && $request->skill_id !== 'null' && $request->skill_id !== null) {
             $query->where('skill_id', $request->skill_id);
@@ -181,6 +181,7 @@ class QuestionController extends Controller
                     'sort_order' => $qData['sort_order'] ?? 0,
                     'min_words' => $qData['min_words'] ?? null,
                     'max_words' => $qData['max_words'] ?? null,
+                    'created_by' => $request->user()?->id,
                 ]);
 
                 // 4. Create Options
@@ -209,7 +210,7 @@ class QuestionController extends Controller
      */
     public function show(Question $question)
     {
-        return response()->json($question->load(['options', 'skill', 'passage.questions.options', 'level']));
+        return response()->json($question->load(['options', 'skill', 'passage.questions.options', 'level', 'creator:id,first_name,last_name', 'updater:id,first_name,last_name']));
     }
 
     /**
@@ -366,6 +367,11 @@ class QuestionController extends Controller
                 if ($qMediaPath) $data['media_path'] = $qMediaPath;
                 if ($qAudioPath) $data['audio_path'] = $qAudioPath;
                 if ($qImagePath) $data['image_path'] = $qImagePath;
+
+                $data['updated_by'] = $request->user()?->id;
+                if (!$qInstance->exists) {
+                    $data['created_by'] = $request->user()?->id;
+                }
 
                 $qInstance->fill($data);
                 $qInstance->save();

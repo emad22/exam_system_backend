@@ -24,7 +24,9 @@ class Question extends Model
         'points',
         'min_words',
         'max_words',
-        'sort_order'
+        'sort_order',
+        'created_by',
+        'updated_by'
     ];
 
     protected $casts = [
@@ -58,6 +60,16 @@ class Question extends Model
     public function options(): HasMany
     {
         return $this->hasMany(QuestionOption::class);
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
     }
 
     public function getMediaUrlAttribute()

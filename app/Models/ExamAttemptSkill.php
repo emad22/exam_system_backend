@@ -16,7 +16,8 @@ class ExamAttemptSkill extends Model
         'score',
         'status', // in_progress, completed, failed, skipped
         'started_at',
-        'finished_at'
+        'finished_at',
+        'cheat_warnings'
     ];
 
     protected $casts = [

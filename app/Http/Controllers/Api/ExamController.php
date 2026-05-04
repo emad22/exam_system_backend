@@ -12,6 +12,8 @@ use App\Models\Question;
 use App\Models\Skill;
 use App\Models\StudentAnswer;
 use App\Models\StudentExamConfig;
+use App\Models\User;
+use App\Notifications\SkillCompletedNotification;
 use App\Services\AttemptService;
 use App\Services\ExamService;
 use App\Services\QuestionService;
@@ -19,6 +21,7 @@ use App\Services\ScoringService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Notification;
 
 class ExamController extends Controller
 {
@@ -220,6 +223,7 @@ class ExamController extends Controller
             'time_limit' => $attempt->exam->time_limit ?? 0,
             'skill_duration' => $isDemo ? 0 : $skillDuration,
             'current_skill_started_at' => $pos['current_skill_started_at'],
+            'skill_cheat_warnings' => $skillRecord->cheat_warnings ?? 0,
         ]);
     }
 
@@ -334,6 +338,10 @@ class ExamController extends Controller
         // Move to next skill / finish exam
         $finishedExam = false;
         if ($skillEnded) {
+            $skill = Skill::find($skillId);
+            $admins = User::whereIn('role', ['admin', 'teacher'])->get();
+            Notification::send($admins, new SkillCompletedNotification($attempt, $skill));
+
             $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $nextPos, $skillId);
             $nextPos = $advanced['next_pos'];
 
@@ -439,6 +447,9 @@ class ExamController extends Controller
     public function finish(ExamAttempt $attempt)
     {
         if ($attempt->status === 'ongoing') {
+            $admins = \App\Models\User::whereIn('role', ['admin', 'teacher'])->get();
+            \Illuminate\Support\Facades\Notification::send($admins, new \App\Notifications\ExamExitedNotification($attempt));
+
             $pos = $attempt->current_position ?? [];
             if (!empty($pos['skill_ids']) && isset($pos['current_skill_index'])) {
                 $skillId = $pos['skill_ids'][$pos['current_skill_index']];
@@ -481,6 +492,57 @@ class ExamController extends Controller
         ExamAttempt::where('user_id', $user->id)->where('exam_id', $exam->id)->delete();
 
         return response()->json(['message' => 'Demo progress reset successfully']);
+    }
+
+    public function logWarning(Request $request, ExamAttempt $attempt)
+    {
+        if ($attempt->status !== 'ongoing') {
+            return response()->json(['error' => 'Exam is not active.'], 403);
+        }
+
+        // Per-skill increment (Specific warnings for this skill)
+        $pos = $attempt->current_position ?? [];
+        $currentWarnings = 0;
+        $shouldTerminateSkill = false;
+
+        if (isset($pos['skill_ids'][$pos['current_skill_index']])) {
+            $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+            
+            $skillAttempt = ExamAttemptSkill::firstOrCreate(
+                ['exam_attempt_id' => $attempt->id, 'skill_id' => $skillId],
+                ['started_at' => now(), 'status' => 'in_progress']
+            );
+            $skillAttempt->increment('cheat_warnings');
+            $currentWarnings = $skillAttempt->cheat_warnings;
+
+            // NEW: If warnings reach 3, terminate this skill specifically
+            if ($currentWarnings >= 3) {
+                $shouldTerminateSkill = true;
+                
+                // Finalize the skill as 'failed' due to cheating
+                $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
+                $maxLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                    ->where('skill_id', $skillId)
+                    ->max('level_number') ?? 1;
+
+                $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'failed');
+                $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
+                
+                // Advance position to next skill so they can't continue this one
+                $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $pos, $skillId);
+                $attempt->update(['current_position' => $advanced['next_pos']]);
+                
+                if ($advanced['finished_exam']) {
+                    $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+                }
+            }
+        }
+        
+        return response()->json([
+            'success' => true, 
+            'warnings' => $currentWarnings,
+            'should_terminate_skill' => $shouldTerminateSkill
+        ]);
     }
 
     // =========================================================================
