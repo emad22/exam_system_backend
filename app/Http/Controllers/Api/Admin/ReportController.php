@@ -29,7 +29,7 @@ class ReportController extends Controller
      */
     public function show(ExamAttempt $attempt)
     {
-        //  dd("I3m here...............");
+      
         $attempt->load([
             'student.user',
             'user',
@@ -108,9 +108,35 @@ class ReportController extends Controller
             StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
 
             // Recalculate Overall Score
-            $remainingScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->pluck('score')->toArray();
-            $overall = count($remainingScores) > 0 ? array_sum($remainingScores) / count($remainingScores) : 0;
-            $attempt->update(['overall_score' => $overall]);
+            // $remainingScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->pluck('score')->toArray();
+            // $overall = count($remainingScores) > 0 ? array_sum($remainingScores) / count($remainingScores) : 0;
+            // $attempt->update(['overall_score' => $overall]);
+
+
+            // $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+            //     ->whereHas('skill', fn($q) =>
+            //         $q->whereIn('name', ['reading', 'listening', ''])
+            //     )
+            //     ->avg('score') ?? 0;
+
+            // $attempt->update([
+            //     'overall_score' => $overall
+            // ]);
+
+            $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+                    ->whereHas('skill', function ($q) {
+                        $q->where(function ($query) {
+                            $query->where('name', 'like', '%read%')
+                                ->orWhere('name', 'like', '%listen%');
+                        });
+                    })
+                    ->avg('score') ?? 0;
+
+                $attempt->update([
+                    'overall_score' => $overall
+                ]);
+
+
 
             DB::commit();
             return response()->json(['message' => 'Skill progress has been successfully reset. The candidate can now retake this skill.']);
