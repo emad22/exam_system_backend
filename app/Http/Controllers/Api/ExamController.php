@@ -190,9 +190,14 @@ class ExamController extends Controller
             return $this->handleEmptyBatch($request, $attempt, $pos, $skillId, $levelNum, $level, $retryCount);
         }
 
-        // Initialize per-skill timer on first batch fetch
-        if (empty($pos['current_skill_started_at'])) {
-            $pos['current_skill_started_at'] = now()->toIso8601String();
+        // Ensure per-skill timer is firmly locked to the database record
+        $skillRecord = \App\Models\ExamAttemptSkill::firstOrCreate(
+            ['exam_attempt_id' => $attempt->id, 'skill_id' => $skillId],
+            ['started_at' => now()]
+        );
+
+        if (empty($pos['current_skill_started_at']) || $pos['current_skill_started_at'] !== $skillRecord->started_at->toIso8601String()) {
+            $pos['current_skill_started_at'] = $skillRecord->started_at->toIso8601String();
             $attempt->update(['current_position' => $pos]);
         }
 
@@ -259,12 +264,11 @@ class ExamController extends Controller
             if (!$question) continue;
 
             $totalPossiblePoints += $question->points;
-            $isCorrect            = $this->scoringService->gradeAnswer($question, $ans);
+            $pointsAwarded        = $this->scoringService->gradeAnswer($question, $ans);
+            $isCorrect            = $pointsAwarded > 0;
             $resultsMap[$question->id] = $isCorrect;
 
-            if ($isCorrect) {
-                $earnedPoints += $question->points;
-            }
+            $earnedPoints += $pointsAwarded;
 
             $mediaPath  = $this->scoringService->storeAudioFile($request, $attempt->id, $index);
             $textAnswer = $this->scoringService->serializeAnswerForStorage($question, $ans);
@@ -277,7 +281,7 @@ class ExamController extends Controller
                     'text_answer'    => $textAnswer,
                     'media_answer'   => $mediaPath,
                     'is_correct'     => $isCorrect,
-                    'points_awarded' => $isCorrect ? $question->points : 0,
+                    'points_awarded' => $pointsAwarded,
                 ]
             );
         }
@@ -318,7 +322,23 @@ class ExamController extends Controller
         if ($skillEnded) {
             $advanced      = $this->attemptService->advanceToNextSkillOrFinish($attempt, $nextPos, $skillId);
             $nextPos       = $advanced['next_pos'];
-            $finishedExam  = $advanced['finished_exam'];
+            
+            // Check if all assigned skills have been completed
+            $allCompleted = true;
+            foreach ($pos['skill_ids'] as $id) {
+                if (!in_array($id, $nextPos['completed_skills'])) {
+                    $allCompleted = false;
+                    break;
+                }
+            }
+
+            if ($allCompleted || $advanced['finished_exam']) {
+                // Wait, if $advanced['finished_exam'] is true but $allCompleted is false, we should NOT finish the exam!
+                // Actually, if we reached the end of the array, we might want to loop back to the first incomplete skill.
+                // For now, if they are sent to the dashboard, the dashboard handles letting them pick the next incomplete skill.
+                // We just need to make sure we don't lock the exam attempt.
+                $finishedExam = $allCompleted;
+            }
         }
 
         $attempt->update(['current_position' => $nextPos]);
@@ -360,7 +380,43 @@ class ExamController extends Controller
     public function timeout(ExamAttempt $attempt)
     {
         if ($attempt->status === 'ongoing') {
-            $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+            $pos = $attempt->current_position ?? [];
+            if (!empty($pos['skill_ids']) && isset($pos['current_skill_index'])) {
+                $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+                
+                // Get current score for the skill
+                $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
+                $maxLevel   = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                                ->where('skill_id', $skillId)
+                                ->max('level_number') ?? 1;
+
+                // Finalize the specific skill
+                $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'completed');
+                
+                // Update overall score
+                $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
+
+                // Advance to next skill internally, so the global attempt can finish if needed
+                $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $pos, $skillId);
+                
+                // Check if all assigned skills have been completed
+                $allCompleted = true;
+                foreach ($pos['skill_ids'] as $id) {
+                    if (!in_array($id, $advanced['next_pos']['completed_skills'])) {
+                        $allCompleted = false;
+                        break;
+                    }
+                }
+
+                if ($allCompleted) {
+                    $attempt->update(['status' => 'completed', 'finished_at' => now(), 'current_position' => $advanced['next_pos']]);
+                } else {
+                    $attempt->update(['current_position' => $advanced['next_pos']]);
+                }
+            } else {
+                // Fallback
+                $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+            }
         }
 
         return response()->json(['success' => true, 'next_step' => 'dashboard']);
@@ -469,9 +525,20 @@ class ExamController extends Controller
         }
 
         if ($pos['current_skill_index'] !== $skillIndex) {
-            $pos['current_skill_started_at'] = null;
+            // Retrieve existing skill record if it was previously started
+            $existingSkill = \App\Models\ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $requestedSkillId)
+                ->first();
+
+            $pos['current_skill_started_at'] = $existingSkill && $existingSkill->started_at ? $existingSkill->started_at->toIso8601String() : null;
+
             if (!$isDemo) {
-                $pos['current_level'] = 1;
+                // Determine the highest level they reached in this skill to resume from
+                $maxLevel = \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                    ->where('skill_id', $requestedSkillId)
+                    ->max('level_number');
+                
+                $pos['current_level'] = $maxLevel ? $maxLevel : 1;
             }
         }
 

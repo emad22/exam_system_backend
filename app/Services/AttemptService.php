@@ -22,8 +22,14 @@ class AttemptService
             ->get()
             ->sum('max_score');
 
-        $levelCount      = Level::where('skill_id', $skillId)->where('is_active', true)->count();
-        $maxPossible     = max($levelCount * 100, 100);
+        $levelCount = Level::where('skill_id', $skillId)
+            ->whereHas('questions', function ($q) use ($attempt, $skillId) {
+                $q->where('exam_id', $attempt->exam_id)->where('skill_id', $skillId);
+            })
+            ->count();
+
+        $levelCount      = max($levelCount, 1); // Avoid division by zero
+        $maxPossible     = $levelCount * 100;
 
         return round(($totalSkillPoints / $maxPossible) * 100, 2);
     }
@@ -40,9 +46,14 @@ class AttemptService
             ->toArray();
 
         $otherScores[] = $currentSkillScore;
-        $overall       = count($otherScores) > 0
-            ? round(array_sum($otherScores) / count($otherScores), 2)
-            : 0;
+        
+        $assignedSkillsCount = count($attempt->current_position['skill_ids'] ?? []);
+        if ($assignedSkillsCount === 0) {
+            $assignedSkillsCount = $attempt->exam->skills()->count();
+        }
+        $assignedSkillsCount = max($assignedSkillsCount, 1);
+
+        $overall = round(array_sum($otherScores) / $assignedSkillsCount, 2);
 
         $attempt->update(['overall_score' => $overall]);
     }
