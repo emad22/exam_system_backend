@@ -22,11 +22,7 @@ class AttemptService
             ->get()
             ->sum('max_score');
 
-        $levelCount = Level::where('skill_id', $skillId)
-            ->whereHas('questions', function ($q) use ($attempt, $skillId) {
-                $q->where('exam_id', $attempt->exam_id)->where('skill_id', $skillId);
-            })
-            ->count();
+        $levelCount = Level::where('skill_id', $skillId)->count();
 
         $levelCount      = max($levelCount, 1); // Avoid division by zero
         $maxPossible     = $levelCount * 100;
@@ -40,20 +36,28 @@ class AttemptService
      */
     public function updateOverallScore(ExamAttempt $attempt, int $skillId, float $currentSkillScore): void
     {
-        $otherScores   = $attempt->attemptSkills()
-            ->where('skill_id', '!=', $skillId)
+        $coreSkillNames = ['listening', 'reading', 'gramar', 'grammar'];
+        $coreSkillIds = \App\Models\Skill::whereIn(\DB::raw('LOWER(name)'), $coreSkillNames)->pluck('id')->toArray();
+        
+        $coreScores = $attempt->attemptSkills()
+            ->whereIn('skill_id', $coreSkillIds)
             ->pluck('score')
             ->toArray();
-
-        $otherScores[] = $currentSkillScore;
         
-        $assignedSkillsCount = count($attempt->current_position['skill_ids'] ?? []);
-        if ($assignedSkillsCount === 0) {
-            $assignedSkillsCount = $attempt->exam->skills()->count();
+        $assignedSkillIds = $attempt->current_position['skill_ids'] ?? [];
+        if (empty($assignedSkillIds)) {
+            $assignedSkillIds = $attempt->exam->skills()->pluck('skills.id')->toArray();
         }
-        $assignedSkillsCount = max($assignedSkillsCount, 1);
+        
+        $assignedCoreSkillsCount = 0;
+        foreach ($assignedSkillIds as $id) {
+            if (in_array($id, $coreSkillIds)) {
+                $assignedCoreSkillsCount++;
+            }
+        }
+        $assignedCoreSkillsCount = max($assignedCoreSkillsCount, 1);
 
-        $overall = round(array_sum($otherScores) / $assignedSkillsCount, 2);
+        $overall = round(array_sum($coreScores) / $assignedCoreSkillsCount, 2);
 
         $attempt->update(['overall_score' => $overall]);
     }
