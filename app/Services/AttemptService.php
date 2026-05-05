@@ -49,12 +49,7 @@ class AttemptService
             $assignedSkillIds = $attempt->exam->skills()->pluck('skills.id')->toArray();
         }
         
-        $assignedCoreSkillsCount = 0;
-        foreach ($assignedSkillIds as $id) {
-            if (in_array($id, $coreSkillIds)) {
-                $assignedCoreSkillsCount++;
-            }
-        }
+        $assignedCoreSkillsCount = count($coreScores);
         $assignedCoreSkillsCount = max($assignedCoreSkillsCount, 1);
 
         $overall = round(array_sum($coreScores) / $assignedCoreSkillsCount, 2);

@@ -30,6 +30,7 @@ class ExamController extends Controller
         private readonly QuestionService $questionService,
         private readonly ScoringService $scoringService,
         private readonly AttemptService $attemptService,
+        private readonly \App\Services\CertificateService $certificateService,
     ) {
     }
 
@@ -364,9 +365,8 @@ class ExamController extends Controller
         }
 
         $attempt->update(['current_position' => $nextPos]);
-
         if ($finishedExam) {
-            $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+            $this->handleCompletion($attempt);
         }
 
         return response()->json([
@@ -399,6 +399,23 @@ class ExamController extends Controller
         return response()->json(['success' => true]);
     }
 
+    protected function handleCompletion(ExamAttempt $attempt)
+    {
+        if ($attempt->status !== 'completed') {
+            $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+        }
+
+        // Auto-generate certificate if score is good (e.g., > 0)
+        // You can add more conditions here (e.g. $attempt->overall_score >= 50)
+        try {
+            if ($attempt->overall_score > 0) {
+                $this->certificateService->generate($attempt);
+            }
+        } catch (\Exception $e) {
+            Log::error("Certificate generation failed for attempt {$attempt->id}: " . $e->getMessage());
+        }
+    }
+
     public function timeout(ExamAttempt $attempt)
     {
         if ($attempt->status === 'ongoing') {
@@ -406,22 +423,16 @@ class ExamController extends Controller
             if (!empty($pos['skill_ids']) && isset($pos['current_skill_index'])) {
                 $skillId = $pos['skill_ids'][$pos['current_skill_index']];
 
-                // Get current score for the skill
                 $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
                 $maxLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
                     ->where('skill_id', $skillId)
                     ->max('level_number') ?? 1;
 
-                // Finalize the specific skill
                 $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'completed');
-
-                // Update overall score
                 $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
 
-                // Advance to next skill internally, so the global attempt can finish if needed
                 $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $pos, $skillId);
 
-                // Check if all assigned skills have been completed
                 $allCompleted = true;
                 foreach ($pos['skill_ids'] as $id) {
                     if (!in_array($id, $advanced['next_pos']['completed_skills'])) {
@@ -431,13 +442,13 @@ class ExamController extends Controller
                 }
 
                 if ($allCompleted) {
-                    $attempt->update(['status' => 'completed', 'finished_at' => now(), 'current_position' => $advanced['next_pos']]);
+                    $attempt->update(['current_position' => $advanced['next_pos']]);
+                    $this->handleCompletion($attempt);
                 } else {
                     $attempt->update(['current_position' => $advanced['next_pos']]);
                 }
             } else {
-                // Fallback
-                $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+                $this->handleCompletion($attempt);
             }
         }
 
@@ -447,7 +458,7 @@ class ExamController extends Controller
     public function finish(ExamAttempt $attempt)
     {
         if ($attempt->status === 'ongoing') {
-            $admins = \App\Models\User::whereIn('role', ['admin', 'teacher'])->get();
+            $admins = User::whereIn('role', ['admin', 'teacher'])->get();
             \Illuminate\Support\Facades\Notification::send($admins, new \App\Notifications\ExamExitedNotification($attempt));
 
             $pos = $attempt->current_position ?? [];
@@ -463,6 +474,7 @@ class ExamController extends Controller
                 $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'completed');
                 $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
             }
+            $this->handleCompletion($attempt);
         }
 
         return response()->json(['success' => true]);
