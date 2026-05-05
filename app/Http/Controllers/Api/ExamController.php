@@ -76,7 +76,7 @@ class ExamController extends Controller
 
         $attemptIds = $latestAttempts->pluck('id')->filter()->toArray();
         $completedSkillsByAttempt = ExamAttemptSkill::whereIn('exam_attempt_id', $attemptIds)
-            ->whereIn('status', ['completed', 'failed'])
+            ->whereIn('status', ['completed', 'failed', 'in_progress'])
             ->get()
             ->groupBy('exam_attempt_id')
             ->map(fn($g) => $g->pluck('skill_id')->unique()->values());
@@ -120,7 +120,7 @@ class ExamController extends Controller
                 fn($q) =>
                 $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id)
             )->where('skill_id', $requestedSkillId)
-                ->whereIn('status', ['completed', 'failed'])
+                ->whereIn('status', ['completed', 'failed', 'in_progress'])
                 ->exists();
 
             if ($hasCompletedSkill) {
