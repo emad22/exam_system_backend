@@ -4,9 +4,13 @@ namespace App\Services;
 
 use App\Models\ExamAttempt;
 use App\Models\ExamAttemptLevel;
+use App\Models\ExamAttemptSkill;
 use App\Models\Level;
 use App\Models\Question;
 use App\Models\StudentAnswer;
+use Illuminate\Support\Facades\Log;
+
+
 
 class AttemptService
 {
@@ -34,33 +38,47 @@ class AttemptService
      * Recompute and persist the overall_score on the attempt
      * as the average of all skill percentages (including the one just finished).
      */
-    public function updateOverallScore(ExamAttempt $attempt, int $skillId, float $currentSkillScore): void
+
+     public function updateOverallScore(ExamAttempt $attempt, int $skillId, float $currentSkillScore): void
     {
-        $coreSkillNames = ['listening', 'reading', 'gramar', 'grammar'];
-        $coreSkillIds = \App\Models\Skill::whereIn(\DB::raw('LOWER(name)'), $coreSkillNames)->pluck('id')->toArray();
-        
+   
+            $coreKeywords = ['listen', 'read', 'struct'];
+            $coreSkillIds = \App\Models\Skill::where(function ($query) use ($coreKeywords) {
+                foreach ($coreKeywords as $word) {
+                    $query->orWhereRaw('LOWER(name) LIKE ?', ['%' . strtolower($word) . '%']);
+                }
+            })->pluck('id')->toArray();
+
         $coreScores = $attempt->attemptSkills()
             ->whereIn('skill_id', $coreSkillIds)
+            ->where('skill_id', '!=', $skillId)
             ->pluck('score')
             ->toArray();
-        
-        $assignedSkillIds = $attempt->current_position['skill_ids'] ?? [];
-        if (empty($assignedSkillIds)) {
-            $assignedSkillIds = $attempt->exam->skills()->pluck('skills.id')->toArray();
-        }
-        
-        $assignedCoreSkillsCount = 0;
-        foreach ($assignedSkillIds as $id) {
-            if (in_array($id, $coreSkillIds)) {
-                $assignedCoreSkillsCount++;
-            }
-        }
-        $assignedCoreSkillsCount = max($assignedCoreSkillsCount, 1);
 
-        $overall = round(array_sum($coreScores) / $assignedCoreSkillsCount, 2);
+
+        //  Log::info('Core Scores Debug before add ', [
+        // 'scores' => $coreScores,
+        // 'sum'    => array_sum($coreScores),
+        // ]);
+
+        $coreScores[] = $currentSkillScore;
+        $count = count($coreScores);
+
+        // Log::info('Core Scores Debug after add ', [
+        // 'scores' => $coreScores,
+        // 'sum'    => array_sum($coreScores),
+        // 'count'  => $count,
+        // ]);
+
+        $overall = $count > 0
+            ? round(array_sum($coreScores) / $count, 2)
+            : 0;
 
         $attempt->update(['overall_score' => $overall]);
+
     }
+
+
 
     /**
      * Record or update the ExamAttemptLevel entry when a student finishes a level.
@@ -85,6 +103,7 @@ class AttemptService
      */
     public function computeLevelScore(ExamAttempt $attempt, int $skillId, Level $level): float
     {
+       // logger("computeLevelScore fun ....................... ");
         $totalPossible = Question::where('exam_id', $attempt->exam_id)
             ->where('skill_id', $skillId)
             ->where('level_id', $level->id)

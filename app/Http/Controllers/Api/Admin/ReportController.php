@@ -107,7 +107,7 @@ class ReportController extends Controller
             ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
             StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
 
-            // Recalculate Overall Score
+          //  Recalculate Overall Score
             // $remainingScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->pluck('score')->toArray();
             // $overall = count($remainingScores) > 0 ? array_sum($remainingScores) / count($remainingScores) : 0;
             // $attempt->update(['overall_score' => $overall]);
@@ -115,9 +115,10 @@ class ReportController extends Controller
 
             // $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
             //     ->whereHas('skill', fn($q) =>
-            //         $q->whereIn('name', ['reading', 'listening', ''])
+            //         $q->whereIn('name', ['reading', 'listening', 'structure'])
             //     )
             //     ->avg('score') ?? 0;
+            //     logger("**********".$overall);
 
             // $attempt->update([
             //     'overall_score' => $overall
@@ -127,11 +128,12 @@ class ReportController extends Controller
                     ->whereHas('skill', function ($q) {
                         $q->where(function ($query) {
                             $query->where('name', 'like', '%read%')
-                                ->orWhere('name', 'like', '%listen%');
+                                ->orWhere('name', 'like', '%listen%')
+                                ->orWhere('name', 'like', '%struct%');
                         });
                     })
                     ->avg('score') ?? 0;
-
+             logger("********************************in report".$overall);
                 $attempt->update([
                     'overall_score' => $overall
                 ]);
