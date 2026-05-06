@@ -28,8 +28,8 @@ class AttemptService
 
         $levelCount = Level::where('skill_id', $skillId)->count();
 
-        $levelCount      = max($levelCount, 1); // Avoid division by zero
-        $maxPossible     = $levelCount * 100;
+        $levelCount = max($levelCount, 1); // Avoid division by zero
+        $maxPossible = $levelCount * 100;
 
         return round(($totalSkillPoints / $maxPossible) * 100, 2);
     }
@@ -39,15 +39,15 @@ class AttemptService
      * as the average of all skill percentages (including the one just finished).
      */
 
-     public function updateOverallScore(ExamAttempt $attempt, int $skillId, float $currentSkillScore): void
+    public function updateOverallScore(ExamAttempt $attempt, int $skillId, float $currentSkillScore): void
     {
-   
-            $coreKeywords = ['listen', 'read', 'struct'];
-            $coreSkillIds = \App\Models\Skill::where(function ($query) use ($coreKeywords) {
-                foreach ($coreKeywords as $word) {
-                    $query->orWhereRaw('LOWER(name) LIKE ?', ['%' . strtolower($word) . '%']);
-                }
-            })->pluck('id')->toArray();
+
+        $coreKeywords = ['listen', 'read', 'struct'];
+        $coreSkillIds = \App\Models\Skill::where(function ($query) use ($coreKeywords) {
+            foreach ($coreKeywords as $word) {
+                $query->orWhereRaw('LOWER(name) LIKE ?', ['%' . strtolower($word) . '%']);
+            }
+        })->pluck('id')->toArray();
 
         $coreScores = $attempt->attemptSkills()
             ->whereIn('skill_id', $coreSkillIds)
@@ -88,11 +88,11 @@ class AttemptService
         ExamAttemptLevel::updateOrCreate(
             [
                 'exam_attempt_id' => $attempt->id,
-                'skill_id'        => $skillId,
-                'level_number'    => $level->level_number,
+                'skill_id' => $skillId,
+                'level_number' => $level->level_number,
             ],
             [
-                'score'  => $score,
+                'score' => $score,
                 'status' => $score >= $passThreshold ? 'passed' : 'failed',
             ]
         );
@@ -103,7 +103,7 @@ class AttemptService
      */
     public function computeLevelScore(ExamAttempt $attempt, int $skillId, Level $level): float
     {
-       // logger("computeLevelScore fun ....................... ");
+        // logger("computeLevelScore fun ....................... ");
         $totalPossible = Question::where('exam_id', $attempt->exam_id)
             ->where('skill_id', $skillId)
             ->where('level_id', $level->id)
@@ -112,9 +112,9 @@ class AttemptService
         $earned = StudentAnswer::where('exam_attempt_id', $attempt->id)
             ->whereIn('question_id', function ($q) use ($attempt, $skillId, $level) {
                 $q->select('id')->from('questions')
-                  ->where('exam_id', $attempt->exam_id)
-                  ->where('skill_id', $skillId)
-                  ->where('level_id', $level->id);
+                    ->where('exam_id', $attempt->exam_id)
+                    ->where('skill_id', $skillId)
+                    ->where('level_id', $level->id);
             })
             ->sum('points_awarded');
 
@@ -152,11 +152,11 @@ class AttemptService
             ['skill_id' => $skillId],
             [
                 'max_level_reached' => $maxLevelReached,
-                'score'             => $skillScore,
-                'status'            => $status,
-                'placement_level'   => $placementLevel ?? $maxLevelReached,
-                'placement_score'   => $skillScore,
-                'finished_at'       => now(),
+                'score' => $skillScore,
+                'status' => $status,
+                'placement_level' => $placementLevel ?? $maxLevelReached,
+                'placement_score' => $skillScore,
+                'finished_at' => now(),
             ]
         );
     }
@@ -179,8 +179,8 @@ class AttemptService
 
         if ($pos['current_skill_index'] < count($pos['skill_ids']) - 1) {
             $nextPos['current_skill_index']++;
-            $nextPos['current_level']             = 1;
-            $nextPos['current_skill_started_at']  = null;
+            $nextPos['current_level'] = 1;
+            $nextPos['current_skill_started_at'] = null;
             $finishedExam = false;
         } else {
             $finishedExam = true;
