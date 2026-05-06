@@ -75,14 +75,17 @@ class ExamController extends Controller
             ->groupBy('exam_id')
             ->map(fn($g) => $g->first());
 
-        $attemptIds = $latestAttempts->pluck('id')->filter()->toArray();
-        $completedSkillsByAttempt = ExamAttemptSkill::whereIn('exam_attempt_id', $attemptIds)
-            ->whereIn('status', ['completed', 'failed', 'in_progress'])
+        // Get all completed/in-progress skills for this student across ALL attempts of these exams
+        $completedSkillsByExam = DB::table('exam_attempt_skills')
+            ->join('exam_attempts', 'exam_attempt_skills.exam_attempt_id', '=', 'exam_attempts.id')
+            ->where('exam_attempts.student_id', $studentProfile->id)
+            ->whereIn('exam_attempt_skills.status', ['completed', 'failed', 'in_progress', 'skipped'])
+            ->select('exam_attempts.exam_id', 'exam_attempt_skills.skill_id')
             ->get()
-            ->groupBy('exam_attempt_id')
+            ->groupBy('exam_id')
             ->map(fn($g) => $g->pluck('skill_id')->unique()->values());
 
-        $exams->each(function ($exam) use ($allowedSkillIdentifiers, $latestAttempts, $completedSkillsByAttempt) {
+        $exams->each(function ($exam) use ($allowedSkillIdentifiers, $latestAttempts, $completedSkillsByExam) {
             if (!empty($allowedSkillIdentifiers)) {
                 $exam->setRelation(
                     'skills',
@@ -91,9 +94,7 @@ class ExamController extends Controller
             }
 
             $exam->latest_attempt = $latestAttempts->get($exam->id);
-            $exam->completed_skill_ids = $exam->latest_attempt
-                ? $completedSkillsByAttempt->get($exam->latest_attempt->id, collect())->values()
-                : [];
+            $exam->completed_skill_ids = $completedSkillsByExam->get($exam->id, collect())->values();
         });
 
         return response()->json($exams);
@@ -126,7 +127,7 @@ class ExamController extends Controller
                 fn($q) =>
                 $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id)
             )->where('skill_id', $requestedSkillId)
-                ->whereIn('status', ['completed', 'failed', 'in_progress'])
+                ->whereIn('status', ['completed', 'failed', 'in_progress', 'skipped'])
                 ->exists();
 
             if ($hasCompletedSkill) {

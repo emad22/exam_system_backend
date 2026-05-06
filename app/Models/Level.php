@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Level extends Model
 {
+    use LogsActivity;
+
     protected $fillable = [
         'skill_id', 
         'name', 
