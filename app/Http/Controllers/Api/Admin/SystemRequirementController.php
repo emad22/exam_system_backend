@@ -62,6 +62,14 @@ class SystemRequirementController extends Controller
     }
 
     /**
+     * Show requirement details
+     */
+    public function show(SystemRequirement $systemRequirement)
+    {
+        return $systemRequirement;
+    }
+
+    /**
      * Delete requirement
      */
     public function destroy(SystemRequirement $systemRequirement)
