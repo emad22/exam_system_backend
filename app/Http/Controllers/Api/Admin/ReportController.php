@@ -9,6 +9,9 @@ use App\Models\ExamAttemptLevel;
 use App\Models\StudentAnswer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use App\Models\ActivityLog;
+use App\Models\Skill;
 
 class ReportController extends Controller
 {
@@ -29,7 +32,7 @@ class ReportController extends Controller
      */
     public function show(ExamAttempt $attempt)
     {
-      
+
         $attempt->load([
             'student.user',
             'user',
@@ -63,6 +66,18 @@ class ReportController extends Controller
             StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
             ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
             ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->delete();
+
+            // Log the activity before deletion
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'deleted',
+                'model_type' => ExamAttempt::class,
+                'model_id' => $attempt->id,
+                'description' => "Full exam attempt reset for candidate: " . ($attempt->student->user->name ?? 'Unknown'),
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+            ]);
+
             $attempt->delete();
             DB::commit();
             return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
@@ -106,39 +121,33 @@ class ReportController extends Controller
             ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
             ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
             StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
-
-          //  Recalculate Overall Score
-            // $remainingScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->pluck('score')->toArray();
-            // $overall = count($remainingScores) > 0 ? array_sum($remainingScores) / count($remainingScores) : 0;
-            // $attempt->update(['overall_score' => $overall]);
-
-
-            // $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-            //     ->whereHas('skill', fn($q) =>
-            //         $q->whereIn('name', ['reading', 'listening', 'structure'])
-            //     )
-            //     ->avg('score') ?? 0;
-            //     logger("**********".$overall);
-
-            // $attempt->update([
-            //     'overall_score' => $overall
-            // ]);
-
             $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-                    ->whereHas('skill', function ($q) {
-                        $q->where(function ($query) {
-                            $query->where('name', 'like', '%read%')
-                                ->orWhere('name', 'like', '%listen%')
-                                ->orWhere('name', 'like', '%struct%');
-                        });
-                    })
-                    ->avg('score') ?? 0;
-             logger("********************************in report".$overall);
-                $attempt->update([
-                    'overall_score' => $overall
-                ]);
+                ->whereHas('skill', function ($q) {
+                    $q->where(function ($query) {
+                        $query->where('name', 'like', '%read%')
+                            ->orWhere('name', 'like', '%listen%')
+                            ->orWhere('name', 'like', '%struct%');
+                    });
+                })
+                ->avg('score') ?? 0;
+            logger("********************************in report" . $overall);
+            $attempt->update([
+                'overall_score' => $overall
+            ]);
 
+            // Log the skill reset activity
+            $skillModel = Skill::find($skillId);
+            $skillName = $skillModel ? $skillModel->name : "Skill #$skillId";
 
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'updated',
+                'model_type' => ExamAttempt::class,
+                'model_id' => $attempt->id,
+                'description' => "Skill [{$skillName}] reset for candidate: " . ($attempt->student->user->name ?? 'Unknown'),
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+            ]);
 
             DB::commit();
             return response()->json(['message' => 'Skill progress has been successfully reset. The candidate can now retake this skill.']);

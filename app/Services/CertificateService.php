@@ -87,7 +87,7 @@ class CertificateService
         $html = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
 
         // Render PDF
-        $pdf = Pdf::loadHTML($this->wrapInBaseStyle($html, $template))
+        $pdf = Pdf::loadHTML($this->wrapHtml($html, $template))
                   ->setPaper('a4', 'landscape');
 
         $fileName = "certificates/{$certificate->certificate_number}.pdf";
@@ -102,11 +102,11 @@ class CertificateService
         return $fileName;
     }
 
-    protected function wrapInBaseStyle($content, $template)
+    public function wrapHtml($content, $template)
     {
         $backgroundPath = '';
         if ($template->background_image) {
-            $backgroundPath = public_path('storage/' . $template->background_image);
+            $backgroundPath = storage_path('app/public/' . $template->background_image);
         }
         
         return "

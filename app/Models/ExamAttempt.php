@@ -79,4 +79,9 @@ class ExamAttempt extends Model
     {
         return $this->hasOne(Certificate::class);
     }
+
+    public function lastSeenQuestion(): BelongsTo
+    {
+        return $this->belongsTo(Question::class, 'last_seen_question_id');
+    }
 }

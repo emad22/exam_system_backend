@@ -11,31 +11,39 @@ class CertificateTemplateController extends Controller
 {
     public function index()
     {
-        return response()->json(CertificateTemplate::latest()->get());
+        return response()->json(CertificateTemplate::latest()->paginate(20));
     }
 
     public function store(Request $request)
     {
+        $this->authorize('create', CertificateTemplate::class);
+
         $request->validate([
             'name' => 'required|string|max:255',
             'content_html' => 'required|string',
             'background_image' => 'nullable|image|max:2048',
-            'is_default' => 'boolean'
+            'is_default' => 'sometimes|boolean'
         ]);
 
         $data = $request->only(['name', 'content_html', 'is_default']);
+
+        // XSS Protection
+        if (isset($data['content_html'])) {
+            $data['content_html'] = $this->sanitizeHtml($data['content_html']);
+        }
 
         if ($request->hasFile('background_image')) {
             $data['background_image'] = $request->file('background_image')->store('templates', 'public');
         }
 
-        if ($data['is_default'] ?? false) {
-            CertificateTemplate::where('is_default', true)->update(['is_default' => false]);
-        }
+        return \DB::transaction(function () use ($data) {
+            if ($data['is_default'] ?? false) {
+                CertificateTemplate::where('is_default', true)->update(['is_default' => false]);
+            }
 
-        $template = CertificateTemplate::create($data);
-
-        return response()->json($template, 201);
+            $template = CertificateTemplate::create($data);
+            return response()->json($template, 201);
+        });
     }
 
     public function show(CertificateTemplate $template)
@@ -45,14 +53,21 @@ class CertificateTemplateController extends Controller
 
     public function update(Request $request, CertificateTemplate $template)
     {
+        $this->authorize('update', $template);
+
         $request->validate([
             'name' => 'required|string|max:255',
             'content_html' => 'required|string',
             'background_image' => 'nullable|image|max:2048',
-            'is_default' => 'boolean'
+            'is_default' => 'sometimes|boolean'
         ]);
 
         $data = $request->only(['name', 'content_html', 'is_default']);
+
+        // XSS Protection
+        if (isset($data['content_html'])) {
+            $data['content_html'] = $this->sanitizeHtml($data['content_html']);
+        }
 
         if ($request->hasFile('background_image')) {
             // Delete old image if exists
@@ -62,19 +77,22 @@ class CertificateTemplateController extends Controller
             $data['background_image'] = $request->file('background_image')->store('templates', 'public');
         }
 
-        if ($data['is_default'] ?? false) {
-            CertificateTemplate::where('id', '!=', $template->id)
-                ->where('is_default', true)
-                ->update(['is_default' => false]);
-        }
+        return \DB::transaction(function () use ($data, $template) {
+            if ($data['is_default'] ?? false) {
+                CertificateTemplate::where('id', '!=', $template->id)
+                    ->where('is_default', true)
+                    ->update(['is_default' => false]);
+            }
 
-        $template->update($data);
-
-        return response()->json($template);
+            $template->update($data);
+            return response()->json($template);
+        });
     }
 
     public function destroy(CertificateTemplate $template)
     {
+        $this->authorize('delete', $template);
+
         if ($template->background_image) {
             Storage::disk('public')->delete($template->background_image);
         }
@@ -84,6 +102,8 @@ class CertificateTemplateController extends Controller
 
     public function previewPdf(CertificateTemplate $template)
     {
+        $this->authorize('view', $template);
+
         // Dummy data for preview
         $placeholders = [
             '{name}' => 'Sample Student Name',
@@ -103,53 +123,22 @@ class CertificateTemplateController extends Controller
 
         $html = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
 
-        // We use the service's wrap method logic
         $service = app(\App\Services\CertificateService::class);
         
-        // Use a dirty hack to access protected method or just re-implement wrap logic here
-        // For simplicity and accuracy, let's just use the service logic
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($this->wrapInBaseStyle($html, $template))
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($service->wrapHtml($html, $template))
                   ->setPaper('a4', 'landscape');
 
         return $pdf->download("Template-Preview-{$template->id}.pdf");
     }
 
-    protected function wrapInBaseStyle($content, $template)
+    protected function sanitizeHtml($html)
     {
-        $backgroundPath = '';
-        if ($template->background_image) {
-            $backgroundPath = public_path('storage/' . $template->background_image);
+        if (function_exists('clean')) {
+            return clean($html);
         }
-        
-        return "
-        <html>
-        <head>
-            <meta http-equiv='Content-Type' content='text/html; charset=utf-8'/>
-            <style>
-                @page { margin: 0; }
-                body { 
-                    font-family: 'DejaVu Sans', sans-serif; 
-                    margin: 0; 
-                    padding: 0;
-                    background-image: url('{$backgroundPath}');
-                    background-size: cover;
-                    background-repeat: no-repeat;
-                    width: 100%;
-                    height: 100%;
-                }
-                .container {
-                    padding: 50px;
-                    text-align: center;
-                }
-                .content {
-                    margin-top: 150px;
-                }
-            </style>
-        </head>
-        <body>
-            {$content}
-        </body>
-        </html>
-        ";
+
+        // Fallback simple sanitizer if purifier isn't installed
+        return strip_tags($html, '<h1><h2><h3><h4><h5><h6><p><br><strong><em><ul><li><ol><span><div><table><thead><tbody><tr><td><th><img><style>');
     }
+
 }
