@@ -76,6 +76,11 @@ class Student extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function certificates(): HasMany
+    {
+        return $this->hasMany(Certificate::class);
+    }
+
     public function package(): BelongsTo
     {
         return $this->belongsTo(Package::class);

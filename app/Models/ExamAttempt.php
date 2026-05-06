@@ -57,4 +57,9 @@ class ExamAttempt extends Model
     {
         return $this->hasMany(ExamAttemptLevel::class);
     }
+
+    public function certificate()
+    {
+        return $this->hasOne(Certificate::class);
+    }
 }

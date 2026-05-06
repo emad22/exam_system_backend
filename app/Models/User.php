@@ -39,6 +39,7 @@ class User extends Authenticatable
         'occupation',
         'role',
         'is_active',
+        'avatar',
     ];
 
     /**

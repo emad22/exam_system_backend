@@ -18,6 +18,10 @@ use App\Http\Controllers\Api\WordPressWebhookController;
 
 
 Route::middleware('auth:sanctum')->group(function () {
+    // Profile Management
+    Route::get('/profile', [\App\Http\Controllers\Api\ProfileController::class, 'show']);
+    Route::post('/profile', [\App\Http\Controllers\Api\ProfileController::class, 'update']);
+
     // Current User Info
     Route::get('/user', function (Request $request) {
         return $request->user()->load('student');
@@ -38,7 +42,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/attempts/{attempt}/results', [\App\Http\Controllers\Api\ExamController::class, 'results']);
         Route::post('/attempts/{attempt}/log-warning', [\App\Http\Controllers\Api\ExamController::class, 'logWarning']);
         Route::post('/exams/{exam}/reset-demo', [\App\Http\Controllers\Api\ExamController::class, 'resetDemo']);
+
+        // Certificate Student Routes
+        Route::get('/certificates', [\App\Http\Controllers\Api\CertificateController::class, 'index']);
     });
+
+    Route::get('/certificates/{certificate}/download', [\App\Http\Controllers\Api\CertificateController::class, 'download']);
+
+    // Public Verification (inside auth for now but could be outside if needed)
+    Route::get('/verify-certificate/{code}', [\App\Http\Controllers\Api\CertificateController::class, 'verify'])->withoutMiddleware([\App\Http\Middleware\Authenticate::class, 'auth:sanctum']);
 
     // Admin/Teacher/Supervisor Routes
     Route::prefix('admin')->middleware(StaffRole::class)->group(function () {
@@ -145,6 +157,13 @@ Route::middleware('auth:sanctum')->group(function () {
         // Notifications
         Route::get('/notifications', [Admin\NotificationController::class, 'index']);
         Route::post('/notifications/mark-as-read', [Admin\NotificationController::class, 'markAsRead']);
+
+        // Certificates
+        Route::get('/certificates', [\App\Http\Controllers\Api\CertificateController::class, 'adminIndex']);
+
+        // Certificate Templates
+        Route::get('/certificate-templates/{template}/preview', [Admin\CertificateTemplateController::class, 'previewPdf']);
+        Route::apiResource('certificate-templates', Admin\CertificateTemplateController::class);
     });
 
     // Student Fetch Requirements

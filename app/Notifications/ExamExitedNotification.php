@@ -24,11 +24,23 @@ class ExamExitedNotification extends Notification
     public function toArray($notifiable)
     {
         $studentName = $this->attempt->student->user->first_name . ' ' . $this->attempt->student->user->last_name;
+        
+        // Safely get skill name from current position
+        $skillName = 'Unknown Skill';
+        $pos = $this->attempt->current_position;
+        if (isset($pos['skill_ids']) && isset($pos['current_skill_index'])) {
+            $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+            $skill = \App\Models\Skill::find($skillId);
+            if ($skill) {
+                $skillName = $skill->name;
+            }
+        }
+
         return [
             'attempt_id' => $this->attempt->id,
             'student_name' => $studentName,
-            'skill_name' => $this->attempt->skill->name,
-            'message' => "Student {$studentName} has exited the exam.",
+            'skill_name' => $skillName,
+            'message' => "Student {$studentName} has exited the {$skillName} exam.",
             'type' => 'exam_exited'
         ];
     }
