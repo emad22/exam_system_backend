@@ -61,6 +61,11 @@ class Student extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function partner(): BelongsTo
+    {
+        return $this->belongsTo(Partner::class);
+    }
+
     public function attempts(): HasMany
     {
         return $this->hasMany(ExamAttempt::class);

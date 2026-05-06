@@ -99,6 +99,11 @@ class ExamController extends Controller
         return response()->json($exams);
     }
 
+    public function showAttempt(ExamAttempt $attempt)
+    {
+        return response()->json($attempt->load(['exam', 'student']));
+    }
+
     // =========================================================================
     // 2. START / RESUME EXAM
     // =========================================================================

@@ -11,18 +11,42 @@ use Illuminate\Validation\Rules\Password;
 class ProfileController extends Controller
 {
     /**
-     * Update student profile (Avatar and Password only)
+     * Update user profile
      */
     public function update(Request $request)
     {
         $user = $request->user();
 
         $validated = $request->validate([
+
+            'first_name' => 'nullable|string|max:255',
+            'last_name' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            'birth_date' => 'nullable|date',
+            'gender' => 'nullable|in:male,female,other',
+            'address' => 'nullable|string|max:500',
+            'city' => 'nullable|string|max:255',
+            'state' => 'nullable|string|max:255',
+            'country' => 'nullable|string|max:255',
+            'religion' => 'nullable|string|max:255',
+            'occupation' => 'nullable|string|max:255',
             'avatar' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'password' => ['nullable', 'confirmed', Password::min(6)],
         ]);
 
-        $data = [];
+        $data = $request->only([
+            'first_name',
+            'last_name',
+            'phone',
+            'birth_date',
+            'gender',
+            'address',
+            'city',
+            'state',
+            'country',
+            'religion',
+            'occupation'
+        ]);
 
         // Handle Avatar Upload
         if ($request->hasFile('avatar')) {
@@ -30,7 +54,7 @@ class ProfileController extends Controller
             if ($user->avatar) {
                 Storage::disk('public')->delete($user->avatar);
             }
-            
+
             $path = $request->file('avatar')->store('avatars', 'public');
             $data['avatar'] = $path;
         }

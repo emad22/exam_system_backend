@@ -79,12 +79,52 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $deviceName = $request->input('device_name', 'auth_token');
+
+        // Prevent multiple simultaneous logins for students from the same source
+        if ($user->role === 'student') {
+            $user->tokens()->where('name', $deviceName)->delete();
+        }
+
+        $token = $user->createToken($deviceName)->plainTextToken;
 
         return response()->json([
             'token' => $token,
             'role' => $user->role,
             'user' => $user->load('student')
+        ]);
+    }
+
+    /**
+     * Get the authenticated user profile with necessary relationships.
+     */
+    public function me(Request $request)
+    {
+        $user = $request->user();
+        
+        if ($user->student) {
+            $user->load([
+                'student' => function($query) {
+                    $query->select('id', 'user_id', 'partner_id', 'exam_category_id', 'student_code');
+                },
+                'student.partner' => function($query) {
+                    $query->select('id', 'partner_name');
+                },
+                'student.category' => function($query) {
+                    $query->select('id', 'name');
+                }
+            ]);
+        }
+
+        return response()->json($user);
+    }
+
+    public function logout(Request $request)
+    {
+        $request->user()->currentAccessToken()->delete();
+
+        return response()->json([
+            'message' => 'Logged out successfully'
         ]);
     }
 }

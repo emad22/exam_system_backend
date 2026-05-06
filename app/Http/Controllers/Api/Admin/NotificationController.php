@@ -17,12 +17,19 @@ class NotificationController extends Controller
     }
 
     /**
-     * Mark all notifications as read.
+     * Mark notifications as read. If ID is provided, marks that specific one.
      */
     public function markAsRead(Request $request)
     {
         $user = $request->user();
-        $user->unreadNotifications->markAsRead();
+        if ($request->has('id')) {
+            $notification = $user->notifications()->where('id', $request->id)->first();
+            if ($notification) {
+                $notification->markAsRead();
+            }
+        } else {
+            $user->unreadNotifications->markAsRead();
+        }
         return response()->json(['success' => true]);
     }
 }
