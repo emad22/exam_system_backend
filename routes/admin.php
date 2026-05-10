@@ -88,7 +88,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/', [Admin\ReportController::class, 'index'])->name('index');
         Route::get('/{attempt}', [Admin\ReportController::class, 'show'])->name('show');
         Route::post('/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt'])->name('reset');
-        Route::post('/{attempt}/skills/{skill}/reset', [Admin\ReportController::class, 'reset-skill'])->name('reset-skill');
+        Route::post('/{attempt}/skills/{skill}/reset', [Admin\ReportController::class, 'resetAttemptSkill'])->name('reset-skill');
     });
 
     // Staff Management (Admin Only)
