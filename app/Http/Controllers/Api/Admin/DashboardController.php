@@ -21,22 +21,22 @@ class DashboardController extends Controller
             return [
                 'students_count' => Student::count(),
                 'students_today' => Student::whereDate('created_at', today())->count(),
-                
+
                 'exams_count' => Exam::count(),
                 'exams_today' => Exam::whereDate('created_at', today())->count(),
-                
+
                 'attempts_count' => ExamAttempt::count(),
                 'attempts_last_7_days' => ExamAttempt::where('created_at', '>=', now()->subDays(7))->count(),
-                
+
                 'live_students_count' => ExamAttempt::where('status', 'ongoing')
                     ->where('updated_at', '>=', now()->subMinutes(10)) // Reduced to 10 mins for better accuracy
                     ->count(),
-                
+
                 'recent_attempts' => ExamAttempt::select(['id', 'student_id', 'user_id', 'exam_id', 'status', 'created_at'])
                     ->with([
                         'student:id,user_id',
-                        'student.user:id,name',
-                        'user:id,name',
+                        'student.user:id,first_name,last_name',
+                        'user:id,first_name,last_name',
                         'exam:id,title',
                     ])
                     ->withSum('attemptSkills', 'score')

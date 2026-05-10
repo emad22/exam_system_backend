@@ -33,7 +33,7 @@ class DashboardResource extends JsonResource
             'recent_attempts' => $this['recent_attempts']->map(function($attempt) {
                 return [
                     'id' => $attempt->id,
-                    'student_name' => $attempt->student?->user?->name ?? 'Unknown',
+                    'student_name' => trim(($attempt->student?->user?->first_name ?? '') . ' ' . ($attempt->student?->user?->last_name ?? '')) ?: 'Unknown',
                     'exam_title' => $attempt->exam?->title ?? 'Deleted Exam',
                     'total_score' => $attempt->attempt_skills_sum_score ?? 0,
                     'avg_score' => round($attempt->attempt_skills_avg_score ?? 0, 1),
