@@ -108,22 +108,6 @@ class ReportController extends Controller
             StudentAnswer::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->delete();
 
           //  Recalculate Overall Score
-            // $remainingScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->pluck('score')->toArray();
-            // $overall = count($remainingScores) > 0 ? array_sum($remainingScores) / count($remainingScores) : 0;
-            // $attempt->update(['overall_score' => $overall]);
-
-
-            // $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-            //     ->whereHas('skill', fn($q) =>
-            //         $q->whereIn('name', ['reading', 'listening', 'structure'])
-            //     )
-            //     ->avg('score') ?? 0;
-            //     logger("**********".$overall);
-
-            // $attempt->update([
-            //     'overall_score' => $overall
-            // ]);
-
             $overall = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
                     ->whereHas('skill', function ($q) {
                         $q->where(function ($query) {
