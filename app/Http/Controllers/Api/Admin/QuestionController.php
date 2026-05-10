@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Level;
+use App\Models\Passage;
 use App\Models\Question;
 use App\Models\Skill;
 use Illuminate\Http\Request;
@@ -116,7 +117,7 @@ class QuestionController extends Controller
                     $pImagePath = $request->file('p_image_file')->store('passages/images', 'public');
                 }
  
-                $passage = \App\Models\Passage::create([
+                $passage = Passage::create([
                     'type' => $request->passage_type,
                     'title' => $request->passage_title,
                     'content' => $request->passage_content,
@@ -186,10 +187,11 @@ class QuestionController extends Controller
 
                 // 4. Create Options
                 if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
-                    foreach ($qData['options'] as $opt) {
+                    foreach ($qData['options'] as $oIdx => $opt) {
                         $question->options()->create([
                             'option_text' => $opt['option_text'] ?? '',
-                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                            'sort_order' => ($oIdx + 1) * 10
                         ]);
                     }
                 }
@@ -293,7 +295,7 @@ class QuestionController extends Controller
                 if ($request->hasFile('p_media_file')) {
                     $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
                 }
-                $passage = \App\Models\Passage::create([
+                $passage = Passage::create([
                     'type'            => $request->passage_type,
                     'title'           => $request->passage_title,
                     'content'         => $request->passage_content,
@@ -305,7 +307,7 @@ class QuestionController extends Controller
             }
 
             // 2. Map Level (or dynamically create it if missing)
-            $level = \App\Models\Level::firstOrCreate(
+            $level = Level::firstOrCreate(
                 [
                     'skill_id' => $request->skill_id,
                     'level_number' => $request->level_id
@@ -379,10 +381,11 @@ class QuestionController extends Controller
                 // 4. Update Options
                 if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
                     $qInstance->options()->delete();
-                    foreach ($qData['options'] as $opt) {
+                    foreach ($qData['options'] as $oIdx => $opt) {
                         $qInstance->options()->create([
                             'option_text' => $opt['option_text'] ?? '',
-                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                            'sort_order' => ($oIdx + 1) * 10
                         ]);
                     }
                 }

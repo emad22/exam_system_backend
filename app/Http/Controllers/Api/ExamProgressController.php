@@ -51,7 +51,16 @@ class ExamProgressController extends Controller
 
         if ($questions->isEmpty()) return $this->handleEmptyBatch($request, $attempt, $pos, $skillId, $levelNum, $level, $retryCount);
 
-        $skillRecord = ExamAttemptSkill::firstOrCreate(['exam_attempt_id' => $attempt->id, 'skill_id' => $skillId], ['started_at' => now()]);
+        $skillRecord = ExamAttemptSkill::firstOrCreate(
+            ['exam_attempt_id' => $attempt->id, 'skill_id' => $skillId], 
+            ['started_at' => now(), 'status' => 'in_progress']
+        );
+        
+        // Ensure started_at is set even if record was pre-created
+        if (!$skillRecord->started_at) {
+            $skillRecord->update(['started_at' => now(), 'status' => 'in_progress']);
+        }
+
         if (empty($pos['current_skill_started_at']) || $pos['current_skill_started_at'] !== $skillRecord->started_at->toIso8601String()) {
             $pos['current_skill_started_at'] = $skillRecord->started_at->toIso8601String();
             $attempt->update(['current_position' => $pos]);
@@ -100,14 +109,9 @@ class ExamProgressController extends Controller
             $questionIds = collect($request->answers)->pluck('question_id')->unique()->toArray();
 
             // Prevention: Check if any of these questions have already been answered in this attempt
-            $alreadyAnswered = StudentAnswer::where('exam_attempt_id', $attempt->id)
-                ->whereIn('question_id', $questionIds)
-                ->exists();
-
-            if ($alreadyAnswered) {
-                return response()->json(['error' => 'This batch has already been submitted.'], 422);
-            }
-
+            // Exception: If we are doing partial saves, we might want to allow re-submission
+            // But for the final batch submit, we expect them to be "fresh" or we just update them.
+            
             $questionsMap = Question::with('options')->whereIn('id', $questionIds)->get()->keyBy('id');
 
             $earnedPoints = 0; $totalPossiblePoints = 0; $resultsMap = [];
@@ -120,16 +124,20 @@ class ExamProgressController extends Controller
                 $resultsMap[$question->id] = $isCorrect;
                 $earnedPoints += $pointsAwarded;
 
-                StudentAnswer::create([
-                    'exam_attempt_id' => $attempt->id,
-                    'question_id' => $question->id,
-                    'skill_id' => $skillId,
-                    'option_id' => $ans['option_id'] ?? null,
-                    'text_answer' => $this->scoringService->serializeAnswerForStorage($question, $ans),
-                    'media_answer' => $this->scoringService->storeAudioFile($request, $attempt->id, $index),
-                    'is_correct' => $isCorrect,
-                    'points_awarded' => $pointsAwarded
-                ]);
+                StudentAnswer::updateOrCreate(
+                    [
+                        'exam_attempt_id' => $attempt->id,
+                        'question_id' => $question->id,
+                    ],
+                    [
+                        'skill_id' => $skillId,
+                        'option_id' => $ans['option_id'] ?? null,
+                        'text_answer' => $this->scoringService->serializeAnswerForStorage($question, $ans),
+                        'media_answer' => $this->scoringService->storeAudioFile($request, $attempt->id, $index),
+                        'is_correct' => $isCorrect,
+                        'points_awarded' => $pointsAwarded
+                    ]
+                );
             }
 
             $passThreshold = $level->pass_threshold ?? 70;
@@ -152,7 +160,7 @@ class ExamProgressController extends Controller
 
             $finishedExam = false;
             if ($skillEnded) {
-                Notification::send(User::whereIn('role', ['admin', 'teacher'])->get(), new \App\Notifications\SkillCompletedNotification($attempt, $attempt->exam->skills->firstWhere('id', $skillId)));
+                Notification::send(User::whereIn('role', ['admin', 'teacher'])->get(), new SkillCompletedNotification($attempt, $attempt->exam->skills->firstWhere('id', $skillId)));
                 $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $nextPos, $skillId);
                 $nextPos = $advanced['next_pos'];
                 $allCompleted = true;
@@ -169,6 +177,42 @@ class ExamProgressController extends Controller
                 'retry_attempt' => (!$passed && !$skillEnded && !$isAdaptive), 'next_step' => $finishedExam ? 'results' : ($skillEnded ? 'dashboard' : 'next_batch'),
             ]);
         });
+    }
+
+    public function saveSingleAnswer(Request $request, ExamAttempt $attempt)
+    {
+        $this->authorize('update', $attempt);
+        $request->validate([
+            'question_id' => 'required|exists:questions,id',
+            // Allow other fields like option_id, text_answer, etc.
+        ]);
+
+        if ($attempt->status !== 'ongoing') {
+            return response()->json(['error' => 'Exam is not active.'], 403);
+        }
+
+        $question = Question::with('options')->findOrFail($request->question_id);
+        $pointsAwarded = $this->scoringService->gradeAnswer($question, $request->all());
+        $isCorrect = $pointsAwarded > 0;
+
+        $answer = StudentAnswer::updateOrCreate(
+            [
+                'exam_attempt_id' => $attempt->id,
+                'question_id' => $question->id,
+            ],
+            [
+                'skill_id' => $question->skill_id,
+                'option_id' => $request->option_id ?? null,
+                'text_answer' => $this->scoringService->serializeAnswerForStorage($question, $request->all()),
+                'is_correct' => $isCorrect,
+                'points_awarded' => $pointsAwarded
+            ]
+        );
+
+        // Optional: Update last seen question
+        $attempt->update(['last_seen_question_id' => $question->id]);
+
+        return response()->json(['success' => true, 'answer_id' => $answer->id]);
     }
 
     public function updateProgress(Request $request, ExamAttempt $attempt)

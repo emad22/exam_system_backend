@@ -220,7 +220,16 @@ class ExamSessionController extends Controller
             $requestedLevel = $request->has('level_id') ? $this->questionService->getValidStartingLevel($exam->id, $requestedSkillId, (int) $request->level_id) : 1;
             if ($isFinished) {
                 $this->attemptService->completeAttempt($attempt);
-                return ExamAttempt::create(['user_id' => $user->id, 'exam_id' => $exam->id, 'status' => 'ongoing', 'current_position' => ['skill_ids' => $pos['skill_ids'], 'current_skill_index' => $skillIndex, 'current_level' => $requestedLevel, 'current_skill_started_at' => null]]);
+                $newAttempt = ExamAttempt::create(['user_id' => $user->id, 'exam_id' => $exam->id, 'status' => 'ongoing', 'started_at' => now(), 'current_position' => ['skill_ids' => $pos['skill_ids'], 'current_skill_index' => $skillIndex, 'current_level' => $requestedLevel, 'current_skill_started_at' => null]]);
+                
+                ExamAttemptSkill::create([
+                    'exam_attempt_id' => $newAttempt->id,
+                    'skill_id' => $requestedSkillId,
+                    'started_at' => $newAttempt->started_at,
+                    'status' => 'in_progress'
+                ]);
+
+                return $newAttempt;
             }
             \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->whereHas('question', fn($q) => $q->where('skill_id', $requestedSkillId))->delete();
             \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $requestedSkillId)->delete();
@@ -229,7 +238,7 @@ class ExamSessionController extends Controller
 
         if ($pos['current_skill_index'] !== $skillIndex) {
             $existingSkill = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->where('skill_id', $requestedSkillId)->first();
-            $pos['current_skill_started_at'] = $existingSkill && $existingSkill->started_at ? $existingSkill->started_at->toIso8601String() : null;
+            $pos['current_skill_started_at'] = ($existingSkill && $existingSkill->started_at) ? $existingSkill->started_at->toIso8601String() : null;
             if (!$isDemo) {
                 $maxLevel = \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $requestedSkillId)->max('level_number');
                 $pos['current_level'] = $maxLevel ? $maxLevel : 1;
@@ -266,6 +275,14 @@ class ExamSessionController extends Controller
 
         $startingLevel = $this->questionService->getValidStartingLevel($exam->id, $assignedSkills[$startIndex] ?? 0, ($isDemo && $request->has('level_id')) ? (int) $request->level_id : 1);
 
-        return ExamAttempt::create(['student_id' => $studentProfile?->id, 'user_id' => $isDemo ? $user->id : null, 'exam_id' => $exam->id, 'status' => 'ongoing', 'current_position' => ['skill_ids' => $assignedSkills, 'current_skill_index' => $startIndex, 'current_level' => $startingLevel, 'completed_skills' => [], 'current_skill_started_at' => null]]);
+        $attempt = ExamAttempt::create(['student_id' => $studentProfile?->id, 'user_id' => $isDemo ? $user->id : null, 'exam_id' => $exam->id, 'status' => 'ongoing', 'started_at' => now(), 'current_position' => ['skill_ids' => $assignedSkills, 'current_skill_index' => $startIndex, 'current_level' => $startingLevel, 'completed_skills' => [], 'current_skill_started_at' => null]]);
+        
+        // Explicitly create the first skill record to match started_at
+        ExamAttemptSkill::firstOrCreate(
+            ['exam_attempt_id' => $attempt->id, 'skill_id' => $assignedSkills[$startIndex]],
+            ['started_at' => $attempt->started_at, 'status' => 'in_progress']
+        );
+
+        return $attempt;
     }
 }

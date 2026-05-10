@@ -24,6 +24,7 @@ Route::middleware(['auth:sanctum', StudentOrDemoRole::class])->as('student.')->g
         // Progress-related
         Route::get('/next-batch', [ExamProgressController::class, 'getNextBatch'])->name('next-batch');
         Route::post('/submit-batch', [ExamProgressController::class, 'submitBatch'])->name('submit-batch');
+        Route::post('/save-answer', [ExamProgressController::class, 'saveSingleAnswer'])->name('save-answer');
         Route::patch('/progress', [ExamProgressController::class, 'updateProgress'])->name('progress');
 
         // Security-related
