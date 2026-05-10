@@ -34,6 +34,8 @@ class SystemRequirementController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'required|string',
+            'test_type' => 'nullable|string|in:none,audio_output,audio_input,video_input,network_speed,browser_compatibility',
+            'test_config' => 'nullable|array',
             'category' => 'nullable|string',
             'is_active' => 'boolean',
             'is_mandatory' => 'boolean',
@@ -51,6 +53,8 @@ class SystemRequirementController extends Controller
         $validated = $request->validate([
             'title' => 'string|max:255',
             'description' => 'string',
+            'test_type' => 'nullable|string|in:none,audio_output,audio_input,video_input,network_speed,browser_compatibility',
+            'test_config' => 'nullable|array',
             'category' => 'nullable|string',
             'is_active' => 'boolean',
             'is_mandatory' => 'boolean',
@@ -58,6 +62,14 @@ class SystemRequirementController extends Controller
         ]);
 
         $systemRequirement->update($validated);
+        return $systemRequirement;
+    }
+
+    /**
+     * Show requirement details
+     */
+    public function show(SystemRequirement $systemRequirement)
+    {
         return $systemRequirement;
     }
 

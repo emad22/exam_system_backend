@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\LogsActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ExamAttempt extends Model
 {
+    use LogsActivity;
+
     protected $fillable = [
         'user_id',
         'student_id', 
@@ -53,6 +56,20 @@ class ExamAttempt extends Model
         return $this->hasMany(ExamAttemptSkill::class);
     }
 
+    protected function getActivityDescription($action)
+    {
+        if ($action === 'created') {
+            return "Student started exam: " . ($this->exam->title ?? 'Unknown Exam');
+        }
+        
+        if ($action === 'updated' && $this->status === 'completed') {
+            return "Student completed exam: " . ($this->exam->title ?? 'Unknown Exam');
+        }
+
+        $modelName = class_basename($this);
+        return "{$action} {$modelName} #" . ($this->id ?? 'new');
+    }
+
     public function attemptLevels(): HasMany
     {
         return $this->hasMany(ExamAttemptLevel::class);
@@ -61,5 +78,10 @@ class ExamAttempt extends Model
     public function certificate()
     {
         return $this->hasOne(Certificate::class);
+    }
+
+    public function lastSeenQuestion(): BelongsTo
+    {
+        return $this->belongsTo(Question::class, 'last_seen_question_id');
     }
 }

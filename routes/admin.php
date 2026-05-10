@@ -116,6 +116,12 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::post('/mark-as-read', [Admin\NotificationController::class, 'markAsRead'])->name('mark-as-read');
     });
 
+    // Activity Logs
+    Route::get('/activity-logs', [Admin\ActivityLogController::class, 'index'])->name('activity-logs.index');
+    Route::post('/activity-logs/bulk-delete', [Admin\ActivityLogController::class, 'bulkDestroy'])->name('activity-logs.bulk-delete');
+    Route::get('/activity-logs/{id}', [Admin\ActivityLogController::class, 'show'])->name('activity-logs.show');
+    Route::delete('/activity-logs/{id}', [Admin\ActivityLogController::class, 'destroy'])->name('activity-logs.destroy');
+
     // Utilities
     Route::get('/languages', [Admin\LanguageController::class, 'index'])->name('languages.index');
 });

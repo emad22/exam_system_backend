@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Skill extends Model
 {
+    use LogsActivity;
+
     protected $fillable = ['name', 'description', 'icon', 'short_code'];
 
     public function levels(): HasMany

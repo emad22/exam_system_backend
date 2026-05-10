@@ -263,79 +263,76 @@ class StudentController extends Controller
             'category',
             'attempts.exam',
             'attempts.attemptSkills.skill',
+            'attempts.lastSeenQuestion.skill',
+            'attempts.lastSeenQuestion.options',
             'attempts.attemptLevels' => function ($q) {
                 $q->orderBy('created_at', 'asc');
             }
         ]);
 
-        // Fetch level names for mapping (assuming names are consistent across skills for same level_number)
-        $levelMap = \App\Models\Level::where('skill_id', 1)->pluck('name', 'level_number')->toArray();
+        // Fetch level names and numbers for mapping
+        $allLevels = \App\Models\Level::all();
+        $levelMap = $allLevels->where('skill_id', 1)->pluck('name', 'level_number')->toArray();
+        $levelLookup = $allLevels->keyBy('id');
 
-        // Transform attempts to include clear outcome and total scores
-        $student->attempts->each(function ($attempt) use ($levelMap) {
+        // Batch fetch all answers for all attempts to avoid N+1
+        $attemptIds = $student->attempts->pluck('id');
+        $allAnswers = \App\Models\StudentAnswer::whereIn('exam_attempt_id', $attemptIds)
+            ->with(['question.options'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->groupBy('exam_attempt_id');
+
+        $student->attempts->each(function ($attempt) use ($levelMap, $levelLookup, $allAnswers) {
             $total = $attempt->attemptSkills->sum('score');
             $count = $attempt->attemptSkills->count();
             $attempt->total_score = $total;
             $attempt->max_possible = $count * 900;
             $attempt->score_display = $count > 0 ? "$total / " . ($count * 900) : "0 / 0";
 
-            // Map attempt skills to include level names and specific termination points
-            if ($attempt->attemptSkills) {
-                $attempt->attemptSkills->each(function ($as) use ($levelMap, $attempt) {
-                    // achieved level logic
-                    $displayLevel = $as->status === 'completed' 
-                        ? $as->max_level_reached 
-                        : max($as->max_level_reached - 1, 1);
-                    $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
+            $attemptAnswers = $allAnswers->get($attempt->id, collect());
 
-                    // Find the last question seen for THIS specific skill
-                    $lastAns = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
-                        ->whereHas('question', function($q) use ($as) {
-                            $q->where('skill_id', $as->skill_id);
-                        })
-                        ->with(['question.options'])
-                        ->orderBy('created_at', 'desc')
-                        ->first();
+            // Map attempt skills
+            $attempt->attemptSkills->each(function ($as) use ($levelMap, $levelLookup, $attemptAnswers) {
+                $displayLevel = $as->status === 'completed' 
+                    ? $as->max_level_reached 
+                    : max($as->max_level_reached - 1, 1);
+                $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
 
-                    if ($lastAns && $as->status !== 'completed') {
-                        $q = $lastAns->question;
-                        $correctOpt = $q->options->where('is_correct', true)->first();
-                        $displayContent = strip_tags($q->content ?? '');
-                        if (empty($displayContent)) {
-                            $displayContent = $q->instructions ?? 'Audio/Media Question';
-                        }
+                // Find the last question seen for THIS specific skill from pre-fetched answers
+                $lastAns = $attemptAnswers->first(fn($ans) => $ans->skill_id == $as->skill_id);
 
-                        $as->termination_point = [
-                            'question_id' => $q->id,
-                            'level_number' => $q->level_id ? (\App\Models\Level::find($q->level_id)->level_number ?? '?') : '?',
-                            'question_text' => $displayContent,
-                            'correct_answer' => $correctOpt ? strip_tags($correctOpt->option_text) : 'N/A',
-                            'student_answer' => $lastAns->option_id ? strip_tags($q->options->firstWhere('id', $lastAns->option_id)->option_text ?? 'N/A') : ($lastAns->text_answer ?? 'N/A')
-                        ];
+                if ($lastAns && $as->status !== 'completed') {
+                    $q = $lastAns->question;
+                    $correctOpt = $q->options->where('is_correct', true)->first();
+                    $displayContent = strip_tags($q->content ?? '');
+                    if (empty($displayContent)) {
+                        $displayContent = $q->instructions ?? 'Audio/Media Question';
                     }
-                });
-            }
 
-            // Clean outcome text
+                    $levelRecord = $levelLookup->get($q->level_id);
+                    $as->termination_point = [
+                        'question_id' => $q->id,
+                        'level_number' => $levelRecord ? $levelRecord->level_number : '?',
+                        'question_text' => $displayContent,
+                        'correct_answer' => $correctOpt ? strip_tags($correctOpt->option_text) : 'N/A',
+                        'student_answer' => $lastAns->option_id ? strip_tags($q->options->firstWhere('id', $lastAns->option_id)->option_text ?? 'N/A') : ($lastAns->text_answer ?? 'N/A')
+                    ];
+                }
+            });
+
+            // Outcome text
             if ($attempt->status === 'ongoing') {
                 $attempt->outcome_text = 'In Progress';
             } else {
                 $attempt->outcome_text = $attempt->placement_level ? ($levelMap[$attempt->placement_level] ?? "Level {$attempt->placement_level}") : "Completed";
             }
 
-            // --- PROGRESS TRACKING: Identify the Exit Point ---
-            $lastSeenQ = null;
-            if ($attempt->last_seen_question_id) {
-                $lastSeenQ = Question::with(['skill', 'options'])->find($attempt->last_seen_question_id);
-            }
-
+            // Last activity logic
+            $lastSeenQ = $attempt->lastSeenQuestion;
             if ($lastSeenQ) {
                 $correctOption = $lastSeenQ->options->where('is_correct', true)->first();
-                
-                // Fetch the student's actual answer for this question in this attempt
-                $studentAnsRecord = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
-                    ->where('question_id', $lastSeenQ->id)
-                    ->first();
+                $studentAnsRecord = $attemptAnswers->firstWhere('question_id', $lastSeenQ->id);
                 
                 $studentChoice = 'No Answer Provided';
                 if ($studentAnsRecord) {
@@ -347,16 +344,16 @@ class StudentController extends Controller
                     }
                 }
 
-                // --- Fallback logic for question description ---
                 $displayContent = strip_tags($lastSeenQ->content ?? '');
                 if (empty($displayContent)) {
                     $displayContent = $lastSeenQ->instructions ?? 'Audio/Media Question';
                 }
 
+                $qLevel = $levelLookup->get($lastSeenQ->level_id);
                 $attempt->last_activity = [
-                    'skill_name' => $lastSeenQ->skill->name,
-                    'level_number' => $lastSeenQ->level_id ? (Level::find($lastSeenQ->level_id)->level_number ?? '?') : '?',
-                    'level_name' => $lastSeenQ->level_id ? ($levelMap[Level::find($lastSeenQ->level_id)->level_number] ?? 'Unknown') : 'Unknown',
+                    'skill_name' => $lastSeenQ->skill->name ?? 'Unknown',
+                    'level_number' => $qLevel ? $qLevel->level_number : '?',
+                    'level_name' => $qLevel ? ($levelMap[$qLevel->level_number] ?? 'Unknown') : 'Unknown',
                     'question_text' => $displayContent,
                     'correct_answer' => $correctOption ? strip_tags($correctOption->option_text) : 'N/A',
                     'student_answer' => $studentChoice,
@@ -366,7 +363,8 @@ class StudentController extends Controller
             } else {
                 $pos = $attempt->current_position;
                 if ($pos && isset($pos['skill_ids'][$pos['current_skill_index']])) {
-                    $skill = Skill::find($pos['skill_ids'][$pos['current_skill_index']]);
+                    $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+                    $skill = \App\Models\Skill::find($skillId); // Still one query per attempt if not pre-cached, but better than before
                     $attempt->last_activity = [
                         'skill_name' => $skill ? $skill->name : 'Unknown',
                         'level_number' => $pos['current_level'] ?? 1,
@@ -377,19 +375,14 @@ class StudentController extends Controller
                 }
             }
 
-            // --- NEW: Add Recent Performance (Last 5 Answers) ---
-            $attempt->recent_answers = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
-                ->with('question')
-                ->orderBy('created_at', 'desc')
-                ->take(5)
-                ->get()
-                ->map(function($ans) {
-                    return [
-                        'question_text' => strip_tags($ans->question->content),
-                        'is_correct' => (bool) $ans->is_correct,
-                        'time' => $ans->created_at->format('H:i:s'),
-                    ];
-                });
+            // Recent performance
+            $attempt->recent_answers = $attemptAnswers->take(5)->map(function($ans) {
+                return [
+                    'question_text' => strip_tags($ans->question->content ?? $ans->question->instructions ?? 'Question'),
+                    'is_correct' => (bool) $ans->is_correct,
+                    'time' => $ans->created_at->format('H:i:s'),
+                ];
+            });
         });
 
         return response()->json($student);

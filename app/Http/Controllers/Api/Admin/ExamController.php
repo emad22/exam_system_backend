@@ -20,14 +20,17 @@ class ExamController extends Controller
             ->latest()
             ->get();
 
-        // Attach breakdown logic
-        $exams->each(function($exam) {
-            $exam->breakdown = DB::table('questions')
-                ->join('levels', 'levels.id', '=', 'questions.level_id')
-                ->where('questions.exam_id', $exam->id)
-                ->select('questions.skill_id', 'levels.level_number as level_id', DB::raw('count(*) as count'))
-                ->groupBy('questions.skill_id', 'levels.level_number')
-                ->get();
+        // Attach breakdown logic (Optimized to avoid N+1 queries)
+        $breakdowns = DB::table('questions')
+            ->join('levels', 'levels.id', '=', 'questions.level_id')
+            ->whereIn('questions.exam_id', $exams->pluck('id'))
+            ->select('questions.exam_id', 'questions.skill_id', 'levels.level_number as level_id', DB::raw('count(*) as count'))
+            ->groupBy('questions.exam_id', 'questions.skill_id', 'levels.level_number')
+            ->get()
+            ->groupBy('exam_id');
+
+        $exams->each(function($exam) use ($breakdowns) {
+            $exam->breakdown = $breakdowns->get($exam->id, collect());
         });
 
         return response()->json($exams);
@@ -166,22 +169,29 @@ class ExamController extends Controller
             }
             $exam->skills()->sync($pivotSkills);
 
-            // Sync Rules
-            $exam->questionRules()->delete();
+            // Sync Rules (Optimized to avoid delete/recreate)
+            $processedRuleIds = [];
             foreach ($validated['skills'] as $skill) {
                 if (isset($skill['rules']) && is_array($skill['rules'])) {
                     foreach ($skill['rules'] as $rule) {
-                        $exam->questionRules()->create([
-                            'skill_id' => $skill['skill_id'],
-                            'level_id' => $rule['level_id'],
-                            'quantity' => $rule['quantity'],
-                            'standalone_quantity' => $rule['standalone_quantity'] ?? 0,
-                            'passage_quantity' => $rule['passage_quantity'] ?? 0,
-                            'randomize' => $rule['randomize'] ?? true,
-                        ]);
+                        $ruleRecord = $exam->questionRules()->updateOrCreate(
+                            [
+                                'skill_id' => $skill['skill_id'],
+                                'level_id' => $rule['level_id'],
+                            ],
+                            [
+                                'quantity' => $rule['quantity'],
+                                'standalone_quantity' => $rule['standalone_quantity'] ?? 0,
+                                'passage_quantity' => $rule['passage_quantity'] ?? 0,
+                                'randomize' => $rule['randomize'] ?? true,
+                            ]
+                        );
+                        $processedRuleIds[] = $ruleRecord->id;
                     }
                 }
             }
+            // Delete rules that are no longer part of the exam
+            $exam->questionRules()->whereNotIn('id', $processedRuleIds)->delete();
 
             // Sync direct question assignments
             if (isset($validated['question_ids'])) {

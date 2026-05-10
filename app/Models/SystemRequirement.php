@@ -12,6 +12,8 @@ class SystemRequirement extends Model
     protected $fillable = [
         'title',
         'description',
+        'test_type',
+        'test_config',
         'category',
         'is_active',
         'is_mandatory',
@@ -21,5 +23,6 @@ class SystemRequirement extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'is_mandatory' => 'boolean',
+        'test_config' => 'json',
     ];
 }
