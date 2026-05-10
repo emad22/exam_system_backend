@@ -136,7 +136,8 @@ class ReportController extends Controller
             ]);
 
             // Log the skill reset activity
-            $skillModel = Skill::find($skillId);
+            $attempt->loadMissing('exam.skills');
+            $skillModel = $attempt->exam->skills->firstWhere('id', $skillId);
             $skillName = $skillModel ? $skillModel->name : "Skill #$skillId";
 
             ActivityLog::create([
