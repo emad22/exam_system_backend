@@ -75,17 +75,27 @@ class ExamController extends Controller
             ->groupBy('exam_id')
             ->map(fn($g) => $g->first());
 
-        // Get all completed/in-progress skills for this student across ALL attempts of these exams
-        $completedSkillsByExam = DB::table('exam_attempt_skills')
+        // Get all skill records for this student across ALL attempts of these exams to determine status
+        $skillStatusRecords = DB::table('exam_attempt_skills')
             ->join('exam_attempts', 'exam_attempt_skills.exam_attempt_id', '=', 'exam_attempts.id')
             ->where('exam_attempts.student_id', $studentProfile->id)
-            ->whereIn('exam_attempt_skills.status', ['completed', 'failed', 'in_progress', 'skipped'])
-            ->select('exam_attempts.exam_id', 'exam_attempt_skills.skill_id')
-            ->get()
-            ->groupBy('exam_id')
-            ->map(fn($g) => $g->pluck('skill_id')->unique()->values());
+            ->whereIn('exam_attempts.exam_id', $assignedExamIds)
+            ->select('exam_attempts.exam_id', 'exam_attempt_skills.skill_id', 'exam_attempt_skills.status')
+            ->get();
 
-        $exams->each(function ($exam) use ($allowedSkillIdentifiers, $latestAttempts, $completedSkillsByExam) {
+        $skillStatusMap = [];
+        foreach ($skillStatusRecords as $record) {
+            // Logic: if any attempt for this skill is 'completed' or 'failed', it stays that way.
+            // 'in_progress' is only relevant if there's no 'completed' record.
+            $currentStatus = $skillStatusMap[$record->exam_id][$record->skill_id] ?? null;
+            if ($record->status === 'completed' || $record->status === 'failed') {
+                $skillStatusMap[$record->exam_id][$record->skill_id] = $record->status;
+            } elseif (!$currentStatus || $currentStatus === 'skipped') {
+                $skillStatusMap[$record->exam_id][$record->skill_id] = $record->status;
+            }
+        }
+
+        $exams->each(function ($exam) use ($allowedSkillIdentifiers, $latestAttempts, $skillStatusMap) {
             if (!empty($allowedSkillIdentifiers)) {
                 $exam->setRelation(
                     'skills',
@@ -94,7 +104,13 @@ class ExamController extends Controller
             }
 
             $exam->latest_attempt = $latestAttempts->get($exam->id);
-            $exam->completed_skill_ids = $completedSkillsByExam->get($exam->id, collect())->values();
+            $exam->skill_statuses = $skillStatusMap[$exam->id] ?? [];
+            
+            // Backwards compatibility for frontend if needed (extracting completed ids)
+            $exam->completed_skill_ids = collect($exam->skill_statuses)
+                ->filter(fn($status) => in_array($status, ['completed', 'failed', 'skipped']))
+                ->keys()
+                ->values();
         });
 
         return response()->json($exams);
@@ -127,7 +143,7 @@ class ExamController extends Controller
                 fn($q) =>
                 $q->where('student_id', $studentProfile->id)->where('exam_id', $exam->id)
             )->where('skill_id', $requestedSkillId)
-                ->whereIn('status', ['completed', 'failed', 'in_progress', 'skipped'])
+                ->whereIn('status', ['completed', 'failed', 'skipped'])
                 ->exists();
 
             if ($hasCompletedSkill) {
@@ -138,10 +154,30 @@ class ExamController extends Controller
         $ownerKey = $isDemo ? 'user_id' : 'student_id';
         $ownerId = $isDemo ? $user->id : $studentProfile->id;
 
-        $attempt = ExamAttempt::where($ownerKey, $ownerId)
-            ->where('exam_id', $exam->id)
-            ->where('status', 'ongoing')
-            ->first();
+        // Try to find an attempt through an in-progress skill first
+        $requestedSkillId = $request->has('skill_id') ? (int) $request->skill_id : null;
+        
+        $attempt = null;
+        if ($requestedSkillId) {
+            $skillAttempt = ExamAttemptSkill::whereHas('attempt', function($q) use ($ownerKey, $ownerId, $exam) {
+                    $q->where($ownerKey, $ownerId)->where('exam_id', $exam->id);
+                })
+                ->where('skill_id', $requestedSkillId)
+                ->where('status', 'in_progress')
+                ->first();
+            
+            if ($skillAttempt) {
+                $attempt = $skillAttempt->attempt;
+            }
+        }
+
+        // Fallback to finding an ongoing attempt
+        if (!$attempt) {
+            $attempt = ExamAttempt::where($ownerKey, $ownerId)
+                ->where('exam_id', $exam->id)
+                ->where('status', 'ongoing')
+                ->first();
+        }
 
         if ($attempt) {
             $attempt = $this->handleResumeAttempt($request, $attempt, $exam, $user, $isDemo);
