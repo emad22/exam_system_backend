@@ -17,7 +17,7 @@ class ReportController extends Controller
      */
     public function index(Request $request)
     {
-        $attempts = ExamAttempt::with(['student.user', 'user', 'exam'])
+        $attempts = ExamAttempt::with(['student.user', 'user', 'exam', 'attemptSkills.skill'])
             ->whereIn('status', ['completed', 'ongoing'])
             ->orderBy('updated_at', 'desc')
             ->paginate(30);
