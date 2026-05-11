@@ -86,8 +86,11 @@ class QuestionController extends Controller
 
         // Logic check for MCQ/TrueFalse for all questions in the batch
         foreach ($request->questions as $index => $qData) {
+            // click_word only needs 1 option minimum (each clickable word is an option)
+            $minOptions = $qData['type'] === 'click_word' ? 1 : 2;
+
             if (in_array($qData['type'], ['mcq', 'true_false', 'drag_drop', 'word_selection', 'click_word', 'fill_blank', 'matching', 'ordering', 'highlight', 'listening'])) {
-                if (!isset($qData['options']) || count($qData['options']) < 2) {
+                if (!isset($qData['options']) || count($qData['options']) < $minOptions) {
                     return response()->json(['message' => "Options are required for question #".($index+1)], 422);
                 }
                 $hasCorrect = collect($qData['options'])->contains('is_correct', true);

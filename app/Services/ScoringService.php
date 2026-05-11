@@ -116,35 +116,58 @@ class ScoringService
         return round($earned, 2);
     }
 
+    private function normalizeString(string $str): string
+    {
+        // Strip HTML tags
+        $str = strip_tags($str);
+        // Decode HTML entities (like &nbsp;)
+        $str = html_entity_decode($str, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        // Replace non-breaking spaces (\xA0) with regular spaces
+        $str = str_replace("\xc2\xa0", " ", $str);
+        $str = str_replace("\xa0", " ", $str);
+
+        // Strip Arabic Tashkeel (diacritics)
+        $tashkeel = [
+            "\xcc\x80", "\xcc\x81", "\xcc\x82", "\xcc\x83", // various diacritics
+            'ً', 'ٌ', 'ٍ', 'َ', 'ُ', 'ِ', 'ّ', 'ْ',
+        ];
+        $str = str_replace($tashkeel, "", $str);
+
+        // Trim and lowercase
+        return trim(mb_strtolower($str));
+    }
+
     private function gradeWordSelection(Question $question, array $ans): bool
     {
         $studentSelected = $ans['selected_words'] ?? [];
         if (is_string($studentSelected)) {
             $studentSelected = json_decode($studentSelected, true) ?? [];
         }
-        if (!is_array($studentSelected)) {
+        if (!is_array($studentSelected) || empty($studentSelected)) {
             return false;
         }
+
+        // Clean up student answers
+        $studentSelectedClean = array_map(fn($val) => $this->normalizeString((string)$val), $studentSelected);
 
         $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
-        $incorrectOptions = $question->options()->where('is_correct', false)->pluck('option_text')->toArray();
+        $correctOptionsClean = array_map(fn($val) => $this->normalizeString((string)$val), $correctOptions);
 
-        if (count($studentSelected) !== count($correctOptions)) {
+        if (empty($correctOptionsClean)) {
             return false;
         }
 
-        foreach ($correctOptions as $correct) {
-            if (!in_array($correct, $studentSelected)) {
+        // Since the user requested single-selection for 'click_word', 
+        // a student's answer is correct if EVERY word they clicked is in the correct list.
+        // And they must have clicked at least one word (checked above).
+        foreach ($studentSelectedClean as $selected) {
+            if (!in_array($selected, $correctOptionsClean)) {
                 return false;
             }
         }
 
-        foreach ($studentSelected as $selected) {
-            if (in_array($selected, $incorrectOptions)) {
-                return false;
-            }
-        }
-
+        // If it's a single-selection UI, we don't require them to pick ALL correct words,
+        // just that whatever they picked MUST be correct.
         return true;
     }
 
@@ -222,25 +245,21 @@ class ScoringService
         if (is_string($studentSelected)) {
             $studentSelected = json_decode($studentSelected, true) ?? [];
         }
-        if (!is_array($studentSelected)) {
+        if (!is_array($studentSelected) || empty($studentSelected)) {
             return false;
         }
+
+        $studentSelectedClean = array_map(fn($val) => $this->normalizeString((string)$val), $studentSelected);
 
         $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
-        $incorrectOptions = $question->options()->where('is_correct', false)->pluck('option_text')->toArray();
+        $correctOptionsClean = array_map(fn($val) => $this->normalizeString((string)$val), $correctOptions);
 
-        if (count($studentSelected) !== count($correctOptions)) {
+        if (empty($correctOptionsClean)) {
             return false;
         }
 
-        foreach ($correctOptions as $correct) {
-            if (!in_array($correct, $studentSelected)) {
-                return false;
-            }
-        }
-
-        foreach ($studentSelected as $selected) {
-            if (in_array($selected, $incorrectOptions)) {
+        foreach ($studentSelectedClean as $selected) {
+            if (!in_array($selected, $correctOptionsClean)) {
                 return false;
             }
         }
