@@ -20,12 +20,15 @@ class ReportController extends Controller
      */
     public function index(Request $request)
     {
-        $attempts = ExamAttempt::with(['student.user', 'user', 'exam', 'attemptSkills.skill'])
+        $attempts = ExamAttempt::with(['student.user', 'user', 'exam', 'attemptSkills.skill' => function ($query) {
+            $query->withCount('levels');
+        }])
             ->whereIn('status', ['completed', 'ongoing'])
             ->orderBy('updated_at', 'desc')
             ->paginate(30);
         return response()->json($attempts);
     }
+
 
     /**
      * Get detailed movement report for a specific attempt
@@ -37,7 +40,9 @@ class ReportController extends Controller
             'student.user',
             'user',
             'exam',
-            'attemptSkills.skill',
+            'attemptSkills.skill' => function ($q) {
+                $q->withCount('levels');
+            },
             'attemptLevels' => function ($q) {
                 $q->orderBy('created_at', 'asc');
             },
