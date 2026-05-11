@@ -9,6 +9,7 @@ use App\Models\Level;
 use App\Models\Question;
 use App\Models\StudentAnswer;
 use Illuminate\Support\Facades\Log;
+use App\Services\CertificateService;
 
 
 
@@ -211,5 +212,26 @@ class AttemptService
             ->where('level_number', $levelNum)
             ->where('status', 'failed')
             ->exists();
+    }
+    public function __construct(
+        private readonly CertificateService $certificateService
+    ) {}
+
+    /**
+     * Mark an entire exam attempt as completed.
+     */
+    public function completeAttempt(ExamAttempt $attempt): void
+    {
+        if ($attempt->status !== 'completed') {
+            $attempt->update(['status' => 'completed', 'finished_at' => now()]);
+        }
+
+        try {
+            if ($attempt->overall_score > 0) {
+                $this->certificateService->generate($attempt);
+            }
+        } catch (\Exception $e) {
+            Log::error("Certificate generation failed for attempt {$attempt->id}: " . $e->getMessage());
+        }
     }
 }

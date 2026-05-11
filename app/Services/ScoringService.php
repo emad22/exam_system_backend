@@ -90,6 +90,7 @@ class ScoringService
 
         $correctOptions = $question->options()
             ->where('is_correct', true)
+            ->orderBy('sort_order', 'asc')
             ->orderBy('id', 'asc')
             ->pluck('option_text')
             ->toArray();
@@ -150,7 +151,7 @@ class ScoringService
     private function gradeFillBlank(Question $question, array $ans): bool
     {
         $studentAnswers = $ans['fill_blank_answers'] ?? [];
-        $correctOptions = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
+        $correctOptions = $question->options()->orderBy('sort_order', 'asc')->orderBy('id', 'asc')->pluck('option_text')->toArray();
 
         if (count($studentAnswers) < count($correctOptions)) {
             return false;
@@ -199,7 +200,7 @@ class ScoringService
     private function gradeOrdering(Question $question, array $ans): bool
     {
         $studentOrder = $ans['ordering_answers'] ?? [];
-        $correctOrder = $question->options()->orderBy('id', 'asc')->pluck('option_text')->toArray();
+        $correctOrder = $question->options()->orderBy('sort_order', 'asc')->orderBy('id', 'asc')->pluck('option_text')->toArray();
 
         if (count($studentOrder) !== count($correctOrder)) {
             return false;

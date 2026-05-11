@@ -31,7 +31,12 @@ class SystemRequirementController extends Controller
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $data = $request->all();
+        if (isset($data['test_config']) && is_string($data['test_config'])) {
+            $data['test_config'] = json_decode($data['test_config'], true);
+        }
+
+        $validator = \Illuminate\Support\Facades\Validator::make($data, [
             'title' => 'required|string|max:255',
             'description' => 'required|string',
             'test_type' => 'nullable|string|in:none,audio_output,audio_input,video_input,network_speed,browser_compatibility',
@@ -40,7 +45,22 @@ class SystemRequirementController extends Controller
             'is_active' => 'boolean',
             'is_mandatory' => 'boolean',
             'order' => 'integer',
+            'audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:5120',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
+        }
+
+        $validated = $validator->validated();
+        $testConfig = $validated['test_config'] ?? [];
+
+        if ($request->hasFile('audio_file')) {
+            $path = $request->file('audio_file')->store('requirements/audio', 'public');
+            $testConfig['audio_url'] = asset('storage/' . $path);
+        }
+
+        $validated['test_config'] = $testConfig;
 
         return SystemRequirement::create($validated);
     }
@@ -50,7 +70,12 @@ class SystemRequirementController extends Controller
      */
     public function update(Request $request, SystemRequirement $systemRequirement)
     {
-        $validated = $request->validate([
+        $data = $request->all();
+        if (isset($data['test_config']) && is_string($data['test_config'])) {
+            $data['test_config'] = json_decode($data['test_config'], true);
+        }
+
+        $validator = \Illuminate\Support\Facades\Validator::make($data, [
             'title' => 'string|max:255',
             'description' => 'string',
             'test_type' => 'nullable|string|in:none,audio_output,audio_input,video_input,network_speed,browser_compatibility',
@@ -59,7 +84,22 @@ class SystemRequirementController extends Controller
             'is_active' => 'boolean',
             'is_mandatory' => 'boolean',
             'order' => 'integer',
+            'audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:5120',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
+        }
+
+        $validated = $validator->validated();
+        $testConfig = $validated['test_config'] ?? $systemRequirement->test_config ?? [];
+
+        if ($request->hasFile('audio_file')) {
+            $path = $request->file('audio_file')->store('requirements/audio', 'public');
+            $testConfig['audio_url'] = asset('storage/' . $path);
+        }
+
+        $validated['test_config'] = $testConfig;
 
         $systemRequirement->update($validated);
         return $systemRequirement;

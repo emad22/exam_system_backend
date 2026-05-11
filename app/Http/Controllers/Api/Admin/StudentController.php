@@ -270,6 +270,9 @@ class StudentController extends Controller
             }
         ]);
 
+        // Fetch all skills once to avoid N+1 in the loops below
+        $skillLookup = Skill::all()->keyBy('id');
+
         // Fetch level names and numbers for mapping
         $allLevels = \App\Models\Level::all();
         $levelMap = $allLevels->where('skill_id', 1)->pluck('name', 'level_number')->toArray();
@@ -364,7 +367,7 @@ class StudentController extends Controller
                 $pos = $attempt->current_position;
                 if ($pos && isset($pos['skill_ids'][$pos['current_skill_index']])) {
                     $skillId = $pos['skill_ids'][$pos['current_skill_index']];
-                    $skill = \App\Models\Skill::find($skillId); // Still one query per attempt if not pre-cached, but better than before
+                    $skill = $skillLookup->get($skillId);
                     $attempt->last_activity = [
                         'skill_name' => $skill ? $skill->name : 'Unknown',
                         'level_number' => $pos['current_level'] ?? 1,
