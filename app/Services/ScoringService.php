@@ -174,14 +174,28 @@ class ScoringService
     private function gradeFillBlank(Question $question, array $ans): bool
     {
         $studentAnswers = $ans['fill_blank_answers'] ?? [];
-        $correctOptions = $question->options()->orderBy('sort_order', 'asc')->orderBy('id', 'asc')->pluck('option_text')->toArray();
+        $correctOptions = $question->options()
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('id', 'asc')
+            ->where('is_correct', true)
+            ->pluck('option_text')
+            ->toArray();
 
         if (count($studentAnswers) < count($correctOptions)) {
             return false;
         }
 
         foreach ($correctOptions as $i => $correctVal) {
-            if (trim(strtolower($studentAnswers[$i] ?? '')) !== trim(strtolower($correctVal))) {
+            $studentVal = $this->normalizeString((string) ($studentAnswers[$i] ?? ''));
+
+            // Support multiple accepted answers separated by "|"
+            // e.g., "لم|لن" means either "لم" or "لن" is accepted
+            $accepted = array_map(
+                fn($v) => $this->normalizeString($v),
+                explode('|', $correctVal)
+            );
+
+            if (!in_array($studentVal, $accepted, true)) {
                 return false;
             }
         }
