@@ -18,7 +18,9 @@ class ReportController extends Controller
     /**
      * Get reports (For Supervisor and Admin)
      */
-    public function index(Request $request)
+   
+
+     public function index(Request $request)
     {
         $attempts = ExamAttempt::with(['student.user', 'user', 'exam', 'attemptSkills.skill' => function ($query) {
             $query->withCount('levels');
@@ -29,6 +31,7 @@ class ReportController extends Controller
         return response()->json($attempts);
     }
 
+   
 
     /**
      * Get detailed movement report for a specific attempt
@@ -141,8 +144,7 @@ class ReportController extends Controller
             ]);
 
             // Log the skill reset activity
-            $attempt->loadMissing('exam.skills');
-            $skillModel = $attempt->exam->skills->firstWhere('id', $skillId);
+            $skillModel = Skill::find($skillId);
             $skillName = $skillModel ? $skillModel->name : "Skill #$skillId";
 
             ActivityLog::create([
