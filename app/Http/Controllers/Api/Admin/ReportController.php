@@ -28,7 +28,8 @@ class ReportController extends Controller
             ->whereIn('status', ['completed', 'ongoing'])
             ->orderBy('updated_at', 'desc')
             ->paginate(30);
-//to get avialable skills for each ExamAttemp
+
+        //to get avialable skills for each ExamAttemp
 
         $attempts->getCollection()->transform(function ($attempt) {
         $currentPos = $attempt-> current_position;
@@ -37,6 +38,13 @@ class ReportController extends Controller
             $currentPos = json_decode($currentPos, true);
         }
         $attempt->skills_count = count($currentPos['skill_ids'] ?? []);
+        $skillIds = $currentPos['skill_ids'] ?? [];
+   
+        $attempt->total_levels = Skill::whereIn('id', $skillIds)
+            ->withCount('levels')
+            ->get()
+            ->sum('levels_count');
+
         return $attempt;
      });
         return response()->json($attempts);
@@ -77,6 +85,16 @@ class ReportController extends Controller
             $currentPos = json_decode($currentPos, true);
         }
         $attempt->skills_count = count($currentPos['skill_ids'] ?? []);
+       // $attempt->skill_ids = $currentPos['skill_ids'] ?? [];
+
+        $skillIds = $currentPos['skill_ids'] ?? [];
+   
+        $attempt->total_levels = Skill::whereIn('id', $skillIds)
+            ->withCount('levels')
+            ->get()
+            ->sum('levels_count');
+
+
         return response()->json($attempt);
     }
 
