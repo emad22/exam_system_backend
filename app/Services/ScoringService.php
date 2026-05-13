@@ -23,7 +23,7 @@ class ScoringService
             'fill_blank' => $this->gradeFillBlank($question, $answerData) ? $question->points : 0,
             'matching' => $this->gradeMatching($question, $answerData) ? $question->points : 0,
             'ordering' => $this->gradeOrdering($question, $answerData) ? $question->points : 0,
-            'highlight' => $this->gradeHighlight($question, $answerData) ? $question->points : 0,
+            'highlight' => $this->gradeHighlight($question, $answerData),
             default => $this->gradeText($question, $answerData) ? $question->points : 0,
         };
     }
@@ -120,21 +120,26 @@ class ScoringService
     {
         // Strip HTML tags
         $str = strip_tags($str);
+        
         // Decode HTML entities (like &nbsp;)
         $str = html_entity_decode($str, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        // Replace non-breaking spaces (\xA0) with regular spaces
-        $str = str_replace("\xc2\xa0", " ", $str);
-        $str = str_replace("\xa0", " ", $str);
+        
+        // Replace non-breaking spaces (\xA0) and other whitespace with regular spaces
+        $str = preg_replace('/\s+/u', ' ', $str);
 
-        // Strip Arabic Tashkeel (diacritics)
-        $tashkeel = [
-            "\xcc\x80", "\xcc\x81", "\xcc\x82", "\xcc\x83", // various diacritics
-            'ً', 'ٌ', 'ٍ', 'َ', 'ُ', 'ِ', 'ّ', 'ْ',
-        ];
-        $str = str_replace($tashkeel, "", $str);
+        // Strip Arabic Tashkeel (diacritics) using Unicode range
+        // 064B-0652: Fathatan, Dammatan, Kasratan, Fatha, Damma, Kasra, Shadda, Sukun
+        // 0670: Superscript Alif
+        $str = preg_replace('/[\x{064B}-\x{0652}\x{0670}]/u', '', $str);
 
-        // Trim and lowercase
-        return trim(mb_strtolower($str));
+        // Optional: Normalize Alifs, Teh Marbuta, and Yeh for looser comparison
+        // This helps if the admin typed them differently than they appear in the content
+        $str = preg_replace('/[أإآ]/u', 'ا', $str);
+        $str = preg_replace('/ة/u', 'ه', $str);
+        $str = preg_replace('/[ىي]/u', 'ي', $str);
+
+        // Trim and lowercase (lowercase doesn't affect Arabic but good for mixed text)
+        return trim(mb_strtolower($str, 'UTF-8'));
     }
 
     private function gradeWordSelection(Question $question, array $ans): bool
@@ -252,33 +257,50 @@ class ScoringService
         return true;
     }
 
-    private function gradeHighlight(Question $question, array $ans): bool
+    private function gradeHighlight(Question $question, array $ans): float|int
     {
-        // Same logic as word_selection but reads from 'highlight_answers'
         $studentSelected = $ans['highlight_answers'] ?? [];
         if (is_string($studentSelected)) {
             $studentSelected = json_decode($studentSelected, true) ?? [];
         }
+        
         if (!is_array($studentSelected) || empty($studentSelected)) {
-            return false;
+            return 0;
         }
 
-        $studentSelectedClean = array_map(fn($val) => $this->normalizeString((string)$val), $studentSelected);
-
+        // 1. Get correct options from DB
         $correctOptions = $question->options()->where('is_correct', true)->pluck('option_text')->toArray();
-        $correctOptionsClean = array_map(fn($val) => $this->normalizeString((string)$val), $correctOptions);
-
-        if (empty($correctOptionsClean)) {
-            return false;
+        
+        if (empty($correctOptions)) {
+            return 0;
         }
 
+        // 2. Normalize correct options
+        $correctOptionsClean = array_map(fn($val) => $this->normalizeString((string)$val), $correctOptions);
+        $totalCorrectCount = count($correctOptionsClean);
+        $pointsPerWord = $question->points / $totalCorrectCount;
+
+        // 3. Normalize student answers
+        $studentSelectedClean = array_map(fn($val) => $this->normalizeString((string)$val), $studentSelected);
+        
+        // Remove duplicates from student selection to avoid double scoring if they somehow sent the same word twice
+        $studentSelectedClean = array_unique($studentSelectedClean);
+
+        $earnedPoints = 0;
+        
+        // 4. Score each selected word
         foreach ($studentSelectedClean as $selected) {
-            if (!in_array($selected, $correctOptionsClean)) {
-                return false;
+            if (in_array($selected, $correctOptionsClean)) {
+                $earnedPoints += $pointsPerWord;
+            } else {
+                // Optional: Penalty for incorrect words to prevent selecting everything
+                // Each wrong word cancels out one correct word
+                $earnedPoints -= $pointsPerWord;
             }
         }
 
-        return true;
+        // 5. Ensure score is between 0 and total points
+        return max(0, min($question->points, round($earnedPoints, 2)));
     }
 
     private function gradeText(Question $question, array $ans): bool

@@ -33,17 +33,12 @@ class ExamSecurityController extends Controller
             $currentWarnings = $skillAttempt->cheat_warnings;
 
             if ($currentWarnings >= 3) {
-                $shouldTerminateSkill = true;
-                $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
-                $maxLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->max('level_number') ?? 1;
-                $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'failed');
-                $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
-                $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $pos, $skillId);
-                $attempt->update(['current_position' => $advanced['next_pos']]);
-                if ($advanced['finished_exam']) $this->attemptService->completeAttempt($attempt);
+                // We no longer auto-terminate the skill. 
+                // We just record the warnings and let the admin see them in the report.
+                // $shouldTerminateSkill = true;
             }
         }
-        return response()->json(['success' => true, 'warnings' => $currentWarnings, 'should_terminate_skill' => $shouldTerminateSkill]);
+        return response()->json(['success' => true, 'warnings' => $currentWarnings, 'should_terminate_skill' => false]);
     }
 
     public function timeout(Request $request, ExamAttempt $attempt)
