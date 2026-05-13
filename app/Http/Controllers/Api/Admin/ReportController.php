@@ -28,6 +28,17 @@ class ReportController extends Controller
             ->whereIn('status', ['completed', 'ongoing'])
             ->orderBy('updated_at', 'desc')
             ->paginate(30);
+//to get avialable skills for each ExamAttemp
+
+        $attempts->getCollection()->transform(function ($attempt) {
+        $currentPos = $attempt-> current_position;
+       //logger("*************** current position ".json_encode($attempt->current_pos));
+        if (is_string($currentPos)) {
+            $currentPos = json_decode($currentPos, true);
+        }
+        $attempt->skills_count = count($currentPos['skill_ids'] ?? []);
+        return $attempt;
+     });
         return response()->json($attempts);
     }
 
@@ -59,6 +70,13 @@ class ReportController extends Controller
             }
         ]);
 
+   
+        $currentPos = $attempt-> current_position;
+       //logger("*************** current position ".json_encode($attempt->current_pos));   
+        if (is_string($currentPos)) {
+            $currentPos = json_decode($currentPos, true);
+        }
+        $attempt->skills_count = count($currentPos['skill_ids'] ?? []);
         return response()->json($attempt);
     }
 
