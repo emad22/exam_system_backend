@@ -152,7 +152,8 @@ class ReportController extends Controller
             // Find the index of the reset skill to rewind the student to it
             if (isset($pos['skill_ids'])) {
                 $resetIndex = array_search($skillId, $pos['skill_ids']);
-                if ($resetIndex !== false && (!isset($pos['current_skill_index']) || $resetIndex < $pos['current_skill_index'])) {
+                //if ($resetIndex !== false && (!isset($pos['current_skill_index']) || $resetIndex < $pos['current_skill_index'])) {
+                if ($resetIndex !== false ) {
                     $pos['current_skill_index'] = $resetIndex;
                     $pos['current_level'] = 1;
                     $pos['current_skill_started_at'] = null;
