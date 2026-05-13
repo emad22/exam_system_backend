@@ -15,11 +15,16 @@ class StudentAnswer extends Model
         'text_answer', 
         'media_answer', 
         'is_correct', 
-        'points_awarded'
+        'is_manual_graded',
+        'points_awarded',
+        'teacher_feedback',
+        'grading_details'
     ];
 
     protected $casts = [
         'is_correct' => 'boolean',
+        'is_manual_graded' => 'boolean',
+        'grading_details' => 'array',
     ];
 
     public function attempt(): BelongsTo

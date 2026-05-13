@@ -91,6 +91,14 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::post('/{attempt}/skills/{skill}/reset', [Admin\ReportController::class, 'resetAttemptSkill'])->name('reset-skill');
     });
 
+    // Manual Grading (Writing & Speaking)
+    Route::prefix('grading')->as('grading.')->group(function () {
+        Route::get('/', [Admin\ProductiveSkillsController::class, 'index'])->name('index');
+        Route::get('/{answer}', [Admin\ProductiveSkillsController::class, 'show'])->name('show');
+        Route::patch('/{answer}', [Admin\ProductiveSkillsController::class, 'update'])->name('update');
+        Route::post('/{answer}/ai-suggest', [Admin\ProductiveSkillsController::class, 'aiSuggest'])->name('ai-suggest');
+    });
+
     // Staff Management (Admin Only)
     Route::middleware(AdminRole::class)->prefix('staff')->as('staff.')->group(function () {
         Route::get('/', [Admin\StaffController::class, 'index'])->name('index');

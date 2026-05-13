@@ -39,4 +39,8 @@ return [
         'webhook_secret' => env('WORDPRESS_WEBHOOK_SECRET'),
     ],
 
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+    ],
+
 ];
