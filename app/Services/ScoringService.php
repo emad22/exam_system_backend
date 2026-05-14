@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Question;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class ScoringService
@@ -21,7 +22,7 @@ class ScoringService
             'drag_drop' => $this->gradeDragDrop($question, $answerData),
             'word_selection', 'click_word' => $this->gradeWordSelection($question, $answerData) ? $question->points : 0,
             'fill_blank' => $this->gradeFillBlank($question, $answerData) ? $question->points : 0,
-            'matching' => $this->gradeMatching($question, $answerData) ? $question->points : 0,
+            'matching' => $this->gradeMatching($question, $answerData),
             'ordering' => $this->gradeOrdering($question, $answerData) ? $question->points : 0,
             'highlight' => $this->gradeHighlight($question, $answerData),
             default => $this->gradeText($question, $answerData) ? $question->points : 0,
@@ -208,35 +209,66 @@ class ScoringService
         return true;
     }
 
-    private function gradeMatching(Question $question, array $ans): bool
+    private function gradeMatching(Question $question, array $ans): float|int
     {
         $studentMatches = $ans['matching_answers'] ?? [];
+
         if (is_string($studentMatches)) {
             $studentMatches = json_decode($studentMatches, true) ?? [];
         }
-        if (!is_array($studentMatches)) {
-            return false;
+        
+        Log::info('Matching Grade Start', [
+            'question_id' => $question->id,
+            'student_answers' => $studentMatches
+        ]);
+
+        if (!is_array($studentMatches) || empty($studentMatches)) {
+            return 0;
         }
 
         $options = $question->options;
-        $pairCount = 0;
-
+        $correctPairs = [];
+        
         foreach ($options as $opt) {
-            if (!str_contains($opt->option_text, '|')) {
-                continue;
-            }
+            // Support multiple separators just in case (|, :, -)
+            $separator = str_contains($opt->option_text, '|') ? '|' : (str_contains($opt->option_text, ':') ? ':' : (str_contains($opt->option_text, '-') ? '-' : null));
+            
+            if (!$separator) continue;
 
-            $pairCount++;
-            $parts = explode('|', $opt->option_text, 2);
-            $expectedTarget = trim($parts[1] ?? '');
-            $actualTarget = $studentMatches[$opt->id] ?? null;
-
-            if (trim((string) $actualTarget) !== $expectedTarget) {
-                return false;
+            $parts = explode($separator, $opt->option_text, 2);
+            $target = $this->normalizeString($parts[1] ?? '');
+            if ($target !== '') {
+                $correctPairs[(int)$opt->id] = $target;
             }
         }
 
-        return count($studentMatches) === $pairCount;
+        Log::info('Matching Correct Pairs', ['correct_pairs' => $correctPairs]);
+
+        $totalPairs = count($correctPairs);
+        if ($totalPairs === 0) return 0;
+
+        $pointsPerPair = $question->points / $totalPairs;
+        $earned = 0;
+
+        foreach ($studentMatches as $optId => $studentTarget) {
+            $id = (int)$optId;
+            if (isset($correctPairs[$id])) {
+                $actual = $this->normalizeString((string)$studentTarget);
+                $expected = $correctPairs[$id];
+                
+                if ($actual === $expected) {
+                    $earned += $pointsPerPair;
+                    Log::info("Match Found", ['opt_id' => $id, 'text' => $actual]);
+                } else {
+                    Log::info("Mismatch", ['opt_id' => $id, 'student' => $actual, 'expected' => $expected]);
+                }
+            }
+        }
+
+        $finalScore = round($earned, 2);
+        Log::info('Matching Grade Result', ['score' => $finalScore]);
+        
+        return $finalScore;
     }
 
     private function gradeOrdering(Question $question, array $ans): bool

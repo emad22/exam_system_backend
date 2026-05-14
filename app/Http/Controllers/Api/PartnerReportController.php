@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use App\Models\ActivityLog;
 use App\Models\Skill;
+use App\Models\User;
 
 class ReportController extends Controller
 {
@@ -127,15 +128,23 @@ class ReportController extends Controller
         return response()->json($attempt);
     }
 
-    $stats = [
-    'students_count' => User::where('role', 'student')
-        ->where('partner_id', auth()->id())
-        ->count(),
+    /**
+     * Get statistics for the partner dashboard
+     */
+    public function stats()
+    {
+        $partnerId = auth()->id();
+        
+        $studentIds = User::where('role', 'student')
+            ->where('partner_id', $partnerId)
+            ->pluck('id');
 
-    'attempts_count' => ExamAttempt::whereIn('student_id', $studentIds)->count(),
-
-    'avg_score' => ExamAttempt::whereIn('student_id', $studentIds)
-        ->avg('overall_score'),
-];
-
+        return response()->json([
+            'students_count' => $studentIds->count(),
+            'attempts_count' => ExamAttempt::whereIn('student_id', $studentIds)->count(),
+            'avg_score' => round(ExamAttempt::whereIn('student_id', $studentIds)
+                ->where('status', 'completed')
+                ->avg('overall_score') ?: 0, 2),
+        ]);
+    }
 }
