@@ -62,31 +62,31 @@ class ProductiveSkillsController extends Controller
         $maxWords = $question->max_words ?? 0;
 
         $prompt = <<<PROMPT
-You are an expert English language examiner. Evaluate the following student writing task.
+            You are an expert English language examiner. Evaluate the following student writing task.
 
-**Task Instructions / Prompt:**
-{$question->instructions}
+            **Task Instructions / Prompt:**
+            {$question->instructions}
 
-**Maximum Score:** {$maxPoints} points
-**Word Count Requirement:** {$minWords} - {$maxWords} words
+            **Maximum Score:** {$maxPoints} points
+            **Word Count Requirement:** {$minWords} - {$maxWords} words
 
-**Student's Answer:**
-{$studentAnswer}
+            **Student's Answer:**
+            {$studentAnswer}
 
-Please evaluate this answer and respond ONLY with a valid JSON object in this exact format:
-{
-  "suggested_score": <number between 0 and {$maxPoints}>,
-  "feedback": "<2-3 sentences of constructive feedback in English>",
-  "rubric": {
-    "grammar": <score 1-5>,
-    "vocabulary": <score 1-5>,
-    "coherence": <score 1-5>,
-    "task_achievement": <score 1-5>
-  },
-  "strengths": "<one sentence about what the student did well>",
-  "improvements": "<one sentence about the main area to improve>"
-}
-PROMPT;
+            Please evaluate this answer and respond ONLY with a valid JSON object in this exact format:
+            {
+            "suggested_score": <number between 0 and {$maxPoints}>,
+            "feedback": "<2-3 sentences of constructive feedback in English>",
+            "rubric": {
+                "grammar": <score 1-5>,
+                "vocabulary": <score 1-5>,
+                "coherence": <score 1-5>,
+                "task_achievement": <score 1-5>
+            },
+            "strengths": "<one sentence about what the student did well>",
+            "improvements": "<one sentence about the main area to improve>"
+            }
+            PROMPT;
 
         try {
             $response = Http::timeout(30)->post(
@@ -142,18 +142,19 @@ PROMPT;
                 'teacher_feedback' => $request->teacher_feedback,
                 'grading_details' => $request->grading_details,
                 'is_manual_graded' => true,
-                'is_correct' => $request->points_awarded > 0 
+                'is_correct' => $request->points_awarded > 0
             ]);
 
             // Recalculate skill score for the attempt
             $this->recalculateSkillScore($answer);
 
+            $studentName = $answer->attempt->student->user->first_name . ' ' . $answer->attempt->student->user->last_name;
             ActivityLog::create([
                 'user_id' => Auth::id(),
                 'action' => 'updated',
                 'model_type' => StudentAnswer::class,
                 'model_id' => $answer->id,
-                'description' => "Graded Writing Task for: " . ($answer->attempt->student->user->name ?? 'Unknown'),
+                'description' => "Graded Writing Task for: " . $studentName ?? "Unknown name Student" . " with score of " . $request->points_awarded,
                 'ip_address' => request()->ip(),
                 'user_agent' => request()->userAgent(),
             ]);
@@ -179,7 +180,7 @@ PROMPT;
         // Note: For Writing tasks, we usually calculate a percentage based on max points.
         // In this system, AttemptService::computeSkillScore handles percentage.
         // We'll update the record so computeSkillScore picks it up, or update it directly here.
-        
+
         $attemptSkill = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
             ->where('skill_id', $skillId)
             ->first();
@@ -188,7 +189,7 @@ PROMPT;
             // If the system uses percentages, we should calculate it. 
             // For now, let's just update the score field.
             $attemptSkill->update([
-                'score' => $totalPointsEarned 
+                'score' => $totalPointsEarned
             ]);
         }
     }
