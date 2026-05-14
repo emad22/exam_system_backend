@@ -6,7 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class StaffRole
+class PartnerRole
 {
     /**
      * Handle an incoming request.
@@ -15,14 +15,12 @@ class StaffRole
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $allowed = ['admin', 'teacher', 'supervisor', 'demo', 'partner'];
-        
-        if ($request->user() && in_array($request->user()->role, $allowed)) {
+        if ($request->user() && $request->user()->role === 'partner') {
             return $next($request);
         }
 
         return response()->json([
-            'message' => 'Unauthorized. Staff access required.'
+            'message' => 'Unauthorized. Partner access required.'
         ], 403);
     }
 }

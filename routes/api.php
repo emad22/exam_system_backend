@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Admin\ExamCategoryController;
 use App\Http\Controllers\Api\WordPressWebhookController;
 use App\Http\Controllers\Api\QuestionImportController;
 use App\Http\Middleware\AdminRole;
+use App\Http\Middleware\PartnerRole;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,8 +30,11 @@ Route::prefix('v1')->as('v1.')->group(function () {
     // 3. Administrative Operations
     require __DIR__ . '/admin.php';
 
+    // 4. Partner Operations
+    require __DIR__ . '/partner.php';
+
     // ---------------------------------------------------------------------------
-    // 4. Shared / Public Routes
+    // 5. Shared / Public Routes
     // ---------------------------------------------------------------------------
 
     // Public Certificate Verification (No Auth Required)
