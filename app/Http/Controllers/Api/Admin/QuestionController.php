@@ -45,8 +45,21 @@ class QuestionController extends Controller
     public function store(Request $request)
     {
         $data = $request->all();
-        if (isset($data['questions']) && is_string($data['questions'])) {
-            $data['questions'] = json_decode($data['questions'], true);
+        
+        $questionsJson = $request->request->get('questions');
+        if (is_string($questionsJson)) {
+            $decodedQuestions = json_decode($questionsJson, true);
+            if (is_array($decodedQuestions)) {
+                $files = $request->file('questions') ?? [];
+                if (is_array($files)) {
+                    foreach ($files as $index => $fileArray) {
+                        if (isset($decodedQuestions[$index]) && is_array($fileArray)) {
+                            $decodedQuestions[$index] = array_merge($decodedQuestions[$index], $fileArray);
+                        }
+                    }
+                }
+                $data['questions'] = $decodedQuestions;
+            }
         }
 
         $validator = Validator::make($data, [
@@ -77,6 +90,10 @@ class QuestionController extends Controller
         ]);
 
         if ($validator->fails()) {
+            \Illuminate\Support\Facades\Log::error('Question Store Validation Failed', [
+                'errors' => $validator->errors()->toArray(),
+                'input' => $request->all()
+            ]);
             return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
         }
 
@@ -224,8 +241,21 @@ class QuestionController extends Controller
     public function update(Request $request, Question $question)
     {
         $data = $request->all();
-        if (isset($data['questions']) && is_string($data['questions'])) {
-            $data['questions'] = json_decode($data['questions'], true);
+        
+        $questionsJson = $request->request->get('questions');
+        if (is_string($questionsJson)) {
+            $decodedQuestions = json_decode($questionsJson, true);
+            if (is_array($decodedQuestions)) {
+                $files = $request->file('questions') ?? [];
+                if (is_array($files)) {
+                    foreach ($files as $index => $fileArray) {
+                        if (isset($decodedQuestions[$index]) && is_array($fileArray)) {
+                            $decodedQuestions[$index] = array_merge($decodedQuestions[$index], $fileArray);
+                        }
+                    }
+                }
+                $data['questions'] = $decodedQuestions;
+            }
         }
 
         $validator = Validator::make($data, [
@@ -257,6 +287,10 @@ class QuestionController extends Controller
         ]);
 
         if ($validator->fails()) {
+            \Illuminate\Support\Facades\Log::error('Question Update Validation Failed', [
+                'errors' => $validator->errors()->toArray(),
+                'input' => $request->all()
+            ]);
             return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
         }
 
