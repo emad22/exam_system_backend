@@ -44,37 +44,37 @@ class ExamCategoryController extends Controller
     /**
      * Update existing category
      */
-    public function update(Request $request, ExamCategory $category)
+    public function update(Request $request, ExamCategory $examCategory)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255|unique:exam_categories,name,' . $category->id,
+            'name' => 'required|string|max:255|unique:exam_categories,name,' . $examCategory->id,
             'description' => 'nullable|string',
             'is_active' => 'boolean',
         ]);
 
-        $category->update([
+        $examCategory->update([
             'name' => $validated['name'],
             'slug' => Str::slug($validated['name']),
-            'description' => $validated['description'] ?? $category->description,
-            'is_active' => $validated['is_active'] ?? $category->is_active,
+            'description' => $validated['description'] ?? $examCategory->description,
+            'is_active' => $validated['is_active'] ?? $examCategory->is_active,
         ]);
 
         return response()->json([
             'message' => 'Category updated successfully.',
-            'category' => $category
+            'category' => $examCategory
         ]);
     }
 
     /**
      * Delete category
      */
-    public function destroy(ExamCategory $category)
+    public function destroy(ExamCategory $examCategory)
     {
-        if ($category->exams()->count() > 0) {
+        if ($examCategory->exams()->count() > 0) {
             return response()->json(['message' => 'Cannot delete category while exams are assigned to it.'], 422);
         }
 
-        $category->delete();
+        $examCategory->delete();
         return response()->json(['message' => 'Category removed successfully.']);
     }
 }
