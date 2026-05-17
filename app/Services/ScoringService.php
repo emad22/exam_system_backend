@@ -274,6 +274,10 @@ class ScoringService
     private function gradeOrdering(Question $question, array $ans): bool
     {
         $studentOrder = $ans['ordering_answers'] ?? [];
+        if (is_string($studentOrder)) {
+            $studentOrder = json_decode($studentOrder, true) ?? [];
+        }
+
         $correctOrder = $question->options()->orderBy('sort_order', 'asc')->orderBy('id', 'asc')->pluck('option_text')->toArray();
 
         if (count($studentOrder) !== count($correctOrder)) {
@@ -281,7 +285,7 @@ class ScoringService
         }
 
         foreach ($correctOrder as $i => $correctVal) {
-            if (trim($studentOrder[$i] ?? '') !== trim($correctVal)) {
+            if ($this->normalizeString((string)($studentOrder[$i] ?? '')) !== $this->normalizeString((string)$correctVal)) {
                 return false;
             }
         }
