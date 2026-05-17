@@ -26,7 +26,10 @@ class PartnerDashboardController extends Controller
         $completedAttempts = ExamAttempt::whereIn('student_id', $studentIds)->where('status', 'completed')->count();
         $pendingAttempts = ExamAttempt::whereIn('student_id', $studentIds)->where('status', '!=', 'completed')->count();
 
-        $recentAttempts = ExamAttempt::with(['student:id,user_id,partner_id', 'student.user:id,first_name,last_name', 'exam:id,title'])
+
+        $recentAttempts = ExamAttempt::with(['student:id,user_id,partner_id', 'student.user:id,first_name,last_name', 'exam:id,title','attemptSkills.skill' => function ($query) {
+            $query->withCount('levels');
+        }])
             ->whereIn('student_id', $studentIds)
             ->latest()
             ->take(5)
@@ -37,7 +40,8 @@ class PartnerDashboardController extends Controller
                     'student_name' => $attempt->student->user ? ($attempt->student->user->first_name . ' ' . $attempt->student->user->last_name) : 'Unknown',
                     'exam_title' => $attempt->exam->title ?? 'Unknown',
                     'status' => $attempt->status,
-                    'total_score' => round($attempt->overall_score ?? 0, 1),
+                    // 'total_score' => round($attempt->overall_score ?? 0, 1),
+                    'total_score' => $this->getTotalScore($attempt),
                     'avg_score' => round($attempt->overall_score ?? 0, 1), 
                     'created_at' => $attempt->created_at->diffForHumans(),
                 ];
@@ -66,4 +70,48 @@ class PartnerDashboardController extends Controller
             ]
         ]);
     }
+
+    private function getCalculatedSkillScore($skillResult)
+    {
+        if (!$skillResult || $skillResult->score === null) {
+            return 0;
+        }
+        //Logger ("skill name ".$skillResult->skill);
+        $levelsCount = $skillResult->skill->levels_count ?? 1;
+        Logger("in getCalculatedSkillScore levels count " . $levelsCount . " total.... " . round((float)$skillResult->score * $levelsCount));
+        return round((float)$skillResult->score * $levelsCount);
+    }
+
+    private function getTotalScore($attempt)
+    {
+        if (!$attempt || !$attempt->attemptSkills) {
+            return 0;
+        }
+        
+       
+          $currentPos = $attempt-> current_position;
+        //logger("*************** current position ".$currentPos);
+            if (is_string($currentPos)) {
+                Logger ("is string ****************");
+            $currentPos = json_decode($currentPos, true);
+        }
+              
+        $skills_count = count($currentPos['skill_ids'] ?? []);
+        // Logger($currentPos);
+        // logger("*************** current position ". "*************** skill count ".$skills_count);
+
+        return $attempt->attemptSkills
+            ->filter(function ($skillResult) {
+                $name = strtolower($skillResult->skill->name ?? '');
+
+                return str_contains($name, 'read')
+                    || str_contains($name, 'listen')
+                    || str_contains($name, 'struct');
+            })
+            ->reduce(function ($sum, $skillResult) use ($skills_count) {
+              //   Logger("in ///////////////////////// getTotalScore " . ($sum + $this->getCalculatedSkillScore($skillResult))/3);
+                return round( $sum + ( $this->getCalculatedSkillScore($skillResult) / $skills_count));
+            }, 0);
+    }
+
 }

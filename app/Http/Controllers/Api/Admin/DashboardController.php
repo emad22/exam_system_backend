@@ -32,12 +32,15 @@ class DashboardController extends Controller
                     ->where('updated_at', '>=', now()->subMinutes(10)) // Reduced to 10 mins for better accuracy
                     ->count(),
 
-                'recent_attempts' => ExamAttempt::select(['id', 'student_id', 'user_id', 'exam_id', 'status', 'created_at'])
+                'recent_attempts' => ExamAttempt::select(['id', 'student_id', 'user_id', 'exam_id', 'status', 'created_at', 'current_position'])
+
                     ->with([
                         'student:id,user_id',
                         'student.user:id,first_name,last_name',
                         'user:id,first_name,last_name',
                         'exam:id,title',
+                        'attemptSkills.skill' => function ($query) {
+            $query->withCount('levels');}
                     ])
                     ->withSum('attemptSkills', 'score')
                     ->withAvg('attemptSkills', 'score')
