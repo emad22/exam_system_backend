@@ -56,23 +56,22 @@ class AttemptService
             ->pluck('score')
             ->toArray();
 
-
-        //  Log::info('Core Scores Debug before add ', [
-        // 'scores' => $coreScores,
-        // 'sum'    => array_sum($coreScores),
-        // ]);
-
         $coreScores[] = $currentSkillScore;
         $count = count($coreScores);
 
-        // Log::info('Core Scores Debug after add ', [
-        // 'scores' => $coreScores,
-        // 'sum'    => array_sum($coreScores),
-        // 'count'  => $count,
-        // ]);
+
+        $currentPosition = $attempt->current_position;
+        $skillIdsCount = count($currentPosition['skill_ids'] ?? []);
+
+
+        Log::info('Core Scores Debug after add ', [
+        'scores' => $coreScores,
+        'sum'    => array_sum($coreScores),
+        'skill_count'  => $skillIdsCount,
+        ]);
 
         $overall = $count > 0
-            ? round(array_sum($coreScores) / $count, 2)
+            ? round(array_sum($coreScores) / $skillIdsCount, 2)
             : 0;
 
         $attempt->update(['overall_score' => $overall]);

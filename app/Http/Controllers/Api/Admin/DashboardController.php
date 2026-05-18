@@ -32,7 +32,7 @@ class DashboardController extends Controller
                     ->where('updated_at', '>=', now()->subMinutes(10)) // Reduced to 10 mins for better accuracy
                     ->count(),
 
-                'recent_attempts' => ExamAttempt::select(['id', 'student_id', 'user_id', 'exam_id', 'status', 'created_at', 'current_position'])
+                'recent_attempts' => ExamAttempt::select(['id', 'student_id', 'user_id', 'exam_id', 'status', 'created_at', 'current_position', 'overall_score'])
 
                     ->with([
                         'student:id,user_id',
