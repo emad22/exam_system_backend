@@ -78,6 +78,8 @@ class QuestionController extends Controller
             'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
             'p_audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
             'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
+            'p_image_width' => 'nullable|numeric',
+            'p_image_height' => 'nullable|numeric',
 
             // Questions Batch
             'questions' => 'required|array|min:1',
@@ -86,6 +88,8 @@ class QuestionController extends Controller
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
             'questions.*.sort_order' => 'nullable|integer',
+            'questions.*.image_width' => 'nullable|numeric',
+            'questions.*.image_height' => 'nullable|numeric',
             'questions.*.options' => 'nullable|array',
         ]);
 
@@ -144,6 +148,8 @@ class QuestionController extends Controller
                     'media_path' => $pMediaPath,
                     'audio_path' => $pAudioPath,
                     'image_path' => $pImagePath,
+                    'image_width' => $request->p_image_width,
+                    'image_height' => $request->p_image_height,
                     'questions_limit' => $request->passage_questions_limit,
                     'is_random' => $request->boolean('passage_is_random'),
                 ]);
@@ -198,6 +204,8 @@ class QuestionController extends Controller
                     'media_path' => $qMediaPath,
                     'audio_path' => $qAudioPath,
                     'image_path' => $qImagePath,
+                    'image_width' => $qData['image_width'] ?? null,
+                    'image_height' => $qData['image_height'] ?? null,
                     'points' => $qData['points'] ?? 1,
                     'sort_order' => $qData['sort_order'] ?? 0,
                     'min_words' => $qData['min_words'] ?? null,
@@ -274,6 +282,8 @@ class QuestionController extends Controller
             'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
             'p_audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
             'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
+            'p_image_width' => 'nullable|numeric',
+            'p_image_height' => 'nullable|numeric',
 
             // Questions Batch
             'questions' => 'required|array|min:1',
@@ -283,6 +293,8 @@ class QuestionController extends Controller
             'questions.*.instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
             'questions.*.sort_order' => 'nullable|integer',
+            'questions.*.image_width' => 'nullable|numeric',
+            'questions.*.image_height' => 'nullable|numeric',
             'questions.*.options' => 'nullable|array',
         ]);
 
@@ -322,6 +334,8 @@ class QuestionController extends Controller
                         'media_path'      => $pMediaPath,
                         'audio_path'      => $pAudioPath,
                         'image_path'      => $pImagePath,
+                        'image_width'     => $request->has('p_image_width') ? $request->p_image_width : $question->passage->image_width,
+                        'image_height'    => $request->has('p_image_height') ? $request->p_image_height : $question->passage->image_height,
                         'questions_limit' => $request->passage_questions_limit ?? $question->passage->questions_limit,
                         'is_random'       => $request->boolean('passage_is_random'),
                     ]);
@@ -337,6 +351,8 @@ class QuestionController extends Controller
                     'title'           => $request->passage_title,
                     'content'         => $request->passage_content,
                     'media_path'      => $pMediaPath,
+                    'image_width'     => $request->p_image_width,
+                    'image_height'    => $request->p_image_height,
                     'questions_limit' => $request->passage_questions_limit,
                     'is_random'       => $request->boolean('passage_is_random'),
                 ]);
@@ -359,7 +375,7 @@ class QuestionController extends Controller
 
             // 3. Process Batch if provided, else single update
             $questionsData = $request->questions ?? [
-                array_merge($request->only(['type', 'content', 'instructions', 'points', 'min_words', 'max_words', 'options']), ['id' => $question->id])
+                array_merge($request->only(['type', 'content', 'instructions', 'points', 'min_words', 'max_words', 'options', 'image_width', 'image_height']), ['id' => $question->id])
             ];
 
             foreach ($questionsData as $index => $qData) {
@@ -397,6 +413,8 @@ class QuestionController extends Controller
                     'type' => $qData['type'],
                     'instructions' => $qData['instructions'] ?? null,
                     'content' => $qData['content'] ?? '',
+                    'image_width' => array_key_exists('image_width', $qData) ? $qData['image_width'] : null,
+                    'image_height' => array_key_exists('image_height', $qData) ? $qData['image_height'] : null,
                     'points' => $qData['points'] ?? 1,
                     'sort_order' => $qData['sort_order'] ?? 0,
                     'min_words' => $qData['min_words'] ?? null,

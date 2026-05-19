@@ -24,6 +24,8 @@ class Question extends Model
         'media_path', 
         'audio_path',
         'image_path',
+        'image_width',
+        'image_height',
         'points',
         'min_words',
         'max_words',

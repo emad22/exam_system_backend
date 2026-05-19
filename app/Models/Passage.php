@@ -16,6 +16,8 @@ class Passage extends Model
         'media_path',
         'audio_path',
         'image_path',
+        'image_width',
+        'image_height',
         'questions_limit',
         'is_random'
     ];
