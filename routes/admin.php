@@ -91,10 +91,14 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::post('/{attempt}/skills/{skill}/reset', [Admin\ReportController::class, 'resetAttemptSkill'])->name('reset-skill');
     });
 
-    // Manual Grading (Writing & Speaking)
+    // Manual Grading (Writing & Speaking) — attempt-based
     Route::prefix('grading')->as('grading.')->group(function () {
         Route::get('/', [Admin\ProductiveSkillsController::class, 'index'])->name('index');
-        Route::get('/{answer}', [Admin\ProductiveSkillsController::class, 'show'])->name('show');
+        // Attempt-based routes (must come before /{answer} catch-all)
+        Route::get('/attempt/{attempt}',   [Admin\ProductiveSkillsController::class, 'showAttempt'])->name('attempt.show');
+        Route::patch('/attempt/{attempt}', [Admin\ProductiveSkillsController::class, 'gradeAttempt'])->name('attempt.grade');
+        // Legacy single-answer routes
+        Route::get('/{answer}',   [Admin\ProductiveSkillsController::class, 'show'])->name('show');
         Route::patch('/{answer}', [Admin\ProductiveSkillsController::class, 'update'])->name('update');
         Route::post('/{answer}/ai-suggest', [Admin\ProductiveSkillsController::class, 'aiSuggest'])->name('ai-suggest');
     });

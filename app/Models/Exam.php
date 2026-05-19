@@ -69,7 +69,7 @@ class Exam extends Model
     public function skills(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
     {
         return $this->belongsToMany(Skill::class, 'exam_skill')
-            ->withPivot('duration', 'is_optional', 'order_index')
+            ->withPivot('duration', 'is_optional', 'order_index', 'max_points')
             ->withTimestamps();
     }
 

@@ -13,5 +13,12 @@ class ExamSkill extends Pivot
         'skill_id',
         'duration',
         'is_optional',
+        'max_points',
+    ];
+
+    protected $casts = [
+        'max_points' => 'integer',
+        'duration'   => 'integer',
+        'is_optional' => 'boolean',
     ];
 }

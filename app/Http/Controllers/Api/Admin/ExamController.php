@@ -57,6 +57,7 @@ class ExamController extends Controller
             'skills.*.skill_id' => 'required|exists:skills,id',
             'skills.*.duration' => 'required|integer|min:1',
             'skills.*.is_optional' => 'boolean',
+            'skills.*.max_points' => 'nullable|integer|min:0',
             'skills.*.rules' => 'nullable|array',
             'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
             'skills.*.rules.*.quantity' => 'required|integer|min:0',
@@ -81,8 +82,9 @@ class ExamController extends Controller
 
             foreach ($validated['skills'] as $skill) {
                 $exam->skills()->attach($skill['skill_id'], [
-                    'duration' => $skill['duration'],
-                    'is_optional' => $skill['is_optional'] ?? false
+                    'duration'   => $skill['duration'],
+                    'is_optional' => $skill['is_optional'] ?? false,
+                    'max_points' => $skill['max_points'] ?? 0,
                 ]);
 
                 if (isset($skill['rules']) && is_array($skill['rules'])) {
@@ -137,6 +139,7 @@ class ExamController extends Controller
             'skills.*.skill_id' => 'required|exists:skills,id',
             'skills.*.duration' => 'required|integer|min:1',
             'skills.*.is_optional' => 'boolean',
+            'skills.*.max_points' => 'nullable|integer|min:0',
             'skills.*.rules' => 'nullable|array',
             'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
             'skills.*.rules.*.quantity' => 'required|integer|min:0',
@@ -163,8 +166,9 @@ class ExamController extends Controller
             $pivotSkills = [];
             foreach ($validated['skills'] as $skill) {
                 $pivotSkills[$skill['skill_id']] = [
-                    'duration' => $skill['duration'],
-                    'is_optional' => $skill['is_optional'] ?? false
+                    'duration'   => $skill['duration'],
+                    'is_optional' => $skill['is_optional'] ?? false,
+                    'max_points' => $skill['max_points'] ?? 0,
                 ];
             }
             $exam->skills()->sync($pivotSkills);

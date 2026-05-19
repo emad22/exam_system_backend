@@ -65,7 +65,7 @@ class QuestionController extends Controller
         $validator = Validator::make($data, [
             'skill_id' => 'required|exists:skills,id',
             'exam_id' => 'required|exists:exams,id',
-            'level_id' => 'required|integer|min:1|max:9',
+            'level_id' => 'nullable|integer|min:1|max:9', // optional for writing/speaking (defaults to 1)
 
             // Passage Logic
             'passage_mode' => 'required|in:none,existing,new',
@@ -104,6 +104,32 @@ class QuestionController extends Controller
         $validated = $validator->validated();
         // Replace request questions with decoded ones for the rest of the logic
         $request->merge(['questions' => $validated['questions']]);
+
+        // --- Points-budget check for writing/speaking ---
+        $allQuestions = $validated['questions'] ?? [];
+        $isProductiveBatch = !empty($allQuestions) && collect($allQuestions)->every(
+            fn($q) => in_array($q['type'], ['writing', 'speaking'])
+        );
+        if ($isProductiveBatch) {
+            $maxPoints = DB::table('exam_skill')
+                ->where('exam_id', $validated['exam_id'])
+                ->where('skill_id', $validated['skill_id'])
+                ->value('max_points') ?? 0;
+            if ($maxPoints > 0) {
+                $existing = Question::where('exam_id', $validated['exam_id'])
+                    ->where('skill_id', $validated['skill_id'])
+                    ->whereIn('type', ['writing', 'speaking'])
+                    ->sum('points');
+                $newTotal = collect($allQuestions)->sum('points');
+                if (($existing + $newTotal) > $maxPoints) {
+                    $remaining = max(0, $maxPoints - $existing);
+                    return response()->json([
+                        'message' => "Total points exceed the skill cap of {$maxPoints}. Remaining budget: {$remaining} pts.",
+                        'errors'  => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
+                    ], 422);
+                }
+            }
+        }
 
         // Logic check for MCQ/TrueFalse for all questions in the batch
         foreach ($request->questions as $index => $qData) {
@@ -159,8 +185,8 @@ class QuestionController extends Controller
             // 2. Map Slider Level to Level ID (or dynamically create it if missing)
             $level = Level::firstOrCreate(
                 [
-                    'skill_id' => $request->skill_id,
-                    'level_number' => $request->level_id
+                    'skill_id'     => $request->skill_id,
+                    'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
                 ],
                 [
                     'default_standalone_quantity' => 0,
@@ -269,7 +295,7 @@ class QuestionController extends Controller
         $validator = Validator::make($data, [
             'skill_id' => 'required|exists:skills,id',
             'exam_id' => 'required|exists:exams,id',
-            'level_id' => 'required|integer|min:1|max:9',
+            'level_id' => 'nullable|integer|min:1|max:9', // optional for writing/speaking
 
             // Passage Logic
             'passage_mode' => 'required|in:none,existing,new',
@@ -362,8 +388,8 @@ class QuestionController extends Controller
             // 2. Map Level (or dynamically create it if missing)
             $level = Level::firstOrCreate(
                 [
-                    'skill_id' => $request->skill_id,
-                    'level_number' => $request->level_id
+                    'skill_id'     => $request->skill_id,
+                    'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
                 ],
                 [
                     'default_standalone_quantity' => 0,
