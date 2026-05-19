@@ -209,6 +209,89 @@ class StudentController extends Controller
             $student->syncPackageWithSkills();
         }
 
+        // Re-sync student's active exam attempts if skills or package changed
+        if (isset($validated['assigned_skills']) || isset($validated['package_id'])) {
+            // Find all attempts for this student
+            $attempts = ExamAttempt::where('student_id', $student->id)->get();
+            
+            // Get the list of allowed skills based on the updated student profile
+            $examService = app(\App\Services\ExamService::class);
+            
+            foreach ($attempts as $attempt) {
+                // Get allowed skill names/identifiers
+                $allowedSkillIdentifiers = $examService->getAllowedSkills($student);
+                $exam = $attempt->exam;
+                if ($exam) {
+                    $assignedSkills = [];
+                    foreach ($exam->skills as $skill) {
+                        if ($examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers)) {
+                            $assignedSkills[] = $skill;
+                        }
+                    }
+
+                    // Sort skills by standard order map
+                    $getOrder = function($name) {
+                        $name = strtolower($name);
+                        if (str_contains($name, 'listening')) return 1;
+                        if (str_contains($name, 'reading')) return 2;
+                        if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram')) return 3;
+                        if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ')) return 4;
+                        if (str_contains($name, 'speaking') || str_contains($name, 'speak')) return 5;
+                        return 99;
+                    };
+
+                    usort($assignedSkills, function($a, $b) use ($getOrder) {
+                        return $getOrder($a->name) - $getOrder($b->name);
+                    });
+
+                    $assignedSkillIds = array_map(fn($s) => $s->id, $assignedSkills);
+
+                    // Re-calculate completed skills inside the attempt
+                    $completedSkillIds = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+                        ->whereIn('status', ['completed', 'failed', 'skipped'])
+                        ->pluck('skill_id')
+                        ->toArray();
+
+                    $hasUncompletedSkills = false;
+                    foreach ($assignedSkillIds as $sId) {
+                        if (!in_array($sId, $completedSkillIds)) {
+                            $hasUncompletedSkills = true;
+                            break;
+                        }
+                    }
+
+                    // If there are uncompleted skills, reopen the attempt!
+                    $status = $attempt->status;
+                    if ($hasUncompletedSkills) {
+                        $status = 'ongoing';
+                    }
+
+                    $pos = $attempt->current_position ?? [];
+                    $pos['skill_ids'] = $assignedSkillIds;
+                    
+                    // If the current index is out of bounds or empty, set to first uncompleted skill or 0
+                    if (empty($pos['skill_ids'])) {
+                        $pos['current_skill_index'] = 0;
+                    } elseif (!isset($pos['current_skill_index']) || $pos['current_skill_index'] >= count($pos['skill_ids'])) {
+                        // Find first uncompleted skill index
+                        $foundIndex = 0;
+                        foreach ($pos['skill_ids'] as $idx => $sId) {
+                            if (!in_array($sId, $completedSkillIds)) {
+                                $foundIndex = $idx;
+                                break;
+                            }
+                        }
+                        $pos['current_skill_index'] = $foundIndex;
+                    }
+
+                    $attempt->update([
+                        'status' => $status,
+                        'current_position' => $pos
+                    ]);
+                }
+            }
+        }
+
         // 2. Update Identity (User)
         if ($student->user_id) {
             $user = User::find($student->user_id);

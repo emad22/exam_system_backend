@@ -85,7 +85,11 @@ class ExamProgressController extends Controller
     public function submitBatch(Request $request, ExamAttempt $attempt)
     {
         $this->authorize('update', $attempt);
-        $request->validate(['answers' => 'required|array', 'answers.*.question_id' => 'required|exists:questions,id']);
+        // question_id is always required; other fields depend on question type (speaking uses audio_file)
+        $request->validate([
+            'answers'                  => 'required|array',
+            'answers.*.question_id'    => 'required|exists:questions,id',
+        ]);
 
         return DB::transaction(function () use ($request, $attempt) {
             // Lock the attempt for update to prevent race conditions
@@ -118,11 +122,18 @@ class ExamProgressController extends Controller
             foreach ($request->answers as $index => $ans) {
                 $question = $questionsMap->get($ans['question_id']);
                 if (!$question) continue;
-                $totalPossiblePoints += $question->points;
-                $pointsAwarded = $this->scoringService->gradeAnswer($question, $ans);
+                
+                // Speaking and Writing are manually/AI graded. Do not include in automated total possible points.
+                if (in_array($question->type, ['speaking', 'writing'])) {
+                    $pointsAwarded = 0; // Default to 0 until manually graded
+                } else {
+                    $totalPossiblePoints += $question->points;
+                    $pointsAwarded = $this->scoringService->gradeAnswer($question, $ans);
+                    $earnedPoints += $pointsAwarded;
+                }
+                
                 $isCorrect = $pointsAwarded > 0;
                 $resultsMap[$question->id] = $isCorrect;
-                $earnedPoints += $pointsAwarded;
 
                 StudentAnswer::updateOrCreate(
                     [
@@ -141,7 +152,8 @@ class ExamProgressController extends Controller
             }
 
             $passThreshold = $level->pass_threshold ?? 70;
-            $batchScore = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 0;
+            // If all questions in the batch were manual grading (speaking/writing), assume 100% so they pass to the next stage/pending review.
+            $batchScore = $totalPossiblePoints > 0 ? round(($earnedPoints / $totalPossiblePoints) * 100, 1) : 100;
             $passed = $batchScore >= $passThreshold;
 
             $levelScore = $this->attemptService->computeLevelScore($attempt, $skillId, $level);
@@ -184,7 +196,6 @@ class ExamProgressController extends Controller
         $this->authorize('update', $attempt);
         $request->validate([
             'question_id' => 'required|exists:questions,id',
-            // Allow other fields like option_id, text_answer, etc.
         ]);
 
         if ($attempt->status !== 'ongoing') {
@@ -192,24 +203,30 @@ class ExamProgressController extends Controller
         }
 
         $question = Question::with('options')->findOrFail($request->question_id);
+
         $pointsAwarded = $this->scoringService->gradeAnswer($question, $request->all());
         $isCorrect = $pointsAwarded > 0;
+
+        $mediaAnswer = null;
+        if ($request->hasFile('audio_file')) {
+            $mediaAnswer = $request->file('audio_file')->store("attempts/{$attempt->id}/answers", 'public');
+        }
 
         $answer = StudentAnswer::updateOrCreate(
             [
                 'exam_attempt_id' => $attempt->id,
-                'question_id' => $question->id,
+                'question_id'     => $question->id,
             ],
             [
-                'skill_id' => $question->skill_id,
-                'option_id' => $request->option_id ?? null,
-                'text_answer' => $this->scoringService->serializeAnswerForStorage($question, $request->all()),
-                'is_correct' => $isCorrect,
-                'points_awarded' => $pointsAwarded
+                'skill_id'        => $question->skill_id,
+                'option_id'       => $request->option_id ?? null,
+                'text_answer'     => $this->scoringService->serializeAnswerForStorage($question, $request->all()),
+                'media_answer'    => $mediaAnswer,
+                'is_correct'      => $isCorrect,
+                'points_awarded'  => $pointsAwarded
             ]
         );
 
-        // Optional: Update last seen question
         $attempt->update(['last_seen_question_id' => $question->id]);
 
         return response()->json(['success' => true, 'answer_id' => $answer->id]);
