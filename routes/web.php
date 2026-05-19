@@ -1,19 +1,29 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Response;
 
 Route::get('/', function () {
-    // Laravel is only an API. Redirect root visits to the frontend login page.
     return redirect(env('FRONTEND_URL', 'https://alpt.arabacademy.com') . '/login');
 });
 
-// Fallback route for serving files from storage if symlink is broken/missing
-Route::get('storage/{path}', function ($path) {
+// دالة لمعالجة عرض الصور عشان نستخدمها في المسارين
+$storageHandler = function ($path) {
     $fullPath = storage_path('app/public/' . $path);
-    
-    if (!file_exists($fullPath)) {
+
+    if (!File::exists($fullPath)) {
         abort(404);
     }
-    
-    return response()->file($fullPath);
-})->where('path', '.*');
+
+    $file = File::get($fullPath);
+    $type = File::mimeType($fullPath);
+
+    return Response::make($file, 200)->header("Content-Type", $type);
+};
+
+// الراوت لو السيرفر بيبعت /storage مباشرة
+Route::get('/storage/{path}', $storageHandler)->where('path', '.*');
+
+// الراوت لو السيرفر بيبعت /api/storage (زي ما بيحصل عندك)
+Route::get('/api/storage/{path}', $storageHandler)->where('path', '.*');

@@ -80,7 +80,7 @@ class Question extends Model
     public function getMediaUrlAttribute()
     {
         if ($this->media_path) {
-            return asset('storage/' . $this->media_path);
+            return asset('api/storage/' . $this->media_path);
         }
         return null;
     }
@@ -88,7 +88,7 @@ class Question extends Model
     public function getAudioUrlAttribute()
     {
         if ($this->audio_path) {
-            return asset('storage/' . $this->audio_path);
+            return asset('api/storage/' . $this->audio_path);
         }
         return null;
     }
