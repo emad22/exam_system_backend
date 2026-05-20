@@ -36,6 +36,10 @@ class QuestionController extends Controller
             $query->whereNull('exam_id');
         }
 
+        if ($request->boolean('no_paginate')) {
+            return response()->json($query->latest()->get());
+        }
+
         return response()->json($query->latest()->paginate(50));
     }
 
@@ -105,12 +109,18 @@ class QuestionController extends Controller
         // Replace request questions with decoded ones for the rest of the logic
         $request->merge(['questions' => $validated['questions']]);
 
-        // --- Points-budget check for writing/speaking ---
+        // --- Points-budget check for writing/speaking (productive skills) ---
         $allQuestions = $validated['questions'] ?? [];
-        $isProductiveBatch = !empty($allQuestions) && collect($allQuestions)->every(
-            fn($q) => in_array($q['type'], ['writing', 'speaking'])
-        );
-        if ($isProductiveBatch) {
+        $skill = Skill::find($validated['skill_id']);
+        $isProductive = false;
+        if ($skill) {
+            $code = strtoupper($skill->short_code ?? '');
+            $name = strtolower($skill->name ?? '');
+            $isProductive = in_array($code, ['W', 'S', 'WR', 'SP', 'WRIT', 'SPEAK', 'WRITING', 'SPEAKING'])
+                || str_contains($name, 'writ') || str_contains($name, 'speak');
+        }
+
+        if ($isProductive) {
             $maxPoints = DB::table('exam_skill')
                 ->where('exam_id', $validated['exam_id'])
                 ->where('skill_id', $validated['skill_id'])
@@ -118,7 +128,6 @@ class QuestionController extends Controller
             if ($maxPoints > 0) {
                 $existing = Question::where('exam_id', $validated['exam_id'])
                     ->where('skill_id', $validated['skill_id'])
-                    ->whereIn('type', ['writing', 'speaking'])
                     ->sum('points');
                 $newTotal = collect($allQuestions)->sum('points');
                 if (($existing + $newTotal) > $maxPoints) {
@@ -334,6 +343,40 @@ class QuestionController extends Controller
 
         $validated = $validator->validated();
         $request->merge(['questions' => $validated['questions']]);
+
+        // --- Points-budget check for writing/speaking (productive skills) ---
+        $allQuestions = $validated['questions'] ?? [];
+        $skill = Skill::find($validated['skill_id']);
+        $isProductive = false;
+        if ($skill) {
+            $code = strtoupper($skill->short_code ?? '');
+            $name = strtolower($skill->name ?? '');
+            $isProductive = in_array($code, ['W', 'S', 'WR', 'SP', 'WRIT', 'SPEAK', 'WRITING', 'SPEAKING'])
+                || str_contains($name, 'writ') || str_contains($name, 'speak');
+        }
+
+        if ($isProductive) {
+            $maxPoints = DB::table('exam_skill')
+                ->where('exam_id', $validated['exam_id'])
+                ->where('skill_id', $validated['skill_id'])
+                ->value('max_points') ?? 0;
+            if ($maxPoints > 0) {
+                // Exclude the questions that are being updated from the database points sum to avoid double counting
+                $updatingIds = collect($allQuestions)->pluck('id')->filter()->toArray();
+                $existing = Question::where('exam_id', $validated['exam_id'])
+                    ->where('skill_id', $validated['skill_id'])
+                    ->whereNotIn('id', $updatingIds)
+                    ->sum('points');
+                $newTotal = collect($allQuestions)->sum('points');
+                if (($existing + $newTotal) > $maxPoints) {
+                    $remaining = max(0, $maxPoints - $existing);
+                    return response()->json([
+                        'message' => "Total points exceed the skill cap of {$maxPoints}. Remaining budget: {$remaining} pts.",
+                        'errors'  => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
+                    ], 422);
+                }
+            }
+        }
 
         return DB::transaction(function () use ($request, $question) {
             $passageId = $question->passage_id;
