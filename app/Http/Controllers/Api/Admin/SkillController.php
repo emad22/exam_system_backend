@@ -73,13 +73,57 @@ class SkillController extends Controller
             'short_code' => 'sometimes|nullable|string|max:10|unique:skills,short_code,' . $skill->id,
             'description' => 'sometimes|nullable|string',
             'icon' => 'sometimes|nullable|string',
+            'levels_count' => 'sometimes|integer|min:0|max:100',
         ]);
+
+        if (array_key_exists('levels_count', $validated)) {
+            $newLevelsCount = (int)$validated['levels_count'];
+            $currentLevelsCount = $skill->levels()->count();
+
+            if ($newLevelsCount > $currentLevelsCount) {
+                // Generate additional levels
+                for ($i = $currentLevelsCount + 1; $i <= $newLevelsCount; $i++) {
+                    Level::create([
+                        'skill_id' => $skill->id,
+                        'name' => "Level $i",
+                        'level_number' => $i,
+                        'min_score' => ($i - 1) * 100 + 1,
+                        'max_score' => $i * 100,
+                        'pass_threshold' => 70,
+                        'default_question_count' => 0,
+                        'is_active' => true,
+                        'allows_retry' => false,
+                        'is_random' => false,
+                        'default_passage_quantity' => 0,
+                        'default_standalone_quantity' => 0,
+                    ]);
+                }
+            } elseif ($newLevelsCount < $currentLevelsCount) {
+                // Safely reduce levels
+                $levelsToDelete = $skill->levels()->where('level_number', '>', $newLevelsCount)->get();
+                foreach ($levelsToDelete as $level) {
+                    if ($level->questions()->exists()) {
+                        return response()->json([
+                            'message' => "Cannot reduce levels count to {$newLevelsCount}. Level {$level->level_number} has associated questions."
+                        ], 422);
+                    }
+                }
+                foreach ($levelsToDelete as $level) {
+                    if ($level->instructions_audio) {
+                        \Illuminate\Support\Facades\Storage::disk('public')->delete($level->instructions_audio);
+                    }
+                    $level->delete();
+                }
+            }
+        }
+
+        unset($validated['levels_count']);
 
         $skill->update($validated);
 
         return response()->json([
             'message' => 'Skill updated successfully.',
-            'skill' => $skill
+            'skill' => $skill->loadCount(['questions', 'levels'])
         ]);
     }
 
