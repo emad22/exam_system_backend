@@ -198,6 +198,9 @@ class QuestionController extends Controller
                     'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
                 ],
                 [
+                    'name' => 'Level ' . ($request->level_id ?? 1),
+                    'min_score' => 0,
+                    'max_score' => 100,
                     'default_standalone_quantity' => 0,
                     'default_passage_quantity' => 0,
                     'default_question_count' => 0
@@ -435,6 +438,9 @@ class QuestionController extends Controller
                     'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
                 ],
                 [
+                    'name' => 'Level ' . ($request->level_id ?? 1),
+                    'min_score' => 0,
+                    'max_score' => 100,
                     'default_standalone_quantity' => 0,
                     'default_passage_quantity' => 0,
                     'default_question_count' => 0
@@ -523,14 +529,28 @@ class QuestionController extends Controller
         });
     }
 
-    /**
-     * Delete a question and its options
-     */
     public function destroy(Question $question)
     {
-        $question->options()->delete();
-        $question->delete();
-        return response()->json(['message' => 'Question deleted successfully.']);
+        return DB::transaction(function () use ($question) {
+            if ($question->passage_id) {
+                $passageId = $question->passage_id;
+                // Get all questions in the same passage
+                $passageQuestions = Question::where('passage_id', $passageId)->get();
+                foreach ($passageQuestions as $pQuestion) {
+                    $pQuestion->options()->delete();
+                    $pQuestion->delete();
+                }
+                // Delete the passage itself
+                $passage = Passage::find($passageId);
+                if ($passage) {
+                    $passage->delete();
+                }
+            } else {
+                $question->options()->delete();
+                $question->delete();
+            }
+            return response()->json(['message' => 'Question deleted successfully.']);
+        });
     }
 
     /**
@@ -578,19 +598,64 @@ class QuestionController extends Controller
         return response()->json($tags);
     }
 
-    /**
-     * Duplicate a question with all its options
-     */
     public function duplicate(Question $question)
     {
         return DB::transaction(function () use ($question) {
-            // Create new question with same data
+            // Check if this question is part of a passage
+            if ($question->passage_id) {
+                $passage = $question->passage;
+                if ($passage) {
+                    // Replicate the passage itself
+                    $newPassage = $passage->replicate();
+                    $newPassage->save();
+
+                    $targetNewQuestion = null;
+
+                    // Get all questions in the same passage
+                    $passageQuestions = Question::where('passage_id', $passage->id)->get();
+                    foreach ($passageQuestions as $pQuestion) {
+                        $newPQuestion = $pQuestion->replicate();
+                        $newPQuestion->passage_id = $newPassage->id;
+                        $newPQuestion->created_by = request()->user()?->id;
+                        $newPQuestion->updated_by = request()->user()?->id;
+                        $newPQuestion->save();
+
+                        // Duplicate options for this question
+                        if ($pQuestion->options()->exists()) {
+                            $pQuestion->options()->each(function ($option) use ($newPQuestion) {
+                                $newPQuestion->options()->create([
+                                    'option_text' => $option->option_text,
+                                    'is_correct' => $option->is_correct,
+                                    'sort_order' => $option->sort_order
+                                ]);
+                            });
+                        }
+
+                        // Track the duplicate of the question that was clicked
+                        if ($pQuestion->id === $question->id) {
+                            $targetNewQuestion = $newPQuestion;
+                        }
+                    }
+
+                    // Fallback to first question in new passage if target wasn't found
+                    if (!$targetNewQuestion) {
+                        $targetNewQuestion = Question::where('passage_id', $newPassage->id)->first();
+                    }
+
+                    return response()->json([
+                        'message' => 'Passage and all associated questions duplicated successfully.',
+                        'question' => $targetNewQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name'])
+                    ], 201);
+                }
+            }
+
+            // Standalone question replication
             $newQuestion = $question->replicate();
             $newQuestion->created_by = request()->user()?->id;
             $newQuestion->updated_by = request()->user()?->id;
             $newQuestion->save();
 
-            // Duplicate all options
+            // Duplicate options
             if ($question->options()->exists()) {
                 $question->options()->each(function ($option) use ($newQuestion) {
                     $newQuestion->options()->create([
