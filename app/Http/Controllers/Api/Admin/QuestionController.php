@@ -37,10 +37,10 @@ class QuestionController extends Controller
         }
 
         if ($request->boolean('no_paginate')) {
-            return response()->json($query->latest()->get());
+            return response()->json($query->get());
         }
 
-        return response()->json($query->latest()->paginate(50));
+        return response()->json($query->get());
     }
 
     /**
@@ -392,9 +392,9 @@ class QuestionController extends Controller
                 // If the selected passage is the SAME as the question's current passage,
                 // also update its content fields (user may have edited them)
                 if ($passageId && $question->passage_id == $passageId && $question->passage) {
-                    $pMediaPath = $request->hasFile('p_media_file') ? $request->file('p_media_file')->store('passages', 'public') : $question->passage->media_path;
-                    $pAudioPath = $request->hasFile('p_audio_file') ? $request->file('p_audio_file')->store('passages/audio', 'public') : $question->passage->audio_path;
-                    $pImagePath = $request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $question->passage->image_path;
+                    $pMediaPath = $request->boolean('clear_p_media') ? null : ($request->hasFile('p_media_file') ? $request->file('p_media_file')->store('passages', 'public') : $question->passage->media_path);
+                    $pAudioPath = $request->boolean('clear_p_audio') ? null : ($request->hasFile('p_audio_file') ? $request->file('p_audio_file')->store('passages/audio', 'public') : $question->passage->audio_path);
+                    $pImagePath = $request->boolean('clear_p_image') ? null : ($request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $question->passage->image_path);
 
                     $question->passage->update([
                         'type'            => $request->passage_type ?? $question->passage->type,
@@ -576,6 +576,46 @@ class QuestionController extends Controller
             ->pluck('group_tag');
 
         return response()->json($tags);
+    }
+
+    /**
+     * Duplicate a question with all its options
+     */
+    public function duplicate(Question $question)
+    {
+        return DB::transaction(function () use ($question) {
+            // Create new question with same data
+            $newQuestion = $question->replicate();
+            $newQuestion->created_by = request()->user()?->id;
+            $newQuestion->updated_by = request()->user()?->id;
+            $newQuestion->save();
+
+            // Duplicate all options
+            if ($question->options()->exists()) {
+                $question->options()->each(function ($option) use ($newQuestion) {
+                    $newQuestion->options()->create([
+                        'option_text' => $option->option_text,
+                        'is_correct' => $option->is_correct,
+                        'sort_order' => $option->sort_order
+                    ]);
+                });
+            }
+
+            return response()->json([
+                'message' => 'Question duplicated successfully.',
+                'question' => $newQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name'])
+            ], 201);
+        });
+    }
+
+    /**
+     * Get question for preview (same as show, but called from frontend)
+     */
+    public function preview(Question $question)
+    {
+        return response()->json(
+            $question->load(['options', 'skill', 'passage.questions.options', 'level', 'exam:id,title', 'creator:id,first_name,last_name'])
+        );
     }
 
     /**

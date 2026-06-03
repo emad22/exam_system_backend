@@ -75,6 +75,8 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/', [Admin\QuestionController::class, 'index'])->name('index');
         Route::post('/', [Admin\QuestionController::class, 'store'])->name('store');
         Route::get('/{question}', [Admin\QuestionController::class, 'show'])->name('show');
+        Route::get('/{question}/preview', [Admin\QuestionController::class, 'preview'])->name('preview');
+        Route::post('/{question}/duplicate', [Admin\QuestionController::class, 'duplicate'])->name('duplicate');
         Route::patch('/{question}', [Admin\QuestionController::class, 'update'])->name('update');
         Route::delete('/{question}', [Admin\QuestionController::class, 'destroy'])->name('destroy');
     });
