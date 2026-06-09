@@ -136,6 +136,18 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
     Route::get('/activity-logs/{id}', [Admin\ActivityLogController::class, 'show'])->name('activity-logs.show');
     Route::delete('/activity-logs/{id}', [Admin\ActivityLogController::class, 'destroy'])->name('activity-logs.destroy');
 
+    // Proctoring Management
+    Route::prefix('proctoring')->as('proctoring.')->group(function () {
+        Route::get('/', [Admin\ProctoringController::class, 'index'])->name('index');
+        Route::get('/statistics', [Admin\ProctoringController::class, 'statistics'])->name('statistics');
+        Route::get('/{session}', [Admin\ProctoringController::class, 'show'])->name('show');
+        Route::get('/{session}/violations', [Admin\ProctoringController::class, 'violations'])->name('violations');
+        Route::patch('/{session}/status', [Admin\ProctoringController::class, 'updateStatus'])->name('update-status');
+        Route::post('/{violation}/review', [Admin\ProctoringController::class, 'reviewViolation'])->name('review-violation');
+        Route::get('/{session}/report', [Admin\ProctoringController::class, 'report'])->name('report');
+        Route::get('/{session}/export', [Admin\ProctoringController::class, 'exportReport'])->name('export-report');
+    });
+
     // Utilities
     Route::get('/languages', [Admin\LanguageController::class, 'index'])->name('languages.index');
 });

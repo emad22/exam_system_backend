@@ -14,6 +14,7 @@ class StudentAnswer extends Model
         'option_id', 
         'text_answer', 
         'media_answer', 
+        'word_count',
         'is_correct', 
         'is_manual_graded',
         'points_awarded',

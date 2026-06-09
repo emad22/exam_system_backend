@@ -56,6 +56,7 @@ class ProductiveSkillsController extends Controller
     {
         $answers = StudentAnswer::where('exam_attempt_id', $attempt->id)
             ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking']))
+            ->select('id', 'exam_attempt_id', 'question_id', 'skill_id', 'text_answer', 'media_answer', 'word_count', 'points_awarded', 'teacher_feedback', 'is_manual_graded', 'created_at', 'updated_at')
             ->with(['question.skill'])
             ->orderBy('question_id')
             ->get();

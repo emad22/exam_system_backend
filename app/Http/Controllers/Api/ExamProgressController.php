@@ -212,6 +212,9 @@ class ExamProgressController extends Controller
             $mediaAnswer = $request->file('audio_file')->store("attempts/{$attempt->id}/answers", 'public');
         }
 
+        $textAnswer = $this->scoringService->serializeAnswerForStorage($question, $request->all());
+        $wordCount = $this->calculateWordCount($textAnswer, $question->type);
+
         $answer = StudentAnswer::updateOrCreate(
             [
                 'exam_attempt_id' => $attempt->id,
@@ -220,8 +223,9 @@ class ExamProgressController extends Controller
             [
                 'skill_id'        => $question->skill_id,
                 'option_id'       => $request->option_id ?? null,
-                'text_answer'     => $this->scoringService->serializeAnswerForStorage($question, $request->all()),
+                'text_answer'     => $textAnswer,
                 'media_answer'    => $mediaAnswer,
+                'word_count'      => $wordCount,
                 'is_correct'      => $isCorrect,
                 'points_awarded'  => $pointsAwarded
             ]
@@ -283,6 +287,27 @@ class ExamProgressController extends Controller
             }
         }
         return [$nextPos, $skillEnded, $placementLevel];
+    }
+
+    private function calculateWordCount(?string $textAnswer, string $questionType): ?int
+    {
+        // Only calculate word count for writing tasks and text-based answers
+        if (!$textAnswer || !in_array($questionType, ['writing', 'short_answer', 'listening'])) {
+            return null;
+        }
+
+        // Strip HTML tags and trim whitespace
+        $cleanText = strip_tags($textAnswer);
+        $cleanText = trim($cleanText);
+
+        // If empty after cleaning, return 0
+        if (empty($cleanText)) {
+            return 0;
+        }
+
+        // Split by whitespace and count words
+        $words = preg_split('/\s+/', $cleanText, -1, PREG_SPLIT_NO_EMPTY);
+        return count($words);
     }
 
     private function recordExitQuestion(ExamAttempt $attempt, array $rawAnswers, array $resultsMap): void

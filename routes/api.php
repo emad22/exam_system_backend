@@ -33,6 +33,9 @@ Route::prefix('v1')->as('v1.')->group(function () {
     // 4. Partner Operations
     require __DIR__ . '/partner.php';
 
+    // 5. Proctoring Operations
+    require __DIR__ . '/proctoring.php';
+
     // ---------------------------------------------------------------------------
     // 5. Shared / Public Routes
     // ---------------------------------------------------------------------------
