@@ -102,7 +102,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
                 'come_from' => $data['come_from'] ?? null,
                 'student_type' => $data['student_type'] ?? null,
                 'year_of_arabic' => $data['year_of_arabic'] ?? null,
-                'not_adaptive' => isset($data['not_adaptive']) ? (bool)$data['not_adaptive'] : true,
+                'is_continue' => isset($data['is_continue']) ? (bool)$data['is_continue'] : true,
                 'allows_retry' => isset($data['allows_retry']) ? $this->parseBoolean($data['allows_retry']) : false,
                 'package_id' => $this->packageId ?? $data['package_id'] ?? null,
                 'exam_category_id' => $data['exam_category_id'] ?? (\App\Models\ExamCategory::where('is_active', true)->first()->id ?? null),

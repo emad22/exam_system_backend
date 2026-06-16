@@ -56,7 +56,7 @@ class StudentController extends Controller
             'come_from' => 'nullable|string|max:255',
             'student_type' => 'nullable|string|max:50',
             'year_of_arabic' => 'nullable|integer',
-            'not_adaptive' => 'nullable|boolean',
+            'is_continue' => 'nullable|boolean',
             'allows_retry' => 'sometimes|boolean',
 
 
@@ -124,7 +124,7 @@ class StudentController extends Controller
             'come_from' => $validated['come_from'] ?? null,
             'student_type' => $validated['student_type'] ?? null,
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
-            'not_adaptive' => $validated['not_adaptive'] ?? true,
+            'is_continue' => $validated['is_continue'] ?? true,
             'allows_retry' => $validated['allows_retry'] ?? false,
             'package_id' => $validated['package_id'] ?? null,
             'exam_category_id' => $examCategoryId,
@@ -164,7 +164,7 @@ class StudentController extends Controller
             'come_from' => 'sometimes|nullable|string|max:255',
             'student_type' => 'sometimes|nullable|string|max:50',
             'year_of_arabic' => 'sometimes|nullable|integer',
-            'not_adaptive' => 'sometimes|nullable|boolean',
+            'is_continue' => 'sometimes|nullable|boolean',
             'allows_retry' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
             'package_id' => 'sometimes|nullable|exists:packages,id',
@@ -193,7 +193,7 @@ class StudentController extends Controller
             'student_code',
             'come_from',
             'year_of_arabic',
-            'not_adaptive',
+            'is_continue',
             'allows_retry',
             'partner_id'
         ]);
@@ -628,7 +628,7 @@ class StudentController extends Controller
             'come_from',
             'student_type',
             'year_of_arabic',
-            'not_adaptive',
+            'is_continue',
             'package_id',
             'exam_category_id',
             'password',

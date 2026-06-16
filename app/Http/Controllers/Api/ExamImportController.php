@@ -85,7 +85,7 @@ class ExamImportController extends Controller
                         'description' => "Auto-imported legacy exam ($examTitle)",
                         'exam_category_id' => \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null,
                         'passing_score' => 60,
-                        'is_adaptive' => false
+                        'is_continue' => true
                     ]
                 );
                 

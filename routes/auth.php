@@ -11,7 +11,7 @@ Route::as('auth.')->group(function () {
 });
 
 // Authenticated Profile Routes
-Route::middleware('auth:sanctum')->as('profile.')->group(function () {
+Route::middleware(['auth:sanctum','single.session'])->as('profile.')->group(function () {
     Route::get('/profile', [ProfileController::class, 'show'])->name('show');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('update');
     

@@ -62,13 +62,11 @@ class AttemptService
 
         $currentPosition = $attempt->current_position;
         $skillIdsCount = count($currentPosition['skill_ids'] ?? []);
+        if ($skillIdsCount === 0) {
+            $skillIdsCount = $attempt->exam ? $attempt->exam->skills()->count() : 1;
+        }
+        $skillIdsCount = max($skillIdsCount, 1);
 
-
-        Log::info('Core Scores Debug after add ', [
-        'scores' => $coreScores,
-        'sum'    => array_sum($coreScores),
-        'skill_count'  => $skillIdsCount,
-        ]);
 
         $overall = $count > 0
             ? round(array_sum($coreScores) / $skillIdsCount, 2)
@@ -140,14 +138,46 @@ class AttemptService
     /**
      * Finalize a skill (mark it completed or failed) and record the result.
      */
-    public function finalizeSkill(
-        ExamAttempt $attempt,
-        int $skillId,
-        float $skillScore,
-        int $maxLevelReached,
-        string $status,
-        ?int $placementLevel = null
-    ): void {
+    // public function finalizeSkill(
+    //     ExamAttempt $attempt,
+    //     int $skillId,
+    //     float $skillScore,
+    //     int $maxLevelReached,
+    //     string $status,
+    //     ?int $placementLevel = null
+    // ): void {
+    //     $attempt->attemptSkills()->updateOrCreate(
+    //         ['skill_id' => $skillId],
+    //         [
+    //             'max_level_reached' => $maxLevelReached,
+    //             'score' => $skillScore,
+    //             'status' => $status,
+    //             'placement_level' => $placementLevel ?? $maxLevelReached,
+    //             'placement_score' => $skillScore,
+    //             'finished_at' => now(),
+    //         ]
+    //     );
+    // }
+
+
+
+    public function finalizeSkill( ExamAttempt $attempt,  int $skillId, float $skillScore, int $maxLevelReached, string $status,  ?int $placementLevel = null ): void 
+    {
+
+        // 🔴 حماية قوية
+        if (!in_array($status, ['completed', 'failed', 'skipped'])) {
+            throw new \InvalidArgumentException("Invalid skill status: {$status}");
+        }
+
+        // 🔴 منع التكرار (مهم جدًا)
+        $existing = $attempt->attemptSkills()
+            ->where('skill_id', $skillId)
+            ->first();
+
+        if ($existing && $existing->status === 'completed') {
+            return; // skill already finalized properly
+        }
+
         $attempt->attemptSkills()->updateOrCreate(
             ['skill_id' => $skillId],
             [
@@ -160,6 +190,7 @@ class AttemptService
             ]
         );
     }
+
 
     /**
      * Advance the attempt's current_position to the next skill,

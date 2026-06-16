@@ -61,40 +61,42 @@ class DashboardResource extends JsonResource
         Logger("in getCalculatedSkillScore levels count " . $levelsCount . " total levels.... " . $this->allLevelsCount . " total skills.... " . $this->skillsCount);
         return round((float)$skillResult->score * $levelsCount);
     }
-
     private function getTotalScore($attempt)
     {
-       $this->allLevelsCount = 0;
-      
-        if (!$attempt || !$attempt->attemptSkills) {
+        $this->allLevelsCount = 0;
+
+        if (!$attempt || !$attempt->attemptSkills || $attempt->attemptSkills->isEmpty()) {
             return 0;
         }
-        // $currentPos = $attempt-> current_position;
-         logger("*************** getTotalScore *********************************");
-       
-          $currentPos = $attempt-> current_position;
-        //logger("*************** current position ".$currentPos);
+
+        try {
+            $currentPos = $attempt->current_position;
+
             if (is_string($currentPos)) {
-              //  Logger ("is string ****************");
-            $currentPos = json_decode($currentPos, true);
+                $currentPos = json_decode($currentPos, true);
+            }
+
+            if (!is_array($currentPos)) {
+                return 0;
+            }
+
+            $this->skillsCount = count($currentPos['skill_ids'] ?? []);
+            $skillsCount = $this->skillsCount > 0 ? $this->skillsCount : 1;
+
+            return $attempt->attemptSkills
+                ->filter(function ($skillResult) {
+                    if (!$skillResult->skill) return false;
+                    $name = strtolower($skillResult->skill->name ?? '');
+                    return str_contains($name, 'read')
+                        || str_contains($name, 'listen')
+                        || str_contains($name, 'struct');
+                })
+                ->reduce(function ($sum, $skillResult) use ($skillsCount) {
+                    return round($sum + ($this->getCalculatedSkillScore($skillResult) / $skillsCount));
+                }, 0);
+
+        } catch (\Throwable $e) {
+            return 0;
         }
-              
-        $this->skillsCount = count($currentPos['skill_ids'] ?? []);
-        $skillsCount =  $this->skillsCount;
-        //  Logger($currentPos);
-        //  logger("*************** current position ". "*************** skill count ".$skills_count);
-
-        return $attempt->attemptSkills
-            ->filter(function ($skillResult) {
-                $name = strtolower($skillResult->skill->name ?? '');
-
-                return str_contains($name, 'read')
-                    || str_contains($name, 'listen')
-                    || str_contains($name, 'struct');
-            })
-            ->reduce(function ($sum, $skillResult) use ($skillsCount) {
-              //   Logger("in ///////////////////////// getTotalScore " . ($sum + $this->getCalculatedSkillScore($skillResult))/3)           
-                return round( $sum + ( $this->getCalculatedSkillScore($skillResult) / $skillsCount));
-            }, 0);
     }
 }

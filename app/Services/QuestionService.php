@@ -124,21 +124,21 @@ class QuestionService
             ->first();
 
         if ($requestedLevel) {
-            $hasQuestions = Question::where('exam_id', $examId)
-                ->where('skill_id', $skillId)
-                ->where('level_id', $requestedLevel->id)
-                ->exists();
+            $hasQuestions = Question::where('questions.exam_id', $examId)  // ← أضف questions.
+                                    ->where('questions.skill_id', $skillId)                     // ← أضف questions.
+                                    ->where('questions.level_id', $requestedLevel->id)
+                                    ->exists();
 
             if ($hasQuestions) {
                 return $requestedLevelNumber;
             }
         }
 
-        $firstValid = Question::where('exam_id', $examId)
-            ->where('skill_id', $skillId)
-            ->join('levels', 'levels.id', '=', 'questions.level_id')
-            ->orderBy('levels.level_number', 'asc')
-            ->value('levels.level_number');
+        $firstValid = Question::where('questions.exam_id', $examId)  // ← أضف questions.
+                                ->where('questions.skill_id', $skillId)                   // ← أضف questions.
+                                ->join('levels', 'levels.id', '=', 'questions.level_id')
+                                ->orderBy('levels.level_number', 'asc')
+                                ->value('levels.level_number');
 
         return $firstValid ?: $requestedLevelNumber;
     }

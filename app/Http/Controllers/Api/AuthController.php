@@ -79,14 +79,16 @@ class AuthController extends Controller
             ], 403);
         }
 
+
+        $user->tokens()->delete();
+
         $deviceName = $request->input('device_name', 'auth_token');
+        $newToken = $user->createToken($deviceName);
+        
+        $user->update(['last_token_id' => $newToken->accessToken->id]);
 
-        // Prevent multiple simultaneous logins for students from the same source
-        if ($user->role === 'student') {
-            $user->tokens()->where('name', $deviceName)->delete();
-        }
+        $token = $newToken->plainTextToken;
 
-        $token = $user->createToken($deviceName)->plainTextToken;
 
         return response()->json([
             'token' => $token,

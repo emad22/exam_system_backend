@@ -48,6 +48,13 @@ class QuestionController extends Controller
      */
     public function store(Request $request)
     {
+        \Log::info('Question store request', [
+            'exam_id' => $request->exam_id,
+            'skill_id' => $request->skill_id,
+            'all_keys' => array_keys($request->all())
+        ]);
+
+
         $data = $request->all();
         
         $questionsJson = $request->request->get('questions');
@@ -570,20 +577,41 @@ class QuestionController extends Controller
      * Bulk update difficulty level for multiple questions
      */
     public function bulkUpdateLevel(Request $request)
-    {
-        $validated = $request->validate([
-            'question_ids' => 'required|array',
-            'question_ids.*' => 'exists:questions,id',
-            'level_id' => 'required|integer|min:0|max:9',
-        ]);
+{
+    $validated = $request->validate([
+        'question_ids'   => 'required|array',
+        'question_ids.*' => 'exists:questions,id',
+        'level_id'       => 'required|integer|min:1|max:9',
+    ]);
 
-        Question::whereIn('id', $validated['question_ids'])
-            ->update(['level_id' => $validated['level_id']]);
-
-        return response()->json([
-            'message' => 'Questions updated successfully.'
-        ]);
+    // ✅ جيب أول question عشان تعرف الـ skill_id
+    $firstQuestion = Question::find($validated['question_ids'][0]);
+    if (!$firstQuestion) {
+        return response()->json(['message' => 'Questions not found.'], 404);
     }
+
+    // ✅ جيب الـ actual level record بالـ skill_id + level_number
+    $level = Level::firstOrCreate(
+        [
+            'skill_id'     => $firstQuestion->skill_id,
+            'level_number' => $validated['level_id'],
+        ],
+        [
+            'name'     => 'Level ' . $validated['level_id'],
+            'min_score' => 0,
+            'max_score' => 100,
+            'default_standalone_quantity' => 0,
+            'default_passage_quantity'    => 0,
+            'default_question_count'      => 0,
+        ]
+    );
+
+    // ✅ استخدم الـ actual level ID مش الـ level_number
+    Question::whereIn('id', $validated['question_ids'])
+        ->update(['level_id' => $level->id]);
+
+    return response()->json(['message' => 'Questions updated successfully.']);
+}
     /**
      * Get unique tags for questions belonging to a specific skill
      */

@@ -13,6 +13,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
+            'single.session' => \App\Http\Middleware\EnsureSingleSession::class,
             'is_admin'      => \App\Http\Middleware\AdminRole::class,
             'is_teacher'    => \App\Http\Middleware\TeacherRole::class,
             'is_student'    => \App\Http\Middleware\StudentRole::class,

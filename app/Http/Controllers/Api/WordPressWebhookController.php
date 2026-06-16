@@ -97,7 +97,7 @@ class WordPressWebhookController extends Controller
                 'registration_source' => 'wordpress',
                 'exam_category_id' => $categoryId,
                 'assigned_skills' => $assignedSkills,
-                'not_adaptive' => 0,
+                'is_continue' => true,
                 'registration_date' => now(),
             ]);
 
