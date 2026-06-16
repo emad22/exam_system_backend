@@ -91,7 +91,10 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/{attempt}', [Admin\ReportController::class, 'show'])->name('show');
         Route::post('/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt'])->name('reset');
         Route::post('/{attempt}/skills/{skill}/reset', [Admin\ReportController::class, 'resetAttemptSkill'])->name('reset-skill');
+        Route::post('/{attempt}/skills/{skill}/reset-last-level', [Admin\ReportController::class, 'resetAttemptLastLevel'])->name('reset-last-level');
     });
+
+    
 
     // Manual Grading (Writing & Speaking) — attempt-based
     Route::prefix('grading')->as('grading.')->group(function () {

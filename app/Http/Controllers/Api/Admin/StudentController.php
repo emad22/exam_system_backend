@@ -124,7 +124,7 @@ class StudentController extends Controller
             'come_from' => $validated['come_from'] ?? null,
             'student_type' => $validated['student_type'] ?? null,
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
-            'is_continue' => $validated['is_continue'] ?? true,
+            'is_continue' => $validated['is_continue'] ?? false,
             'allows_retry' => $validated['allows_retry'] ?? false,
             'package_id' => $validated['package_id'] ?? null,
             'exam_category_id' => $examCategoryId,
@@ -357,13 +357,13 @@ class StudentController extends Controller
         $skillLookup = Skill::all()->keyBy('id');
 
         // Fetch level names and numbers for mapping
-        $allLevels = \App\Models\Level::all();
+        $allLevels = Level::all();
         $levelMap = $allLevels->where('skill_id', 1)->pluck('name', 'level_number')->toArray();
         $levelLookup = $allLevels->keyBy('id');
 
         // Batch fetch all answers for all attempts to avoid N+1
         $attemptIds = $student->attempts->pluck('id');
-        $allAnswers = \App\Models\StudentAnswer::whereIn('exam_attempt_id', $attemptIds)
+        $allAnswers = StudentAnswer::whereIn('exam_attempt_id', $attemptIds)
             ->with(['question.options'])
             ->orderBy('created_at', 'desc')
             ->get()
@@ -661,7 +661,7 @@ class StudentController extends Controller
                 'Direct',
                 'Standard',
                 '2024',
-                '1',
+                '0',
                 '1',
                 '1',
                 'pass123',

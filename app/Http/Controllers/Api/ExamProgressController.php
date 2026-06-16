@@ -423,7 +423,7 @@ public function submitBatch(Request $request, ExamAttempt $attempt)
             $remainingCount = $this->attemptService->countRemainingQuestions($attempt, $skillId, $level);
 
             $student = $attempt->student;
-            $isContinue = $student ? $student->is_continue : true;
+            $isContinue = $student ? $student->is_continue : false;
 
             if ($isContinue ? ($remainingCount === 0) : ($remainingCount === 0 || !$passed)) {
                 $this->attemptService->logLevelResult($attempt, $skillId, $level, $levelScore, $passThreshold);
