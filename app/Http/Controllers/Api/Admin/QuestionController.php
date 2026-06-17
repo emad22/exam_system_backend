@@ -580,45 +580,49 @@ class QuestionController extends Controller
 
                 // 4. Update Options
                 if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
-                    
-                    // اجمع الـ IDs الموجودة عشان تمسح اللي اتشالت بس
+
                     $incomingIds = collect($qData['options'])->pluck('id')->filter()->toArray();
-                    
-                    // امسح بس اللي مش موجود في الـ request (يعني اتحذف من الـ UI)
+
+                    // اجلب الـ options الموجودة قبل الحذف
+                    $existingOptions = $qInstance->options()->get()->keyBy('id');
+
+                    // امسح اللي اتحذف من الـ UI بس
                     $qInstance->options()->whereNotIn('id', $incomingIds)->delete();
 
                     foreach ($qData['options'] as $oIdx => $opt) {
-                        $existingOption = isset($opt['id']) ? $qInstance->options()->find($opt['id']) : null;
+                        // جيب من الـ collection اللي جبناها قبل الحذف
+                        $existingOption = isset($opt['id']) ? $existingOptions->get($opt['id']) : null;
 
                         if (isset($opt['clear_image']) && $opt['clear_image']) {
                             $optImagePath = null;
                         } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
                             $optImagePath = $opt['image']->store('options/images', 'public');
                         } else {
-                            $optImagePath = $existingOption?->image_path;
+                            $optImagePath = $existingOption?->image_path; // دلوقتي هتلاقي الصورة
                         }
 
                         if ($existingOption) {
-                            // update الموجود
                             $existingOption->update([
                                 'option_text' => $opt['option_text'] ?? '',
-                                'is_correct'  => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                                'sort_order'  => ($oIdx + 1) * 10,
-                                'dir'         => $opt['dir'] ?? 'ltr',
-                                'image_path'  => $optImagePath,
+                                'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                                'sort_order' => ($oIdx + 1) * 10,
+                                'dir' => $opt['dir'] ?? 'ltr',
+                                'image_path' => $optImagePath,
                             ]);
                         } else {
-                            // create جديد بس لو مفيش id
                             $qInstance->options()->create([
                                 'option_text' => $opt['option_text'] ?? '',
-                                'is_correct'  => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                                'sort_order'  => ($oIdx + 1) * 10,
-                                'dir'         => $opt['dir'] ?? 'ltr',
-                                'image_path'  => $optImagePath,
+                                'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                                'sort_order' => ($oIdx + 1) * 10,
+                                'dir' => $opt['dir'] ?? 'ltr',
+                                'image_path' => $optImagePath,
                             ]);
                         }
                     }
                 }
+
+
+
 
             }
 
