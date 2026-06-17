@@ -56,16 +56,34 @@ class QuestionController extends Controller
 
 
         $data = $request->all();
-        
+
         $questionsJson = $request->request->get('questions');
         if (is_string($questionsJson)) {
             $decodedQuestions = json_decode($questionsJson, true);
             if (is_array($decodedQuestions)) {
                 $files = $request->file('questions') ?? [];
                 if (is_array($files)) {
-                    foreach ($files as $index => $fileArray) {
-                        if (isset($decodedQuestions[$index]) && is_array($fileArray)) {
-                            $decodedQuestions[$index] = array_merge($decodedQuestions[$index], $fileArray);
+                    foreach ($files as $qIndex => $fileArray) {
+                        if (!isset($decodedQuestions[$qIndex]) || !is_array($fileArray))
+                            continue;
+
+                        // Merge question-level files (q_media_file, q_audio_file, q_image_file)
+                        foreach ($fileArray as $fileKey => $fileValue) {
+                            if ($fileKey === 'options')
+                                continue; // نتجاهل الـ options هنا
+                            $decodedQuestions[$qIndex][$fileKey] = $fileValue;
+                        }
+
+                        // Merge option-level files بدون ما نمسح is_correct أو option_text
+                        if (isset($fileArray['options']) && is_array($fileArray['options'])) {
+                            foreach ($fileArray['options'] as $oIndex => $optFiles) {
+                                if (isset($decodedQuestions[$qIndex]['options'][$oIndex])) {
+                                    // نضيف الـ files للـ option الموجود بدون ما نـ overwrite
+                                    foreach ($optFiles as $optKey => $optValue) {
+                                        $decodedQuestions[$qIndex]['options'][$oIndex][$optKey] = $optValue;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -141,7 +159,7 @@ class QuestionController extends Controller
                     $remaining = max(0, $maxPoints - $existing);
                     return response()->json([
                         'message' => "Total points exceed the skill cap of {$maxPoints}. Remaining budget: {$remaining} pts.",
-                        'errors'  => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
+                        'errors' => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
                     ], 422);
                 }
             }
@@ -154,11 +172,11 @@ class QuestionController extends Controller
 
             if (in_array($qData['type'], ['mcq', 'true_false', 'drag_drop', 'word_selection', 'click_word', 'fill_blank', 'matching', 'ordering', 'highlight', 'listening'])) {
                 if (!isset($qData['options']) || count($qData['options']) < $minOptions) {
-                    return response()->json(['message' => "Options are required for question #".($index+1)], 422);
+                    return response()->json(['message' => "Options are required for question #" . ($index + 1)], 422);
                 }
                 $hasCorrect = collect($qData['options'])->contains('is_correct', true);
                 if (!$hasCorrect) {
-                    return response()->json(['message' => "You must select a correct answer for question #".($index+1)], 422);
+                    return response()->json(['message' => "You must select a correct answer for question #" . ($index + 1)], 422);
                 }
             }
         }
@@ -182,7 +200,7 @@ class QuestionController extends Controller
                 if ($request->hasFile('p_image_file')) {
                     $pImagePath = $request->file('p_image_file')->store('passages/images', 'public');
                 }
- 
+
                 $passage = Passage::create([
                     'type' => $request->passage_type,
                     'title' => $request->passage_title,
@@ -201,7 +219,7 @@ class QuestionController extends Controller
             // 2. Map Slider Level to Level ID (or dynamically create it if missing)
             $level = Level::firstOrCreate(
                 [
-                    'skill_id'     => $request->skill_id,
+                    'skill_id' => $request->skill_id,
                     'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
                 ],
                 [
@@ -261,10 +279,19 @@ class QuestionController extends Controller
                 // 4. Create Options
                 if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
                     foreach ($qData['options'] as $oIdx => $opt) {
+                        $optImagePath = null;
+
+                        // الصورة دلوقتي موجودة في $opt مباشرة بعد الـ merge
+                        if (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
+                            $optImagePath = $opt['image']->store('options/images', 'public');
+                        }
+
                         $question->options()->create([
                             'option_text' => $opt['option_text'] ?? '',
                             'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                            'sort_order' => ($oIdx + 1) * 10
+                            'sort_order' => ($oIdx + 1) * 10,
+                            'dir' => $opt['dir'] ?? 'ltr',
+                            'image_path' => $optImagePath,
                         ]);
                     }
                 }
@@ -294,16 +321,34 @@ class QuestionController extends Controller
     public function update(Request $request, Question $question)
     {
         $data = $request->all();
-        
+
         $questionsJson = $request->request->get('questions');
         if (is_string($questionsJson)) {
             $decodedQuestions = json_decode($questionsJson, true);
             if (is_array($decodedQuestions)) {
                 $files = $request->file('questions') ?? [];
                 if (is_array($files)) {
-                    foreach ($files as $index => $fileArray) {
-                        if (isset($decodedQuestions[$index]) && is_array($fileArray)) {
-                            $decodedQuestions[$index] = array_merge($decodedQuestions[$index], $fileArray);
+                    foreach ($files as $qIndex => $fileArray) {
+                        if (!isset($decodedQuestions[$qIndex]) || !is_array($fileArray))
+                            continue;
+
+                        // Merge question-level files (q_media_file, q_audio_file, q_image_file)
+                        foreach ($fileArray as $fileKey => $fileValue) {
+                            if ($fileKey === 'options')
+                                continue; // نتجاهل الـ options هنا
+                            $decodedQuestions[$qIndex][$fileKey] = $fileValue;
+                        }
+
+                        // Merge option-level files بدون ما نمسح is_correct أو option_text
+                        if (isset($fileArray['options']) && is_array($fileArray['options'])) {
+                            foreach ($fileArray['options'] as $oIndex => $optFiles) {
+                                if (isset($decodedQuestions[$qIndex]['options'][$oIndex])) {
+                                    // نضيف الـ files للـ option الموجود بدون ما نـ overwrite
+                                    foreach ($optFiles as $optKey => $optValue) {
+                                        $decodedQuestions[$qIndex]['options'][$oIndex][$optKey] = $optValue;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -382,7 +427,7 @@ class QuestionController extends Controller
                     $remaining = max(0, $maxPoints - $existing);
                     return response()->json([
                         'message' => "Total points exceed the skill cap of {$maxPoints}. Remaining budget: {$remaining} pts.",
-                        'errors'  => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
+                        'errors' => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
                     ], 422);
                 }
             }
@@ -407,16 +452,16 @@ class QuestionController extends Controller
                     $pImagePath = $request->boolean('clear_p_image') ? null : ($request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $question->passage->image_path);
 
                     $question->passage->update([
-                        'type'            => $request->passage_type ?? $question->passage->type,
-                        'title'           => $request->passage_title ?? $question->passage->title,
-                        'content'         => $request->passage_content ?? $question->passage->content,
-                        'media_path'      => $pMediaPath,
-                        'audio_path'      => $pAudioPath,
-                        'image_path'      => $pImagePath,
-                        'image_width'     => $request->has('p_image_width') ? $request->p_image_width : $question->passage->image_width,
-                        'image_height'    => $request->has('p_image_height') ? $request->p_image_height : $question->passage->image_height,
+                        'type' => $request->passage_type ?? $question->passage->type,
+                        'title' => $request->passage_title ?? $question->passage->title,
+                        'content' => $request->passage_content ?? $question->passage->content,
+                        'media_path' => $pMediaPath,
+                        'audio_path' => $pAudioPath,
+                        'image_path' => $pImagePath,
+                        'image_width' => $request->has('p_image_width') ? $request->p_image_width : $question->passage->image_width,
+                        'image_height' => $request->has('p_image_height') ? $request->p_image_height : $question->passage->image_height,
                         'questions_limit' => $request->passage_questions_limit ?? $question->passage->questions_limit,
-                        'is_random'       => $request->boolean('passage_is_random'),
+                        'is_random' => $request->boolean('passage_is_random'),
                     ]);
                 }
 
@@ -426,14 +471,14 @@ class QuestionController extends Controller
                     $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
                 }
                 $passage = Passage::create([
-                    'type'            => $request->passage_type,
-                    'title'           => $request->passage_title,
-                    'content'         => $request->passage_content,
-                    'media_path'      => $pMediaPath,
-                    'image_width'     => $request->p_image_width,
-                    'image_height'    => $request->p_image_height,
+                    'type' => $request->passage_type,
+                    'title' => $request->passage_title,
+                    'content' => $request->passage_content,
+                    'media_path' => $pMediaPath,
+                    'image_width' => $request->p_image_width,
+                    'image_height' => $request->p_image_height,
                     'questions_limit' => $request->passage_questions_limit,
-                    'is_random'       => $request->boolean('passage_is_random'),
+                    'is_random' => $request->boolean('passage_is_random'),
                 ]);
                 $passageId = $passage->id;
             }
@@ -441,7 +486,7 @@ class QuestionController extends Controller
             // 2. Map Level (or dynamically create it if missing)
             $level = Level::firstOrCreate(
                 [
-                    'skill_id'     => $request->skill_id,
+                    'skill_id' => $request->skill_id,
                     'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
                 ],
                 [
@@ -467,12 +512,15 @@ class QuestionController extends Controller
                 $fileKey = "questions.{$index}.q_media_file";
                 $audioKey = "questions.{$index}.q_audio_file";
                 $imageKey = "questions.{$index}.q_image_file";
-                
+
                 // Single update handling
                 if (count($questionsData) === 1) {
-                    if (!$request->hasFile($fileKey) && $request->hasFile('q_media_file')) $fileKey = 'q_media_file';
-                    if (!$request->hasFile($audioKey) && $request->hasFile('q_audio_file')) $audioKey = 'q_audio_file';
-                    if (!$request->hasFile($imageKey) && $request->hasFile('q_image_file')) $imageKey = 'q_image_file';
+                    if (!$request->hasFile($fileKey) && $request->hasFile('q_media_file'))
+                        $fileKey = 'q_media_file';
+                    if (!$request->hasFile($audioKey) && $request->hasFile('q_audio_file'))
+                        $audioKey = 'q_audio_file';
+                    if (!$request->hasFile($imageKey) && $request->hasFile('q_image_file'))
+                        $imageKey = 'q_image_file';
                 }
 
                 if ($request->hasFile($fileKey)) {
@@ -486,7 +534,7 @@ class QuestionController extends Controller
                 }
 
                 $qInstance = isset($qData['id']) ? Question::find($qData['id']) : new Question();
-                
+
                 $data = [
                     'skill_id' => $request->skill_id,
                     'exam_id' => $request->exam_id,
@@ -503,9 +551,24 @@ class QuestionController extends Controller
                     'max_words' => $qData['max_words'] ?? null,
                 ];
 
-                if ($qMediaPath) $data['media_path'] = $qMediaPath;
-                if ($qAudioPath) $data['audio_path'] = $qAudioPath;
-                if ($qImagePath) $data['image_path'] = $qImagePath;
+                // احتفظ بالصور الموجودة لو مفيش صورة جديدة
+                if ($qMediaPath) {
+                    $data['media_path'] = $qMediaPath;
+                } elseif ($qInstance->exists) {
+                    $data['media_path'] = $qInstance->media_path; // keep existing
+                }
+
+                if ($qAudioPath) {
+                    $data['audio_path'] = $qAudioPath;
+                } elseif ($qInstance->exists) {
+                    $data['audio_path'] = $qInstance->audio_path;
+                }
+
+                if ($qImagePath) {
+                    $data['image_path'] = $qImagePath;
+                } elseif ($qInstance->exists) {
+                    $data['image_path'] = $qInstance->image_path;
+                }
 
                 $data['updated_by'] = $request->user()?->id;
                 if (!$qInstance->exists) {
@@ -517,13 +580,43 @@ class QuestionController extends Controller
 
                 // 4. Update Options
                 if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
-                    $qInstance->options()->delete();
+                    
+                    // اجمع الـ IDs الموجودة عشان تمسح اللي اتشالت بس
+                    $incomingIds = collect($qData['options'])->pluck('id')->filter()->toArray();
+                    
+                    // امسح بس اللي مش موجود في الـ request (يعني اتحذف من الـ UI)
+                    $qInstance->options()->whereNotIn('id', $incomingIds)->delete();
+
                     foreach ($qData['options'] as $oIdx => $opt) {
-                        $qInstance->options()->create([
-                            'option_text' => $opt['option_text'] ?? '',
-                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                            'sort_order' => ($oIdx + 1) * 10
-                        ]);
+                        $existingOption = isset($opt['id']) ? $qInstance->options()->find($opt['id']) : null;
+
+                        if (isset($opt['clear_image']) && $opt['clear_image']) {
+                            $optImagePath = null;
+                        } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
+                            $optImagePath = $opt['image']->store('options/images', 'public');
+                        } else {
+                            $optImagePath = $existingOption?->image_path;
+                        }
+
+                        if ($existingOption) {
+                            // update الموجود
+                            $existingOption->update([
+                                'option_text' => $opt['option_text'] ?? '',
+                                'is_correct'  => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                                'sort_order'  => ($oIdx + 1) * 10,
+                                'dir'         => $opt['dir'] ?? 'ltr',
+                                'image_path'  => $optImagePath,
+                            ]);
+                        } else {
+                            // create جديد بس لو مفيش id
+                            $qInstance->options()->create([
+                                'option_text' => $opt['option_text'] ?? '',
+                                'is_correct'  => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                                'sort_order'  => ($oIdx + 1) * 10,
+                                'dir'         => $opt['dir'] ?? 'ltr',
+                                'image_path'  => $optImagePath,
+                            ]);
+                        }
                     }
                 }
 
@@ -531,7 +624,7 @@ class QuestionController extends Controller
 
             return response()->json([
                 'message' => 'Batch updated successfully.',
-                'question' => $question->fresh(['options', 'passage.questions.options'])
+                'question' => $qInstance->fresh(['options', 'passage.questions.options'])
             ]);
         });
     }
@@ -577,41 +670,41 @@ class QuestionController extends Controller
      * Bulk update difficulty level for multiple questions
      */
     public function bulkUpdateLevel(Request $request)
-{
-    $validated = $request->validate([
-        'question_ids'   => 'required|array',
-        'question_ids.*' => 'exists:questions,id',
-        'level_id'       => 'required|integer|min:1|max:9',
-    ]);
+    {
+        $validated = $request->validate([
+            'question_ids' => 'required|array',
+            'question_ids.*' => 'exists:questions,id',
+            'level_id' => 'required|integer|min:1|max:9',
+        ]);
 
-    // ✅ جيب أول question عشان تعرف الـ skill_id
-    $firstQuestion = Question::find($validated['question_ids'][0]);
-    if (!$firstQuestion) {
-        return response()->json(['message' => 'Questions not found.'], 404);
+        // ✅ جيب أول question عشان تعرف الـ skill_id
+        $firstQuestion = Question::find($validated['question_ids'][0]);
+        if (!$firstQuestion) {
+            return response()->json(['message' => 'Questions not found.'], 404);
+        }
+
+        // ✅ جيب الـ actual level record بالـ skill_id + level_number
+        $level = Level::firstOrCreate(
+            [
+                'skill_id' => $firstQuestion->skill_id,
+                'level_number' => $validated['level_id'],
+            ],
+            [
+                'name' => 'Level ' . $validated['level_id'],
+                'min_score' => 0,
+                'max_score' => 100,
+                'default_standalone_quantity' => 0,
+                'default_passage_quantity' => 0,
+                'default_question_count' => 0,
+            ]
+        );
+
+        // ✅ استخدم الـ actual level ID مش الـ level_number
+        Question::whereIn('id', $validated['question_ids'])
+            ->update(['level_id' => $level->id]);
+
+        return response()->json(['message' => 'Questions updated successfully.']);
     }
-
-    // ✅ جيب الـ actual level record بالـ skill_id + level_number
-    $level = Level::firstOrCreate(
-        [
-            'skill_id'     => $firstQuestion->skill_id,
-            'level_number' => $validated['level_id'],
-        ],
-        [
-            'name'     => 'Level ' . $validated['level_id'],
-            'min_score' => 0,
-            'max_score' => 100,
-            'default_standalone_quantity' => 0,
-            'default_passage_quantity'    => 0,
-            'default_question_count'      => 0,
-        ]
-    );
-
-    // ✅ استخدم الـ actual level ID مش الـ level_number
-    Question::whereIn('id', $validated['question_ids'])
-        ->update(['level_id' => $level->id]);
-
-    return response()->json(['message' => 'Questions updated successfully.']);
-}
     /**
      * Get unique tags for questions belonging to a specific skill
      */
@@ -689,7 +782,9 @@ class QuestionController extends Controller
                     $newQuestion->options()->create([
                         'option_text' => $option->option_text,
                         'is_correct' => $option->is_correct,
-                        'sort_order' => $option->sort_order
+                        'sort_order' => $option->sort_order,
+                        'dir' => $option->dir ?? 'ltr',
+                        'image_path' => $option->image_path ?? null,
                     ]);
                 });
             }

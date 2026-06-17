@@ -47,6 +47,7 @@ class ExamSecurityController extends Controller
         
         $skillId = $request->input('skill_id') ?? ($attempt->current_position['skill_ids'][$attempt->current_position['current_skill_index']] ?? null);
 
+        
         if (!$skillId) {
             return response()->json(['success' => true, 'message' => 'No active skill to timeout.']);
         }

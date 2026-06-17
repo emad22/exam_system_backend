@@ -198,22 +198,28 @@ class AttemptService
      *
      * @return array{next_pos: array, finished_exam: bool}
      */
-    public function advanceToNextSkillOrFinish(ExamAttempt $attempt, array $pos, int $completedSkillId): array
+   public function advanceToNextSkillOrFinish(ExamAttempt $attempt, array $pos, int $completedSkillId): array
     {
         $nextPos = $pos;
 
-        // Ensure completed_skills is an array
         $nextPos['completed_skills'] = $nextPos['completed_skills'] ?? [];
         if (!in_array($completedSkillId, $nextPos['completed_skills'])) {
             $nextPos['completed_skills'][] = $completedSkillId;
         }
 
         if ($pos['current_skill_index'] < count($pos['skill_ids']) - 1) {
-            $nextPos['current_skill_index']++;
-            $nextPos['current_level'] = 1;
+            $nextSkillIndex = $pos['current_skill_index'] + 1;
+            $nextSkillId = $pos['skill_ids'][$nextSkillIndex];
+
+            $nextPos['current_skill_index'] = $nextSkillIndex;
             $nextPos['current_skill_started_at'] = null;
+
+            // ✅ امسح current_level من الـ root لو موجود
+            unset($nextPos['current_level']);
+
             $finishedExam = false;
         } else {
+            unset($nextPos['current_level']); // ✅ امسحه هنا كمان
             $finishedExam = true;
         }
 
