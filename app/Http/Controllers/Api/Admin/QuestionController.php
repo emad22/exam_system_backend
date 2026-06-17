@@ -280,10 +280,13 @@ class QuestionController extends Controller
                 if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
                     foreach ($qData['options'] as $oIdx => $opt) {
                         $optImagePath = null;
-
-                        // الصورة دلوقتي موجودة في $opt مباشرة بعد الـ merge
                         if (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
                             $optImagePath = $opt['image']->store('options/images', 'public');
+                        }
+
+                        $optAudioPath = null;
+                        if (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
+                            $optAudioPath = $opt['audio']->store('options/audio', 'public');
                         }
 
                         $question->options()->create([
@@ -292,6 +295,7 @@ class QuestionController extends Controller
                             'sort_order' => ($oIdx + 1) * 10,
                             'dir' => $opt['dir'] ?? 'ltr',
                             'image_path' => $optImagePath,
+                            'sound_path' => $optAudioPath,
                         ]);
                     }
                 }
@@ -601,6 +605,18 @@ class QuestionController extends Controller
                             $optImagePath = $existingOption?->image_path; // دلوقتي هتلاقي الصورة
                         }
 
+                       
+                        if (isset($opt['clear_audio']) && $opt['clear_audio']) {
+                            $optAudioPath = null;
+                        } elseif (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
+                            $optAudioPath = $opt['audio']->store('options/audio', 'public');
+                        } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
+                            // لو رفع صورة جديدة - امسح الصوت القديم
+                            $optAudioPath = null;
+                        } else {
+                            $optAudioPath = $existingOption?->sound_path;
+                        }
+
                         if ($existingOption) {
                             $existingOption->update([
                                 'option_text' => $opt['option_text'] ?? '',
@@ -608,6 +624,8 @@ class QuestionController extends Controller
                                 'sort_order' => ($oIdx + 1) * 10,
                                 'dir' => $opt['dir'] ?? 'ltr',
                                 'image_path' => $optImagePath,
+                                'sound_path'  => $optAudioPath,
+
                             ]);
                         } else {
                             $qInstance->options()->create([
@@ -616,6 +634,7 @@ class QuestionController extends Controller
                                 'sort_order' => ($oIdx + 1) * 10,
                                 'dir' => $opt['dir'] ?? 'ltr',
                                 'image_path' => $optImagePath,
+                                'sound_path'=> $optAudioPath,
                             ]);
                         }
                     }
