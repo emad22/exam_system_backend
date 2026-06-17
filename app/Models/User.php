@@ -43,6 +43,7 @@ class User extends Authenticatable
         'role',
         'is_active',
         'avatar',
+        'last_token_id',
     ];
 
     /**
@@ -76,8 +77,8 @@ class User extends Authenticatable
     }
 
     public function partner(): \Illuminate\Database\Eloquent\Relations\HasOne
-{
-    return $this->hasOne(Partner::class);
-}
+    {
+        return $this->hasOne(Partner::class);
+    }
 
 }

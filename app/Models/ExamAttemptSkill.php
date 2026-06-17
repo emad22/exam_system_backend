@@ -15,6 +15,8 @@ class ExamAttemptSkill extends Model
         'max_level_reached',
         'score',
         'status', // in_progress, completed, failed, skipped
+        'placement_level',
+        'placement_score',
         'started_at',
         'finished_at',
         'cheat_warnings'

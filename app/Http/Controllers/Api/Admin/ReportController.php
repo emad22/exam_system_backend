@@ -200,5 +200,120 @@ class ReportController extends Controller
         }
     }
 
+public function resetAttemptLastLevel(Request $request, ExamAttempt $attempt, int $skill)
+{
+    try {
+        DB::beginTransaction();
+
+        $skillId = (int) $skill;
+
+        // 1. جيب آخر level اتعملت للـ skill دي
+        $lastLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->orderBy('level_number', 'desc')
+            ->first();
+
+        if (!$lastLevel) {
+            return response()->json(['error' => 'No level found to reset for this skill.'], 404);
+        }
+
+        // 2. جيب الـ level اللي قبله (لو موجود) عشان نعرف التوقيت
+        $previousLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->orderBy('level_number', 'desc')
+            ->skip(1)
+            ->first();
+
+        // 3. احذف StudentAnswers اللي اتعملت من بداية اللevel دي
+        $answersQuery = StudentAnswer::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId);
+
+        if ($previousLevel) {
+            // احذف الأجوبة اللي جات بعد انتهاء الـ level السابق
+            $answersQuery->where('created_at', '>', $previousLevel->updated_at);
+        } else {
+            // لو دي أول level، احذف كل أجوبة الـ skill دي
+            $answersQuery->where('created_at', '>=', $lastLevel->created_at);
+        }
+
+        $deletedAnswers = $answersQuery->count();
+        $answersQuery->delete();
+
+        // 4. احذف الـ ExamAttemptLevel
+        $lastLevel->delete();
+
+
+        // ✅ 4.5 رجّع status الـ skill لـ ongoing عشان الطالب يقدر يكملها
+        $attemptSkill = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->first();
+
+        if ($attemptSkill) {
+            // احسب الـ score من الـ levels الباقية بعد الحذف
+            $remainingAvgScore = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $skillId)
+                ->sum('score') ?? 0;
+
+            $attemptSkill->status = 'in_progress';
+            $attemptSkill->finished_at = null;
+            $attemptSkill->score = $remainingAvgScore;
+            $attemptSkill->max_level_reached = max(1, $lastLevel->level_number - 1);
+            $attemptSkill->save();
+        }
+
+        // 5. رجّع current_position
+        $pos = $attempt->current_position ?? [];
+        if (is_string($pos)) {
+            $pos = json_decode($pos, true);
+        }
+
+        $currentLevel = $pos['current_level'] ?? 1;
+        $pos['current_level'] = max(1, $currentLevel - 1);
+
+        // لو الـ attempt كان completed، رجّعه ongoing
+        if ($attempt->status === 'completed') {
+            $attempt->status = 'ongoing';
+            $attempt->finished_at = null;
+
+            // شيل الـ skill من completed_skills لو موجودة
+            if (isset($pos['completed_skills'])) {
+                $pos['completed_skills'] = array_values(
+                    array_filter($pos['completed_skills'], fn($id) => $id != $skillId)
+                );
+            }
+        }
+
+        $attempt->current_position = $pos;
+        $attempt->save();
+
+        // 6. سجّل الـ activity
+        $skillModel = Skill::find($skillId);
+        $skillName = $skillModel ? $skillModel->name : "Skill #$skillId";
+
+        ActivityLog::create([
+            'user_id'     => Auth::id(),
+            'action'      => 'updated',
+            'model_type'  => ExamAttempt::class,
+            'model_id'    => $attempt->id,
+            'description' => "Last level ({$lastLevel->level_number}) of [{$skillName}] reset for candidate: "
+                           . ($attempt->student->user->name ?? 'Unknown'),
+            'ip_address'  => request()->ip(),
+            'user_agent'  => request()->userAgent(),
+        ]);
+
+        DB::commit();
+
+        return response()->json([
+            'message'           => 'Last level has been reset successfully. The candidate can retake it.',
+            'reset_level'       => $lastLevel->level_number,
+            'new_current_level' => $pos['current_level'],
+            'deleted_answers'   => $deletedAnswers,
+        ]);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        return response()->json(['error' => 'Failed to reset level: ' . $e->getMessage()], 500);
+    }
+}
 
 }

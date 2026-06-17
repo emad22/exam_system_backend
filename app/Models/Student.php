@@ -22,7 +22,7 @@ class Student extends Model
         'student_type',
         'parent_code',
         'year_of_arabic',
-        'not_adaptive',
+        'is_continue',
         'num_of_login',
         'package_id',
         'exam_category_id',
@@ -34,7 +34,7 @@ class Student extends Model
     ];
 
     protected $casts = [
-        'not_adaptive' => 'boolean',
+        'is_continue' => 'boolean',
         'allows_retry' => 'boolean',
         'birth_date' => 'date',
         'assigned_skills' => 'array',
