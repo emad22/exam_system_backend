@@ -127,12 +127,29 @@ class ExamProgressController extends Controller
 
     $isDemo = $this->examService->isDemoUser($request->user());
 
+    $skillTotalQuestions = 0;
+    $skillGlobalOffset = 0;
+
+    $skillLevels = Level::where('skill_id', $skillId)->get();
+
+    foreach ($skillLevels as $lvl) {
+        $lvlTotal = $this->questionService->getTotalLevelQuestions($attempt->exam_id, $skillId, $lvl->id);
+        $skillTotalQuestions += $lvlTotal;
+
+        if ($lvl->level_number < $levelNum) {
+            $skillGlobalOffset += $lvlTotal;
+        }
+    }
+
     return response()->json([
         'skill' => $attempt->exam->skills->firstWhere('id', $skillId),
         'level' => $level,
         'questions' => $questions,
         'total_questions' => $this->questionService
             ->getTotalLevelQuestions($attempt->exam_id, $skillId, $level->id),
+
+        'skill_total_questions' => $skillTotalQuestions,
+        'skill_global_offset' => $skillGlobalOffset,
 
         'timer_type' => $attempt->exam->timer_type ?? 'global',
         'time_limit' => $attempt->exam->time_limit ?? 0,
