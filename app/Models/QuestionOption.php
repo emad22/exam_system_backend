@@ -13,6 +13,7 @@ class QuestionOption extends Model
         'is_correct',
         'sort_order',
         'image_path',
+        'sound_path',
         'dir',
     ];
 
@@ -20,12 +21,19 @@ class QuestionOption extends Model
         'is_correct' => 'boolean',
     ];
 
-    protected $appends = ['image_url'];
+   protected $appends = ['image_url', 'sound_url'];
 
     public function getImageUrlAttribute(): ?string
     {
         return $this->image_path 
             ? asset('storage/' . $this->image_path) 
+            : null;
+    }
+
+     public function getSoundUrlAttribute(): ?string
+    {
+        return $this->sound_path
+            ? asset('storage/' . $this->sound_path)
             : null;
     }
 
