@@ -12,8 +12,13 @@ class Partner extends Model
         'partner_name',
         'website',
         'r_date',
-        'note'
-    ]; 
+        'note',
+        'proctoring_required',
+    ];
+
+    protected $casts = [
+        'proctoring_required' => 'boolean',
+    ];
 
     public function user(): BelongsTo
     {

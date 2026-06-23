@@ -50,7 +50,8 @@ class StaffController extends Controller
             // Partner specific
             'partner_name' => 'nullable|string|max:255',
             'website' => 'nullable|string|max:255',
-            'note' => 'nullable|string'
+            'note' => 'nullable|string',
+            'proctoring_required' => 'sometimes|boolean',
         ]);
 
         $staff = User::create([
@@ -71,6 +72,7 @@ class StaffController extends Controller
                 'partner_name' => $validated['partner_name'] ?? ($validated['first_name'] . ' ' . $validated['last_name']),
                 'website' => $validated['website'] ?? null,
                 'note' => $validated['note'] ?? null,
+                'proctoring_required' => $validated['proctoring_required'] ?? false,
                 'r_date' => now(),
             ]);
         }
@@ -103,7 +105,8 @@ class StaffController extends Controller
             // Partner specific
             'partner_name' => 'sometimes|nullable|string|max:255',
             'website' => 'sometimes|nullable|string|max:255',
-            'note' => 'sometimes|nullable|string'
+            'note' => 'sometimes|nullable|string',
+            'proctoring_required' => 'sometimes|boolean',
         ]);
 
         if (isset($validated['first_name'])) $user->first_name = $validated['first_name'];
@@ -128,6 +131,7 @@ class StaffController extends Controller
                     'partner_name' => $validated['partner_name'] ?? ($user->first_name . ' ' . $user->last_name),
                     'website' => $validated['website'] ?? null,
                     'note' => $validated['note'] ?? null,
+                    'proctoring_required' => $validated['proctoring_required'] ?? false,
                 ]
             );
         }

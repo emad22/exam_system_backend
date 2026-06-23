@@ -177,24 +177,23 @@ class ProctoringController extends Controller
         $violation = ExamViolation::findOrFail($violationId);
 
         $validated = $request->validate([
-            'status' => 'required|in:confirmed,dismissed,suspicious',
-            'reviewed_by' => 'required|exists:users,id',
-            'proctor_notes' => 'nullable|string|max:1000',
+            'status'       => 'required|in:confirmed,dismissed,suspicious',
+            'proctor_notes'=> 'nullable|string|max:1000',
             'action_taken' => 'nullable|in:warning,pause_exam,terminate_exam,report_to_instructor'
         ]);
 
         $violation->update([
-            'status' => $validated['status'],
-            'reviewed_at' => now(),
-            'reviewed_by' => $validated['reviewed_by'],
-            'proctor_notes' => $validated['proctor_notes'] ?? null,
-            'action_taken' => $validated['action_taken'] ?? null,
+            'status'             => $validated['status'],
+            'reviewed_at'        => now(),
+            'reviewed_by'        => auth()->id(),   // always use authenticated user
+            'proctor_notes'      => $validated['proctor_notes'] ?? null,
+            'action_taken'       => $validated['action_taken'] ?? null,
             'flagged_by_proctor' => true,
         ]);
 
         return response()->json([
-            'success' => true,
-            'message' => 'Violation reviewed successfully',
+            'success'   => true,
+            'message'   => 'Violation reviewed successfully',
             'violation' => $violation
         ]);
     }

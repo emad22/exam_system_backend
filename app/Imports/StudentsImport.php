@@ -95,9 +95,14 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             }
 
             // 3. Create Profile (Student)
+            $studentCode = isset($data['student_code']) ? trim((string)$data['student_code']) : '';
+            if ($studentCode === '') {
+                $studentCode = null;
+            }
+
             $student = Student::create([
                 'user_id' => $user->id,
-                'student_code' => $data['student_code'] ?? null,
+                'student_code' => $studentCode,
                 'partner_id' => $this->partnerId,
                 'come_from' => $data['come_from'] ?? null,
                 'student_type' => $data['student_type'] ?? null,

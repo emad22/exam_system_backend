@@ -46,10 +46,10 @@ class Student extends Model
 
         static::creating(function ($student) {
             if (empty($student->parent_code)) {
-                $student->parent_code = 'PRNT-' . strtoupper(substr(uniqid(), -6));
-            }
-            if (empty($student->student_code)) {
-                $student->student_code = 'STU-' . strtoupper(substr(uniqid(), -6));
+                do {
+                    $code = 'PRNT-' . strtoupper(\Illuminate\Support\Str::random(6));
+                } while (static::where('parent_code', $code)->exists());
+                $student->parent_code = $code;
             }
         });
     }

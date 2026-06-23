@@ -38,6 +38,10 @@ class StudentController extends Controller
      */
     public function store(Request $request)
     {
+        if ($request->has('student_code') && trim((string)$request->input('student_code')) === '') {
+            $request->merge(['student_code' => null]);
+        }
+
         // dd($request->all());
         $validated = $request->validate([
             'first_name' => 'required|string|max:255',
@@ -148,6 +152,10 @@ class StudentController extends Controller
      */
     public function update(Request $request, Student $student)
     {
+        if ($request->has('student_code') && trim((string)$request->input('student_code')) === '') {
+            $request->merge(['student_code' => null]);
+        }
+
         $validated = $request->validate([
             'first_name' => 'sometimes|required|string|max:255',
             'last_name' => 'sometimes|required|string|max:255',

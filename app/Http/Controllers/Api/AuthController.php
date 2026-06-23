@@ -110,7 +110,7 @@ class AuthController extends Controller
                     $query->select('id', 'user_id', 'partner_id', 'exam_category_id', 'student_code');
                 },
                 'student.partner' => function($query) {
-                    $query->select('id', 'partner_name');
+                    $query->select('id', 'partner_name', 'proctoring_required');
                 },
                 'student.category' => function($query) {
                     $query->select('id', 'name');

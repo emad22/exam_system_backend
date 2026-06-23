@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class ProctoringSession extends Model
 {
     protected $fillable = [
-        'exam_attempt_id',
+        'exam_attempt_id',   // nullable – may be null for pre-exam identity verification
         'student_id',
         'proctor_id',
         'status',

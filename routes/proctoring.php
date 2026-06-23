@@ -13,6 +13,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/proctoring/session/initiate', [ProctoringController::class, 'initiateSession'])
         ->name('proctoring.session.initiate');
 
+    // Verify student identity (face photo + ID card + ID number)
+    Route::post('/proctoring/verify-identity', [ProctoringController::class, 'verifyIdentity'])
+        ->name('proctoring.identity.verify');
+
     // Get session details
     Route::get('/proctoring/session/{sessionId}', [ProctoringController::class, 'getSession'])
         ->name('proctoring.session.get');
@@ -34,8 +38,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         ->name('proctoring.session.end');
 
     // Report violation
-    Route::post('/proctoring/violation', [ProctoringController::class, 'reportViolation'])
+    Route::post('/proctoring/session/{sessionId}/violation', [ProctoringController::class, 'reportViolation'])
         ->name('proctoring.violation.report');
+
+    // Log face detection
+    Route::post('/proctoring/session/{sessionId}/face-log', [ProctoringController::class, 'logFaceDetection'])
+        ->name('proctoring.face-log.store');
 
     // Get violations
     Route::get('/proctoring/violations/{sessionId}', [ProctoringController::class, 'getViolations'])
