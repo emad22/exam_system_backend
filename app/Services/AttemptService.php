@@ -6,6 +6,7 @@ use App\Models\ExamAttempt;
 use App\Models\ExamAttemptLevel;
 use App\Models\ExamAttemptSkill;
 use App\Models\Level;
+use App\Models\ProctoringSession;
 use App\Models\Question;
 use App\Models\StudentAnswer;
 use Illuminate\Support\Facades\Log;
@@ -161,21 +162,54 @@ class AttemptService
 
 
 
-    public function finalizeSkill( ExamAttempt $attempt,  int $skillId, float $skillScore, int $maxLevelReached, string $status,  ?int $placementLevel = null ): void 
-    {
+    // public function finalizeSkill( ExamAttempt $attempt,  int $skillId, float $skillScore, int $maxLevelReached, string $status,  ?int $placementLevel = null ): void 
+    // {
 
-        // 🔴 حماية قوية
+    //     // 🔴 حماية قوية
+    //     if (!in_array($status, ['completed', 'failed', 'skipped'])) {
+    //         throw new \InvalidArgumentException("Invalid skill status: {$status}");
+    //     }
+
+    //     // 🔴 منع التكرار (مهم جدًا)
+    //     $existing = $attempt->attemptSkills()
+    //         ->where('skill_id', $skillId)
+    //         ->first();
+
+    //     if ($existing && $existing->status === 'completed') {
+    //         return; // skill already finalized properly
+    //     }
+
+    //     $attempt->attemptSkills()->updateOrCreate(
+    //         ['skill_id' => $skillId],
+    //         [
+    //             'max_level_reached' => $maxLevelReached,
+    //             'score' => $skillScore,
+    //             'status' => $status,
+    //             'placement_level' => $placementLevel ?? $maxLevelReached,
+    //             'placement_score' => $skillScore,
+    //             'finished_at' => now(),
+    //         ]
+    //     );
+    // }
+
+    public function finalizeSkill(
+        ExamAttempt $attempt,
+        int $skillId,
+        float $skillScore,
+        int $maxLevelReached,
+        string $status,
+        ?int $placementLevel = null
+    ): void {
         if (!in_array($status, ['completed', 'failed', 'skipped'])) {
             throw new \InvalidArgumentException("Invalid skill status: {$status}");
         }
 
-        // 🔴 منع التكرار (مهم جدًا)
         $existing = $attempt->attemptSkills()
             ->where('skill_id', $skillId)
             ->first();
 
         if ($existing && $existing->status === 'completed') {
-            return; // skill already finalized properly
+            return;
         }
 
         $attempt->attemptSkills()->updateOrCreate(
@@ -189,6 +223,23 @@ class AttemptService
                 'finished_at' => now(),
             ]
         );
+
+        // ✅ سجّل الخروج من المهارة في الـ proctoring session
+        $session = ProctoringSession::where('student_id', $attempt->student_id)
+            ->where('exam_attempt_id', $attempt->id)
+            ->whereIn('status', ['active', 'paused'])
+            ->latest()
+            ->first();
+
+        if ($session) {
+            // عدد الأسئلة اللي اتجاوب عليها في هذه المهارة
+            $questionsAnswered = StudentAnswer::where('exam_attempt_id', $attempt->id)
+                ->whereHas('question', fn($q) => $q->where('skill_id', $skillId))
+                ->count();
+
+            app(\App\Services\ProctoringSessionService::class)
+                ->recordSkillExit($session, $skillId, $questionsAnswered);
+        }
     }
 
 
@@ -198,7 +249,7 @@ class AttemptService
      *
      * @return array{next_pos: array, finished_exam: bool}
      */
-   public function advanceToNextSkillOrFinish(ExamAttempt $attempt, array $pos, int $completedSkillId): array
+    public function advanceToNextSkillOrFinish(ExamAttempt $attempt, array $pos, int $completedSkillId): array
     {
         $nextPos = $pos;
 
@@ -249,9 +300,63 @@ class AttemptService
             ->where('status', 'failed')
             ->exists();
     }
+
+    /**
+     * Finalize the active skill and its active level when the student exits or is terminated.
+     */
+    public function finalizeActiveSkillAndLevelOnExit(ExamAttempt $attempt): void
+    {
+        $pos = $attempt->current_position ?? [];
+        if (empty($pos['skill_ids']) || !isset($pos['current_skill_index'])) {
+            return;
+        }
+
+        $skillId = $pos['skill_ids'][$pos['current_skill_index']];
+
+        // 1. Log result for the active level if it exists and has not been logged yet
+        $levelNum = $pos[$skillId]['current_level'] ?? 1;
+        $level = Level::where('skill_id', $skillId)
+            ->where('level_number', $levelNum)
+            ->first();
+
+        if ($level) {
+            // Check if level is already logged
+            $levelLogged = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $skillId)
+                ->where('level_number', $levelNum)
+                ->exists();
+
+            if (!$levelLogged) {
+                $levelScore = $this->computeLevelScore($attempt, $skillId, $level);
+                $passThreshold = $level->pass_threshold ?? 70;
+                $this->logLevelResult($attempt, $skillId, $level, $levelScore, $passThreshold);
+            }
+        }
+
+        // 2. Compute final skill score
+        $skillScore = $this->computeSkillScore($attempt, $skillId);
+        $maxLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->max('level_number') ?? $levelNum;
+
+        // 3. Finalize the skill
+        $this->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'completed');
+
+        // 4. Update overall attempt score
+        $this->updateOverallScore($attempt, $skillId, $skillScore);
+
+        // 5. Update completed_skills in current_position keys
+        $pos['completed_skills'] = $pos['completed_skills'] ?? [];
+        if (!in_array($skillId, $pos['completed_skills'])) {
+            $pos['completed_skills'][] = $skillId;
+        }
+        $attempt->update(['current_position' => $pos]);
+    }
+
     public function __construct(
         private readonly CertificateService $certificateService
-    ) {}
+    ) {
+    }
 
     /**
      * Mark an entire exam attempt as completed.

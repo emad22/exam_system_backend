@@ -58,7 +58,7 @@ class DashboardResource extends JsonResource
         //Logger ("skill name ".$skillResult->skill);
         $levelsCount = $skillResult->skill->levels_count ?? 1;
        $this->allLevelsCount += $levelsCount;
-        Logger("in getCalculatedSkillScore levels count " . $levelsCount . " total levels.... " . $this->allLevelsCount . " total skills.... " . $this->skillsCount);
+        // Logger("in getCalculatedSkillScore levels count " . $levelsCount . " total levels.... " . $this->allLevelsCount . " total skills.... " . $this->skillsCount);
         return round((float)$skillResult->score * $levelsCount);
     }
     private function getTotalScore($attempt)

@@ -2,11 +2,15 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Proctoring\ProctoringController;
 use App\Http\Controllers\Controller;
+use App\Models\ProctoringSession;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\ProctoringSessionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
@@ -60,9 +64,9 @@ class AuthController extends Controller
     {
         $login = $request->input('login') ?? $request->input('email');
 
-        $user = User::where(function($query) use ($login) {
+        $user = User::where(function ($query) use ($login) {
             $query->where('email', $login)
-                  ->orWhere('username', $login);
+                ->orWhere('username', $login);
         })->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
@@ -79,12 +83,41 @@ class AuthController extends Controller
             ], 403);
         }
 
+        // Close any active proctoring sessions for the student since login session is replaced
+        if ($user->student) {
+            $activeSessions = ProctoringSession::where('student_id', $user->student->id)
+                ->whereIn('status', ['pending', 'active', 'paused'])
+                ->get();
+
+            foreach ($activeSessions as $session) {
+                $duration = 0;
+                if ($session->started_at) {
+                    $totalSeconds = abs(now()->diffInSeconds($session->started_at));
+                    $storedPausedSeconds = (int) ($session->total_paused_seconds ?? 0);
+                    $currentPausePeriod = 0;
+                    if ($session->status === 'paused' && $session->paused_at) {
+                        $currentPausePeriod = abs(now()->diffInSeconds($session->paused_at));
+                    }
+                    $totalPaused = $storedPausedSeconds + $currentPausePeriod;
+                    $duration = (int) max(0, $totalSeconds - $totalPaused);
+                }
+
+                $session->update([
+                    'status' => 'ended',
+                    'recording_status' => 'completed',
+                    'ended_at' => now(),
+                    'closed_at' => now(),
+                    'close_reason' => 'session_replaced',
+                    'duration_seconds' => $duration,
+                ]);
+            }
+        }
 
         $user->tokens()->delete();
 
         $deviceName = $request->input('device_name', 'auth_token');
         $newToken = $user->createToken($deviceName);
-        
+
         $user->update(['last_token_id' => $newToken->accessToken->id]);
 
         $token = $newToken->plainTextToken;
@@ -103,16 +136,16 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->student) {
             $user->load([
-                'student' => function($query) {
+                'student' => function ($query) {
                     $query->select('id', 'user_id', 'partner_id', 'exam_category_id', 'student_code');
                 },
-                'student.partner' => function($query) {
+                'student.partner' => function ($query) {
                     $query->select('id', 'partner_name', 'proctoring_required');
                 },
-                'student.category' => function($query) {
+                'student.category' => function ($query) {
                     $query->select('id', 'name');
                 }
             ]);
@@ -121,12 +154,65 @@ class AuthController extends Controller
         return response()->json($user);
     }
 
+    // public function logout(Request $request)
+    // {
+    //     $user = $request->user();
+
+    //     $studentId = $user->student?->id;
+
+    //     if ($studentId) {
+    //         $session = ProctoringSession::where('student_id', $studentId)
+    //             ->where('status', 'active')
+    //             ->latest()
+    //             ->first();
+
+    //         if ($session) {
+    //             app(ProctoringController::class)
+    //                 ->closeSession($session->id, $request);
+    //         }
+    //     }
+    //     // Log::info('User logged out', [
+    //     //     'user_id' => $user->id,
+    //     //     'student_id' => $user->student?->id,
+    //     //     'email' => $user->email,
+    //     //     'ip' => $request->ip(),
+    //     //     'user_agent' => $request->userAgent(),
+    //     //     'time' => now(),
+    //     // ]);
+
+    //     $user->currentAccessToken()?->delete();
+
+    //     return response()->json([
+    //         'message' => 'Logged out successfully'
+    //     ]);
+    // }
+
+
+
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        $user = $request->user();
+        $studentId = $user->student?->id;
 
-        return response()->json([
-            'message' => 'Logged out successfully'
-        ]);
+        if ($studentId) {
+            $sessions = ProctoringSession::where('student_id', $studentId)
+                ->whereIn('status', ['pending', 'active', 'paused'])
+                ->get();
+
+            foreach ($sessions as $session) {
+                // ✅ نقفل أي جلسة مراقبة مفتوحة قبل تسجيل الخروج
+                app(ProctoringSessionService::class)->end($session, 'student_left');
+            }
+        }
+
+        $token = $user->currentAccessToken();
+
+        if ($token && method_exists($token, 'delete')) {
+            $token->delete();
+        } else {
+            $user->tokens()->delete();
+        }
+
+        return response()->json(['message' => 'Logged out successfully']);
     }
 }

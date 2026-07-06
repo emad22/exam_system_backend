@@ -2,25 +2,89 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Models\ExamAttemptLevel;
 use App\Models\ProctoringSession;
 use App\Models\ExamViolation;
 use App\Models\ProctoringReport;
 use App\Models\ExamAttempt;
 use App\Http\Controllers\Controller;
+use App\Services\AttemptService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
+use App\Notifications\ExamExitedNotification;
+use App\Models\User;
 
 class ProctoringController extends Controller
 {
+    public function __construct(
+        private readonly AttemptService $attemptService
+    ) {
+    }
     /**
      * عرض قائمة جلسات المراقبة
      */
     public function index(Request $request)
     {
+        if ($request->get('group_by') === 'student') {
+            $query = \App\Models\Student::whereHas('proctoringSessions')
+                ->with('user');
+
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->whereHas('user', function ($q) use ($search) {
+                    $q->where('name', 'like', "%$search%")
+                        ->orWhere('email', 'like', "%$search%");
+                });
+            }
+
+            $perPage = $request->get('per_page', 15);
+            $students = $query->paginate($perPage);
+
+            $data = collect($students->items())->map(function ($student) {
+                $sessions = ProctoringSession::where('student_id', $student->id)->get();
+                $latestSession = ProctoringSession::where('student_id', $student->id)
+                    ->with('examAttempt.exam')
+                    ->latest()
+                    ->first();
+
+                $totalViolations = $sessions->sum('violations_count');
+                $maxRiskScore = $sessions->max('risk_score') ?? 0;
+
+                return [
+                    'student_id' => $student->id,
+                    'student' => [
+                        'id' => $student->id,
+                        'user' => [
+                            'name' => $student->user?->name,
+                            'email' => $student->user?->email,
+                        ]
+                    ],
+                    'sessions_count' => $sessions->count(),
+                    'violations_count' => $totalViolations,
+                    'risk_score' => $maxRiskScore,
+                    'created_at' => $latestSession?->created_at ? $latestSession->created_at->toDateTimeString() : null,
+                    'latest_session_id' => $latestSession?->id,
+                    'exam_title' => $latestSession?->examAttempt?->exam?->title,
+                ];
+            });
+
+            return response()->json([
+                'data' => $data,
+                'pagination' => [
+                    'current_page' => $students->currentPage(),
+                    'per_page' => $students->perPage(),
+                    'total' => $students->total(),
+                    'last_page' => $students->lastPage(),
+                ]
+            ]);
+        }
+
         $query = ProctoringSession::with([
             'examAttempt.exam',
-            'student',
-            'proctor',
+            'student.user',
+            'skills',
+            // 'proctor',
         ]);
 
         // الفلترة حسب الحالة
@@ -31,9 +95,9 @@ class ProctoringController extends Controller
         // البحث عن الطالب
         if ($request->filled('search')) {
             $search = $request->search;
-            $query->whereHas('student', function ($q) use ($search) {
+            $query->whereHas('student.user', function ($q) use ($search) {
                 $q->where('name', 'like', "%$search%")
-                  ->orWhere('email', 'like', "%$search%");
+                    ->orWhere('email', 'like', "%$search%");
             });
         }
 
@@ -79,14 +143,34 @@ class ProctoringController extends Controller
     }
 
     /**
+     * عرض جميع جلسات الطالب المحددة بالمراقبة
+     */
+    public function studentSessions($studentId)
+    {
+        $student = \App\Models\Student::with('user')->findOrFail($studentId);
+
+        $sessions = ProctoringSession::where('student_id', $studentId)
+            ->with([
+                'examAttempt.exam',
+                'skills'
+            ])
+            ->latest()
+            ->get();
+
+        return response()->json([
+            'student' => $student,
+            'sessions' => $sessions
+        ]);
+    }
+
+    /**
      * عرض تفاصيل جلسة المراقبة
      */
     public function show($sessionId)
     {
         $session = ProctoringSession::with([
             'examAttempt.exam',
-            'examAttempt.skills',
-            'student',
+            'student.user',  // ← أضف .user
             'proctor',
             'violations' => function ($q) {
                 $q->orderBy('timestamp', 'desc');
@@ -96,13 +180,13 @@ class ProctoringController extends Controller
 
         $faceDetectionLogs = DB::table('face_detection_logs')
             ->where('proctoring_session_id', $sessionId)
-            ->orderBy('created_at', 'desc')
+            ->orderBy('timestamp', 'desc')
             ->limit(50)
             ->get();
 
         $deviceDetectionLogs = DB::table('device_detection_logs')
             ->where('proctoring_session_id', $sessionId)
-            ->orderBy('created_at', 'desc')
+            ->orderBy('detected_at', 'desc')
             ->limit(50)
             ->get();
 
@@ -177,23 +261,23 @@ class ProctoringController extends Controller
         $violation = ExamViolation::findOrFail($violationId);
 
         $validated = $request->validate([
-            'status'       => 'required|in:confirmed,dismissed,suspicious',
-            'proctor_notes'=> 'nullable|string|max:1000',
+            'status' => 'required|in:confirmed,dismissed,suspicious',
+            'proctor_notes' => 'nullable|string|max:1000',
             'action_taken' => 'nullable|in:warning,pause_exam,terminate_exam,report_to_instructor'
         ]);
 
         $violation->update([
-            'status'             => $validated['status'],
-            'reviewed_at'        => now(),
-            'reviewed_by'        => auth()->id(),   // always use authenticated user
-            'proctor_notes'      => $validated['proctor_notes'] ?? null,
-            'action_taken'       => $validated['action_taken'] ?? null,
+            'status' => $validated['status'],
+            'reviewed_at' => now(),
+            'reviewed_by' => auth()->id(),   // always use authenticated user
+            'proctor_notes' => $validated['proctor_notes'] ?? null,
+            'action_taken' => $validated['action_taken'] ?? null,
             'flagged_by_proctor' => true,
         ]);
 
         return response()->json([
-            'success'   => true,
-            'message'   => 'Violation reviewed successfully',
+            'success' => true,
+            'message' => 'Violation reviewed successfully',
             'violation' => $violation
         ]);
     }
@@ -252,22 +336,198 @@ class ProctoringController extends Controller
      */
     public function updateStatus($sessionId, Request $request)
     {
-        $session = ProctoringSession::findOrFail($sessionId);
+        $session = ProctoringSession::with('examAttempt')->findOrFail($sessionId);
 
         $validated = $request->validate([
             'status' => 'required|in:active,paused,ended,cancelled',
             'final_verdict' => 'nullable|in:pass,fail,review_required'
         ]);
 
-        $session->update([
-            'status' => $validated['status'],
+        $newStatus = $validated['status'];
+
+        $fields = [
+            'status' => $newStatus,
             'final_verdict' => $validated['final_verdict'] ?? null,
-        ]);
+        ];
+
+        match ($newStatus) {
+            'active' => $fields += [
+                'recording_status' => 'recording',
+                'resumed_at' => now(),
+                'paused_at' => null,
+            ],
+            'paused' => $fields += [
+                'recording_status' => 'paused',
+                'paused_at' => now(),
+            ],
+            'ended', 'cancelled' => $fields += [
+                'recording_status' => 'completed',
+                'ended_at' => now(),
+                'duration_seconds' => $session->started_at
+                    ? now()->diffInSeconds($session->started_at)
+                    : null,
+            ],
+            default => null,
+        };
+
+        $session->update($fields);
+
+        // إذا تم إنهاء الجلسة، قم بإنهاء الامتحان أيضاً
+        if (in_array($newStatus, ['ended', 'cancelled']) && $session->examAttempt) {
+            $this->closeExamAttempt($session->examAttempt);
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Session status updated',
-            'session' => $session
+            'session' => $session->fresh()
+        ]);
+    }
+
+    /**
+     * إنهاء محاولة الامتحان
+     */
+    private function closeExamAttempt(ExamAttempt $attempt): void
+    {
+        if ($attempt->status === 'completed') {
+            return;
+        }
+
+        // إرسال إشعارات للمشرفين
+        $admins = User::whereIn('role', ['admin', 'teacher'])->get();
+        Notification::send($admins, new ExamExitedNotification($attempt));
+
+        // Finalize active skill + log active level + update completed_skills
+        $this->attemptService->finalizeActiveSkillAndLevelOnExit($attempt);
+        $attempt->refresh();
+
+        // إنهاء المحاولة بالكامل
+        $this->attemptService->completeAttempt($attempt);
+    }
+
+    /**
+     * إنهاء مهارة الطالب الحالية وإخراجه من الامتحان
+     * يُستدعى عندما يضغط الأدمن على "End Skill Exam"
+     */
+    public function endSkillExam($sessionId, Request $request)
+    {
+        $session = ProctoringSession::with('examAttempt')->findOrFail($sessionId);
+
+        $attempt = $session->examAttempt;
+
+        if (!$attempt) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No exam attempt linked to this session.'
+            ], 422);
+        }
+
+        // ==============================
+        // Get current active skill
+        // ==============================
+        $pos = $attempt->current_position ?? [];
+
+        $currentIndex = $pos['current_skill_index'] ?? null;
+        $skillIds = $pos['skill_ids'] ?? [];
+
+        if ($currentIndex === null || !isset($skillIds[$currentIndex])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The student is not currently taking any active skill exam.'
+            ], 422);
+        }
+
+        $skillId = $skillIds[$currentIndex];
+
+        // ==============================
+        // Compute Skill Score
+        // ==============================
+        $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
+
+        $maxLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+            ->where('skill_id', $skillId)
+            ->max('level_number') ?? 1;
+
+        // ==============================
+        // Finalize current skill
+        // ==============================
+        $this->attemptService->finalizeSkill(
+            $attempt,
+            $skillId,
+            $skillScore,
+            $maxLevel,
+            'completed'
+        );
+
+        // ==============================
+        // Update overall score
+        // ==============================
+        $this->attemptService->updateOverallScore(
+            $attempt,
+            $skillId,
+            $skillScore
+        );
+
+        // ==============================
+        // Move to next skill
+        // ==============================
+        $result = $this->attemptService->advanceToNextSkillOrFinish(
+            $attempt,
+            $pos,
+            $skillId
+        );
+
+        $attempt->update([
+            'current_position' => $result['next_pos']
+        ]);
+
+        // ==============================
+        // Finish exam if last skill
+        // ==============================
+        if ($result['finished_exam']) {
+            $this->attemptService->completeAttempt($attempt);
+
+            if ($session->status !== 'ended') {
+                $session->update([
+                    'status' => 'ended',
+                    'ended_at' => now(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'finished_exam' => true,
+                'message' => 'The final skill has been ended. Exam completed successfully.',
+                'skill_id' => $skillId,
+                'session' => $session->fresh(),
+                'attempt' => $attempt->fresh(),
+            ]);
+        }
+
+        // ==============================
+        // Get next skill
+        // ==============================
+        $attempt->refresh();
+
+        $nextPos = $attempt->current_position;
+
+        $nextSkillId = null;
+
+        if (
+            isset($nextPos['current_skill_index']) &&
+            isset($nextPos['skill_ids'][$nextPos['current_skill_index']])
+        ) {
+            $nextSkillId = $nextPos['skill_ids'][$nextPos['current_skill_index']];
+        }
+
+        return response()->json([
+            'success' => true,
+            'finished_exam' => false,
+            'message' => 'Skill exam ended successfully.',
+            'completed_skill_id' => $skillId,
+            'next_skill_id' => $nextSkillId,
+            'session' => $session->fresh(),
+            'attempt' => $attempt,
         ]);
     }
 
@@ -375,4 +635,8 @@ class ProctoringController extends Controller
 
         return $recommendations;
     }
+
+
+
+
 }

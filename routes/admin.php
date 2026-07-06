@@ -60,7 +60,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/{skill}/levels', [Admin\SkillController::class, 'getSkillWithLevels'])->name('levels');
         Route::post('/{skill}/levels/bulk', [Admin\SkillController::class, 'bulkUpdateLevels'])->name('bulk-update-levels');
     });
-    
+
     Route::prefix('levels')->as('levels.')->group(function () {
         Route::get('/', [Admin\LevelController::class, 'index'])->name('index');
         Route::get('/{level}', [Admin\LevelController::class, 'show'])->name('show');
@@ -94,16 +94,16 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::post('/{attempt}/skills/{skill}/reset-last-level', [Admin\ReportController::class, 'resetAttemptLastLevel'])->name('reset-last-level');
     });
 
-    
+
 
     // Manual Grading (Writing & Speaking) — attempt-based
     Route::prefix('grading')->as('grading.')->group(function () {
         Route::get('/', [Admin\ProductiveSkillsController::class, 'index'])->name('index');
         // Attempt-based routes (must come before /{answer} catch-all)
-        Route::get('/attempt/{attempt}',   [Admin\ProductiveSkillsController::class, 'showAttempt'])->name('attempt.show');
+        Route::get('/attempt/{attempt}', [Admin\ProductiveSkillsController::class, 'showAttempt'])->name('attempt.show');
         Route::patch('/attempt/{attempt}', [Admin\ProductiveSkillsController::class, 'gradeAttempt'])->name('attempt.grade');
         // Legacy single-answer routes
-        Route::get('/{answer}',   [Admin\ProductiveSkillsController::class, 'show'])->name('show');
+        Route::get('/{answer}', [Admin\ProductiveSkillsController::class, 'show'])->name('show');
         Route::patch('/{answer}', [Admin\ProductiveSkillsController::class, 'update'])->name('update');
         Route::post('/{answer}/ai-suggest', [Admin\ProductiveSkillsController::class, 'aiSuggest'])->name('ai-suggest');
     });
@@ -143,12 +143,14 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
     Route::prefix('proctoring')->as('proctoring.')->group(function () {
         Route::get('/', [Admin\ProctoringController::class, 'index'])->name('index');
         Route::get('/statistics', [Admin\ProctoringController::class, 'statistics'])->name('statistics');
+        Route::get('/student/{studentId}', [Admin\ProctoringController::class, 'studentSessions'])->name('student-sessions');
         Route::get('/{session}', [Admin\ProctoringController::class, 'show'])->name('show');
         Route::get('/{session}/violations', [Admin\ProctoringController::class, 'violations'])->name('violations');
         Route::patch('/{session}/status', [Admin\ProctoringController::class, 'updateStatus'])->name('update-status');
         Route::post('/{violation}/review', [Admin\ProctoringController::class, 'reviewViolation'])->name('review-violation');
         Route::get('/{session}/report', [Admin\ProctoringController::class, 'report'])->name('report');
         Route::get('/{session}/export', [Admin\ProctoringController::class, 'exportReport'])->name('export-report');
+        Route::post('/{session}/end-skill', [Admin\ProctoringController::class, 'endSkillExam'])->name('end-skill');
     });
 
     // Utilities

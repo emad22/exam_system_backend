@@ -13,20 +13,23 @@ class ExamSecurityController extends Controller
 {
     public function __construct(
         private readonly AttemptService $attemptService,
-    ) {}
+    ) {
+    }
 
     public function logWarning(Request $request, ExamAttempt $attempt)
     {
         $this->authorize('update', $attempt);
-        if ($attempt->status !== 'ongoing') return response()->json(['error' => 'Exam is not active.'], 403);
+        if ($attempt->status !== 'ongoing')
+            return response()->json(['error' => 'Exam is not active.'], 403);
 
         $pos = $attempt->current_position ?? [];
-        $currentWarnings = 0; $shouldTerminateSkill = false;
+        $currentWarnings = 0;
+        $shouldTerminateSkill = false;
 
         if (isset($pos['skill_ids'][$pos['current_skill_index']])) {
             $skillId = $pos['skill_ids'][$pos['current_skill_index']];
             $skillAttempt = ExamAttemptSkill::firstOrCreate(
-                ['exam_attempt_id' => $attempt->id, 'skill_id' => $skillId], 
+                ['exam_attempt_id' => $attempt->id, 'skill_id' => $skillId],
                 ['started_at' => now(), 'status' => 'in_progress']
             );
             $skillAttempt->increment('cheat_warnings');
@@ -44,10 +47,9 @@ class ExamSecurityController extends Controller
     public function timeout(Request $request, ExamAttempt $attempt)
     {
         $this->authorize('update', $attempt);
-        
+
         $skillId = $request->input('skill_id') ?? ($attempt->current_position['skill_ids'][$attempt->current_position['current_skill_index']] ?? null);
 
-        
         if (!$skillId) {
             return response()->json(['success' => true, 'message' => 'No active skill to timeout.']);
         }
@@ -58,14 +60,10 @@ class ExamSecurityController extends Controller
             ->first();
 
         if ($skillAttempt && $skillAttempt->status === 'in_progress') {
-            $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
-            $maxLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                ->where('skill_id', $skillId)
-                ->max('level_number') ?? 1;
+            // Finalize active skill + log active level + update completed_skills
+            $this->attemptService->finalizeActiveSkillAndLevelOnExit($attempt);
+            $attempt->refresh();
 
-            $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'completed');
-            $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
-            
             $pos = $attempt->current_position ?? [];
             $advanced = $this->attemptService->advanceToNextSkillOrFinish($attempt, $pos, $skillId);
             $attempt->update(['current_position' => $advanced['next_pos']]);

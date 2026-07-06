@@ -78,7 +78,7 @@ class PartnerDashboardController extends Controller
         }
         //Logger ("skill name ".$skillResult->skill);
         $levelsCount = $skillResult->skill->levels_count ?? 1;
-        Logger("in getCalculatedSkillScore levels count " . $levelsCount . " total.... " . round((float)$skillResult->score * $levelsCount));
+        // Logger("in getCalculatedSkillScore levels count " . $levelsCount . " total.... " . round((float)$skillResult->score * $levelsCount));
         return round((float)$skillResult->score * $levelsCount);
     }
 

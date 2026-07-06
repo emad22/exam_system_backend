@@ -2,604 +2,569 @@
 
 namespace App\Http\Controllers\Api\Proctoring;
 
-use App\Models\ProctoringSession;
-use App\Models\ExamViolation;
-use App\Models\CheatingAlert;
-use App\Models\ExamAttempt;
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessViolationJob;
+use App\Services\GoogleVisionService;
+use App\Models\ExamAttempt;
+use App\Models\ProctoringSession;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Http;
+use App\Services\ProctoringSessionService;
+use App\Services\IdentityVerificationService;
+use App\Services\FaceMonitoringService;
+use App\Services\ViolationService;
+use Illuminate\Support\Facades\Log;
 
 class ProctoringController extends Controller
 {
-    /**
-     * التحقق من هوية الطالب (صورة الوجه + بطاقة الهوية + رقم الهوية)
-     */
-    public function verifyIdentity(Request $request)
-    {
-        $validated = $request->validate([
-            'face_image'  => 'required',           // Can be string (base64) or File
-            'id_image'    => 'nullable',           // Can be string (base64) or File
-            'id_number'   => 'required|string|min:3|max:50',
-        ]);
-
-        try {
-            $user = $request->user();
-
-            // 1. Get student profile
-            $student = $user->student;
-            if (!$student) {
-                return response()->json([
-                    'verified' => false,
-                    'message' => 'بيانات الطالب غير مسجلة في النظام.',
-                ], 404);
-            }
-
-            // 2. Validate inputted ID against registered student code (only if student_code is registered)
-            $expectedID = $validated['id_number'];
-            if (!empty($student->student_code)) {
-                $normalizedInput = preg_replace('/[^A-Za-z0-9]/', '', $validated['id_number']);
-                $normalizedCode = preg_replace('/[^A-Za-z0-9]/', '', $student->student_code);
-
-                if (strcasecmp($normalizedInput, $normalizedCode) !== 0) {
-                    return response()->json([
-                        'verified' => false,
-                        'message' => 'رقم الهوية المدخل لا يتطابق مع كود الطالب المسجل لدينا.',
-                    ], 422);
-                }
-                $expectedID = $student->student_code;
-            }
-
-            // 3. Save images (handling both base64 string and uploaded files)
-            $faceUrl  = null;
-            $idUrl    = null;
-
-            if ($request->hasFile('face_image')) {
-                $path = $request->file('face_image')->store('proctoring/faces', 'public');
-                $faceUrl = Storage::disk('public')->url($path);
-            } elseif (is_string($request->input('face_image'))) {
-                $faceUrl = $this->saveBase64Image($request->input('face_image'), 'proctoring/faces', $user->id . '_face');
-            }
-
-            if ($request->hasFile('id_image')) {
-                $path = $request->file('id_image')->store('proctoring/ids', 'public');
-                $idUrl = Storage::disk('public')->url($path);
-            } elseif (is_string($request->input('id_image'))) {
-                $idUrl = $this->saveBase64Image($request->input('id_image'), 'proctoring/ids', $user->id . '_id');
-            }
-
-            // 4. Prepare ID Image for Gemini AI processing
-            $idImageBase64 = null;
-            $mimeType = 'image/jpeg';
-
-            if ($request->hasFile('id_image')) {
-                $file = $request->file('id_image');
-                $idImageBase64 = base64_encode(file_get_contents($file->getPathname()));
-                $mimeType = $file->getMimeType() ?: 'image/jpeg';
-            } elseif (is_string($request->input('id_image'))) {
-                $base64Str = $request->input('id_image');
-                if (str_contains($base64Str, ',')) {
-                    $parts = explode(',', $base64Str);
-                    $idImageBase64 = $parts[1];
-                    if (preg_match('/^data:(image\/[a-z]+);base64/', $parts[0], $m)) {
-                        $mimeType = $m[1];
-                    }
-                } else {
-                    $idImageBase64 = $base64Str;
-                }
-            }
-
-            // 5. Use Gemini AI to verify the ID document if key and image are available
-            $apiKey = config('services.gemini.api_key');
-            $aiVerified = true;
-            $aiScore = 85;
-            $aiReason = 'تم مطابقة كود الطالب بنجاح مع البيانات المسجلة.';
-
-            if ($apiKey && $idImageBase64) {
-                $studentName = $user->first_name . ' ' . $user->last_name;
-                $prompt = "You are a professional security and exam proctoring identity verification system.\n" .
-                    "Compare the student's registered info with the provided national ID card or passport image:\n" .
-                    "- Expected ID / Student Code: \"{$expectedID}\"\n" .
-                    "- Expected Student Name: \"{$studentName}\"\n\n" .
-                    "Please verify if the ID card/passport image shown belongs to this student and displays the expected ID or Student Code.\n" .
-                    "Return ONLY a JSON response in the following format (no markdown code blocks, no backticks, just the raw JSON object):\n" .
-                    "{\n" .
-                    "  \"matched\": true/false,\n" .
-                    "  \"extracted_id\": \"any ID number or code found in the image\",\n" .
-                    "  \"extracted_name\": \"the name found in the image (if any)\",\n" .
-                    "  \"confidence_score\": <integer 0-100>,\n" .
-                    "  \"reason\": \"A short explanation in Arabic detailing whether it matches and why\"\n" .
-                    "}";
-
-                try {
-                    $apiResponse = Http::timeout(30)->post(
-                        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={$apiKey}",
-                        [
-                            'contents' => [
-                                [
-                                    'parts' => [
-                                        [
-                                            'text' => $prompt
-                                        ],
-                                        [
-                                            'inlineData' => [
-                                                'mimeType' => $mimeType,
-                                                'data' => $idImageBase64
-                                            ]
-                                        ]
-                                    ]
-                                ]
-                            ],
-                            'generationConfig' => [
-                                'temperature' => 0.1,
-                                'maxOutputTokens' => 512,
-                                'responseMimeType' => 'application/json'
-                            ]
-                        ]
-                    );
-
-                    if ($apiResponse->successful()) {
-                        $text = trim($apiResponse->json('candidates.0.content.parts.0.text'));
-                        if (str_starts_with($text, '```')) {
-                            $text = preg_replace('/^```(?:json)?|```$/s', '', $text);
-                            $text = trim($text);
-                        }
-
-                        $aiData = json_decode($text, true);
-
-                        if (is_array($aiData) && isset($aiData['matched'])) {
-                            $aiVerified = (bool) $aiData['matched'];
-                            $aiScore = isset($aiData['confidence_score']) ? (int) $aiData['confidence_score'] : 85;
-                            $aiReason = $aiData['reason'] ?? '';
-                        } else {
-                            \Log::warning('Gemini identity verification response format invalid', ['text' => $text]);
-                            $aiReason = 'فشل التحقق من صحة تنسيق استجابة الذكاء الاصطناعي.';
-                        }
-                    } else {
-                        \Log::warning('Gemini API call failed during identity verification', [
-                            'status' => $apiResponse->status(),
-                            'body' => $apiResponse->body()
-                        ]);
-                        $aiReason = 'فشل الاتصال بخدمة التحقق من الهوية بالذكاء الاصطناعي.';
-                    }
-                } catch (\Exception $e) {
-                    \Log::error('Error calling Gemini for ID verification', [
-                        'message' => $e->getMessage()
-                    ]);
-                    $aiReason = 'حدث خطأ أثناء فحص صورة الهوية بالذكاء الاصطناعي: ' . $e->getMessage();
-                }
-            }
-
-            if (!$aiVerified) {
-                return response()->json([
-                    'verified' => false,
-                    'message' => 'فشل التحقق من صورة الهوية: ' . $aiReason,
-                ], 422);
-            }
-
-            // 6. Find or create Proctoring Session
-            $session = ProctoringSession::where('student_id', $user->id)
-                ->where('status', 'pending')
-                ->latest()
-                ->first();
-
-            if (!$session) {
-                $session = ProctoringSession::create([
-                    'student_id'   => $user->id,
-                    'status'       => 'pending',
-                    'ip_address'   => $request->ip(),
-                    'user_agent'   => $request->userAgent(),
-                    'device_info'  => ['platform' => $request->header('User-Agent'), 'timestamp' => now()],
-                ]);
-            }
-
-            // 7. Update Proctoring Session Verification data
-            $session->update([
-                'identity_verified'        => true,
-                'face_verification_score'  => $aiScore,
-                'identity_verification_at' => now(),
-                'device_info'              => array_merge($session->device_info ?? [], [
-                    'id_number'   => $validated['id_number'],
-                    'face_image'  => $faceUrl,
-                    'id_image'    => $idUrl,
-                    'verified_at' => now()->toISOString(),
-                    'ai_reason'   => $aiReason,
-                ]),
-            ]);
-
-            \Log::info('Identity verified successfully', [
-                'student_id' => $user->id,
-                'session_id' => $session->id,
-                'id_number'  => $validated['id_number'],
-                'ai_score'   => $aiScore
-            ]);
-
-            return response()->json([
-                'verified'          => true,
-                'session_id'        => $session->id,
-                'verification_score'=> $aiScore,
-                'message'           => 'Identity verified successfully: ' . $aiReason,
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('Identity verification failed', [
-                'error'      => $e->getMessage(),
-                'student_id' => $request->user()?->id,
-            ]);
-
-            return response()->json([
-                'verified' => false,
-                'message'  => 'Verification failed: ' . $e->getMessage(),
-            ], 500);
-        }
+    public function __construct(
+        private ProctoringSessionService $sessionService,
+        private IdentityVerificationService $identityService,
+        private FaceMonitoringService $faceService,
+        private ViolationService $violationService,
+        private GoogleVisionService $googleVisionService,
+    ) {
     }
 
-    /**
-     * تحويل base64 وحفظ الصورة في storage
-     */
-    private function saveBase64Image(string $base64, string $folder, string $name): ?string
-    {
-        try {
-            // إزالة header مثل "data:image/jpeg;base64,"
-            if (str_contains($base64, ',')) {
-                $base64 = explode(',', $base64)[1];
-            }
-
-            $imageData = base64_decode($base64);
-            if (!$imageData) return null;
-
-            $filename = $folder . '/' . $name . '_' . time() . '.jpg';
-            Storage::disk('public')->put($filename, $imageData);
-
-            return Storage::disk('public')->url($filename);
-        } catch (\Exception $e) {
-            \Log::warning('Failed to save image', ['error' => $e->getMessage()]);
-            return null;
-        }
-    }
-
-    /**
-     * بدء جلسة مراقبة جديدة
-     */
+    /* =========================================================
+      |  INIT SESSION
+      ========================================================= */
     public function initiateSession(Request $request)
     {
         $validated = $request->validate([
-            'exam_attempt_id' => 'required|exists:exam_attempts,id',
-            'student_id' => 'required|exists:users,id',
+            'exam_attempt_id' => 'nullable|exists:exam_attempts,id',
+            'session_id' => 'nullable|exists:proctoring_sessions,id',
         ]);
 
-        try {
-            $examAttempt = ExamAttempt::findOrFail($validated['exam_attempt_id']);
+        $attempt = null;
+        if (!empty($validated['exam_attempt_id'])) {
+            $attempt = ExamAttempt::findOrFail($validated['exam_attempt_id']);
+            $this->authorizeAttempt($attempt);
 
-            // إنشاء جلسة مراقبة جديدة
-            $session = ProctoringSession::create([
-                'exam_attempt_id' => $validated['exam_attempt_id'],
-                'student_id' => $validated['student_id'],
-                'status' => 'pending',
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-                'device_info' => [
-                    'platform' => $request->header('User-Agent'),
-                    'timestamp' => now(),
-                ],
-            ]);
+            // إذا كانت المحاولة منتهية، لا تنشئ جلسة جديدة
+            if ($attempt->status === 'completed') {
+                $existingSession = ProctoringSession::where('student_id', auth()->user()->student?->id)
+                    ->where('exam_attempt_id', $attempt->id)
+                    ->where('status', 'ended')
+                    ->latest()
+                    ->first();
 
+                if ($existingSession) {
+                    return response()->json([
+                        'success' => true,
+                        'session_id' => $existingSession->id,
+                        'session_token' => $existingSession->session_token,
+                        'status' => $existingSession->status,
+                        'exam_duration' => $attempt->exam->duration_minutes ?? null,
+                        'message' => 'Exam already completed',
+                    ]);
+                }
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Exam already completed, cannot create new session',
+                ], 422);
+            }
+        }
+
+        $session = $this->sessionService->initiate(
+            attempt: $attempt,
+            request: $request,
+            sessionId: $validated['session_id'] ?? null
+        );
+
+        return response()->json([
+            'success' => true,
+            'session_id' => $session->id,
+            'session_token' => $session->session_token,
+            'status' => $session->status,
+            'exam_duration' => $attempt?->exam->duration_minutes ?? null,
+        ]);
+    }
+
+    /* =========================================================
+      |  VERIFY IDENTITY
+      ========================================================= */
+    public function verifyIdentity(Request $request)
+    {
+        $validated = $request->validate([
+            'face_image' => 'required',
+            'id_image' => 'nullable',
+            'id_number' => 'required|string|min:3|max:50',
+            'exam_attempt_id' => 'nullable|exists:exam_attempts,id',
+        ]);
+
+        $attempt = null;
+        if (!empty($validated['exam_attempt_id'])) {
+            $attempt = ExamAttempt::findOrFail($validated['exam_attempt_id']);
+            $this->authorizeAttempt($attempt);
+        }
+
+        $result = $this->identityService->verify(
+            user: $request->user(),
+            data: $validated,
+            attempt: $attempt
+        );
+
+        if (!$result->verified) {
             return response()->json([
-                'success' => true,
-                'session_id' => $session->id,
-                'session_token' => Str::random(64),
-                'message' => 'Proctoring session initiated successfully',
-                'exam_duration' => $examAttempt->exam->duration_minutes,
-            ], 201);
+                'verified' => false,
+                'message' => $result->message ?? 'Identity verification failed'
+            ], 422);
+        }
 
-        } catch (\Exception $e) {
-            \Log::error('Failed to initiate proctoring session', [
-                'error' => $e->getMessage(),
-                'exam_attempt_id' => $validated['exam_attempt_id'] ?? null,
+        return response()->json([
+            'verified' => true,
+            'session_id' => $result->session_id,
+            'score' => $result->score,
+            'message' => $result->message
+        ]);
+    }
+
+
+
+    /**
+     * POST /api/proctoring/extract-id
+     * يستقبل صورة البطاقة (base64) ويرجع الرقم القومي المستخرج منها.
+     */
+    public function extractId(Request $request)
+    {
+        $validated = $request->validate([
+            'id_image' => 'required|string', // base64 data URL
+        ]);
+
+        // $rawText = $this->GoogleVisionService->extractRawText($validated['id_image']);
+        $rawText = $this->googleVisionService->extractRawText($validated['id_image']);
+
+        if (!$rawText) {
+            return response()->json([
+                'success' => false,
+                'extracted_id' => null,
+                'message' => 'تعذر قراءة النص من الصورة. تأكد من وضوح الصورة وحاول مرة أخرى.',
+            ], 200); // 200 مع success: false، مش error، عشان ده سيناريو متوقع مش exception
+        }
+
+        // $extractedId = $this->GoogleVisionService->extractEgyptianNationalId($rawText);
+        $extractedId = $this->googleVisionService->extractEgyptianNationalId($rawText);
+
+        if (!$extractedId) {
+            Log::info('OCR succeeded but no valid national ID pattern found.', [
+                'raw_text_sample' => substr($rawText, 0, 200),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to initiate proctoring session',
-                'error' => $e->getMessage(),
-            ], 500);
+                'extracted_id' => null,
+                'message' => 'لم يتم العثور على رقم قومي صالح في الصورة.',
+            ], 200);
         }
+
+        return response()->json([
+            'success' => true,
+            'extracted_id' => $extractedId,
+        ]);
     }
 
-    /**
-     * الحصول على تفاصيل جلسة المراقبة
-     */
+
+
+
+    /* =========================================================
+     |  SESSION DETAILS
+     ========================================================= */
     public function getSession($sessionId)
     {
-        try {
-            $session = ProctoringSession::with([
-                'student',
-                'examAttempt.exam',
-                'violations' => fn($q) => $q->latest()->limit(10),
-            ])->findOrFail($sessionId);
+        $session = ProctoringSession::with(['student', 'violations', 'examAttempt'])
+            ->findOrFail($sessionId);
 
-            return response()->json([
-                'success' => true,
-                'session' => [
-                    'id' => $session->id,
-                    'status' => $session->status,
-                    'risk_score' => $session->risk_score,
-                    'violations_count' => $session->violations_count,
-                    'student_name' => $session->student->name,
-                    'started_at' => $session->started_at,
-                    'violations' => $session->violations->map(fn($v) => [
-                        'type' => $v->violation_type,
-                        'severity' => $v->severity,
-                        'timestamp' => $v->timestamp,
-                    ]),
-                ],
-            ]);
+        $this->authorizeSession($session);
 
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session not found',
-            ], 404);
+        $completedSkills = [];
+        if ($session->examAttempt) {
+            $pos = $session->examAttempt->current_position ?? [];
+            $completedSkills = $pos['completed_skills'] ?? [];
         }
+
+        return response()->json([
+            'success' => true,
+            'session' => [
+                'id' => $session->id,
+                'status' => $session->status,
+                'risk_score' => $session->risk_score,
+                'violations_count' => $session->violations_count,
+                'started_at' => $session->started_at,
+                'completed_skills' => $completedSkills,
+            ]
+        ]);
     }
 
-    /**
-     * بدء التسجيل
-     */
+    /* =========================================================
+     |  START RECORDING
+     ========================================================= */
     public function startRecording($sessionId)
     {
-        try {
-            $session = ProctoringSession::findOrFail($sessionId);
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-            if ($session->status !== 'pending') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid session status',
-                ], 422);
-            }
-
-            $session->update([
-                'status' => 'active',
-                'recording_status' => 'recording',
-                'started_at' => now(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Recording started',
-                'session_id' => $session->id,
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to start recording',
-            ], 500);
-        }
+        return $this->sessionService->start($session);
     }
 
-    /**
-     * إيقاف التسجيل مؤقتاً
-     */
+    /* =========================================================
+     |  PAUSE
+     ========================================================= */
     public function pauseRecording($sessionId)
     {
-        try {
-            $session = ProctoringSession::findOrFail($sessionId);
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-            if ($session->status !== 'active') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Session is not active',
-                ], 422);
-            }
-
-            $session->update([
-                'status' => 'paused',
-                'recording_status' => 'paused',
-                'paused_at' => now(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Recording paused',
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to pause recording',
-            ], 500);
-        }
+        return $this->sessionService->pause($session);
     }
 
-    /**
-     * استئناف التسجيل
-     */
+    /* =========================================================
+     |  RESUME
+     ========================================================= */
     public function resumeRecording($sessionId)
     {
-        try {
-            $session = ProctoringSession::findOrFail($sessionId);
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-            if ($session->status !== 'paused') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Session is not paused',
-                ], 422);
-            }
-
-            $session->update([
-                'status' => 'active',
-                'recording_status' => 'recording',
-                'resumed_at' => now(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Recording resumed',
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to resume recording',
-            ], 500);
-        }
+        return $this->sessionService->resume($session);
     }
 
-    /**
-     * إنهاء الجلسة
-     */
+    /* =========================================================
+     |  END SESSION
+     ========================================================= */
     public function endSession(Request $request, $sessionId)
     {
         $validated = $request->validate([
-            'end_reason' => 'required|in:exam_submitted,time_ended,terminated_by_proctor,connection_lost',
+            'close_reason' => 'required|in:exam_submitted,time_ended,terminated_by_proctor,connection_lost,student_left',
         ]);
 
-        try {
-            $session = ProctoringSession::findOrFail($sessionId);
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-            $session->update([
-                'status' => 'ended',
-                'recording_status' => 'completed',
-                'ended_at' => now(),
-                'duration_seconds' => $session->started_at 
-                    ? now()->diffInSeconds($session->started_at)
-                    : 0,
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Session ended successfully',
-                'duration' => $session->duration_seconds,
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to end session',
-            ], 500);
-        }
+        return $this->sessionService->end($session, $validated['close_reason']);
     }
 
-    /**
-     * تسجيل انتهاك
-     */
+    /* =========================================================
+     |  REPORT VIOLATION
+     ========================================================= */
     public function reportViolation(Request $request, $sessionId)
     {
         $validated = $request->validate([
-            'violation_type' => 'required|in:multiple_faces,face_not_visible,face_swap,tab_switched,browser_opened,copy_paste,external_device,suspicious_audio,suspicious_behavior,environment_change,person_in_background,phone_usage,unusual_eye_movement',
+            'violation_type' => 'required|string',
             'severity' => 'required|in:info,low,medium,high,critical',
             'description' => 'nullable|string',
             'evidence' => 'nullable|array',
         ]);
 
-        try {
-            $session = ProctoringSession::findOrFail($sessionId);
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-            // إنشاء سجل الانتهاك
-            $violation = ExamViolation::create([
-                'proctoring_session_id' => $session->id,
-                'student_id' => $session->student_id,
-                'violation_type' => $validated['violation_type'],
-                'severity' => $validated['severity'],
-                'description' => $validated['description'],
-                'evidence' => $validated['evidence'] ?? [],
-                'detected_by' => 'system',
-                'timestamp' => now(),
-            ]);
-
-            // تحديث إحصائيات الجلسة
-            $session->increment('violations_count');
-
-            // إنشاء تنبيه
-            CheatingAlert::create([
-                'proctoring_session_id' => $session->id,
-                'violation_id' => $violation->id,
-                'alert_type' => 'instant',
-                'message' => "تم كشف انتهاك: {$validated['violation_type']}",
-                'severity' => $validated['severity'],
-            ]);
-
-            // حساب risk score
-            $this->updateRiskScore($session);
-
-            return response()->json([
-                'success' => true,
-                'violation_id' => $violation->id,
-                'message' => 'Violation recorded',
-                'new_risk_score' => $session->risk_score,
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('Failed to report violation', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to report violation',
-            ], 500);
-        }
+        $this->violationService->report($session, $validated);
+        return response()->json(['success' => true]);
     }
 
-    /**
-     * الحصول على جميع الانتهاكات
-     */
+    /* =========================================================
+     |  GET VIOLATIONS
+     ========================================================= */
     public function getViolations($sessionId)
     {
-        try {
-            $session = ProctoringSession::findOrFail($sessionId);
-            $violations = $session->violations()->latest()->get();
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-            return response()->json([
-                'success' => true,
-                'violations_count' => count($violations),
-                'violations' => $violations->map(fn($v) => [
-                    'id' => $v->id,
-                    'type' => $v->violation_type,
-                    'severity' => $v->severity,
-                    'description' => $v->description,
-                    'timestamp' => $v->timestamp,
-                ]),
-            ]);
+        $violations = $session->violations()->latest()->get();
 
-        } catch (\Exception $e) {
+        return response()->json([
+            'success' => true,
+            'violations_count' => $violations->count(),
+            'violations' => $violations
+        ]);
+    }
+
+    /* =========================================================
+     |  FACE DETECTION LOG
+     ========================================================= */
+    // public function logFaceDetection(Request $request, $sessionId)
+    // {
+    //     $validated = $request->validate([
+    //         'face_count' => 'required|integer',
+    //         'screenshot' => 'nullable|string',
+    //     ]);
+
+    //     $session = ProctoringSession::findOrFail($sessionId);
+    //     $this->authorizeSession($session);
+
+    //     return $this->faceService->log($session, $validated);
+    // }
+
+
+    public function logFaceDetection(Request $request, $sessionId)
+    {
+        $validated = $request->validate([
+            'face_count' => 'required|integer',
+            'screenshot' => 'nullable|string',
+        ]);
+
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
+
+        return $this->faceService->log($session, $validated);
+    }
+
+    /* =========================================================
+     |  GET FACE DESCRIPTOR (registered face image URL)
+     |  The frontend uses this URL to compute a face-api
+     |  descriptor locally for real-time identity matching.
+     ========================================================= */
+    public function getFaceDescriptor($sessionId)
+    {
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
+
+        $faceImageUrl = $session->device_info['face_image'] ?? null;
+
+        if (!$faceImageUrl) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to fetch violations',
-            ], 500);
+                'face_image_url' => null,
+                'message' => 'No registered face image found for this session.',
+            ], 404);
         }
+
+        // Return secure route URL instead of public storage link
+        $secureUrl = route('v1.proctoring.session.face-image', ['sessionId' => $sessionId]);
+
+        return response()->json([
+            'success' => true,
+            'face_image_url' => $secureUrl,
+        ]);
     }
 
-    /**
-     * حساب risk score
-     */
-    private function updateRiskScore(ProctoringSession $session)
+    /* =========================================================
+     |  GET SECURE FACE IMAGE (binary stream bypassing public CORS)
+     ========================================================= */
+    public function getFaceImage($sessionId)
     {
-        $weights = [
-            'multiple_faces' => 25,
-            'face_swap' => 30,
-            'tab_switched' => 10,
-            'copy_paste' => 15,
-            'external_device' => 20,
-            'suspicious_behavior' => 18,
-        ];
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
 
-        $violations = $session->violations()->get();
-        $score = 0;
+        $faceImageUrl = $session->device_info['face_image'] ?? null;
 
-        foreach ($violations as $violation) {
-            $weight = $weights[$violation->violation_type] ?? 10;
-            $severityMultiplier = [
-                'info' => 0.25,
-                'low' => 0.5,
-                'medium' => 1,
-                'high' => 1.5,
-                'critical' => 2,
-            ][$violation->severity] ?? 1;
-
-            $score += $weight * $severityMultiplier;
+        if (!$faceImageUrl) {
+            abort(404, 'No registered face image found.');
         }
 
-        $session->update(['risk_score' => min($score, 100)]);
+        // Extract the PATH portion of the storage public URL (no domain/scheme)
+        // e.g. "https://example.com/api/storage" → "/api/storage"
+        $publicStorageUrlPath = rtrim(parse_url(\Illuminate\Support\Facades\Storage::disk('public')->url('/'), PHP_URL_PATH) ?? '/storage', '/');
+
+        // Get the path portion of the stored face image URL
+        // e.g. "https://example.com/api/storage/proctoring/faces/x.jpg" → "/api/storage/proctoring/faces/x.jpg"
+        $facePath = parse_url($faceImageUrl, PHP_URL_PATH) ?: $faceImageUrl;
+
+        // Strip the storage public path prefix → "proctoring/faces/x.jpg"
+        $path = preg_replace('#^' . preg_quote($publicStorageUrlPath, '#') . '/?#', '', $facePath);
+        $path = ltrim($path, '/');
+
+        if (!$path || !\Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
+            \Log::warning('Face image route could not resolve storage path.', [
+                'face_image_url' => $faceImageUrl,
+                'resolved_path' => $path,
+                'public_storage_path' => $publicStorageUrlPath,
+            ]);
+            abort(404, 'Face image file does not exist on disk.');
+        }
+
+        $file = \Illuminate\Support\Facades\Storage::disk('public')->get($path);
+        $type = \Illuminate\Support\Facades\Storage::disk('public')->mimeType($path);
+
+        return response($file, 200)->header('Content-Type', $type);
     }
+
+    /* =========================================================
+     |  AUTH HELPERS
+     ========================================================= */
+    private function authorizeSession(ProctoringSession $session)
+    {
+        $studentId = auth()->user()->student?->id;
+
+        abort_if(
+            $session->student_id !== $studentId,
+            403,
+            'Unauthorized session access'
+        );
+    }
+
+    private function authorizeAttempt(ExamAttempt $attempt)
+    {
+        $studentId = auth()->user()->student?->id; // ✅ جيب student_id من الـ user
+
+        // \Log::debug('authorizeAttempt', [
+        //     'attempt_student_id' => $attempt->student_id,
+        //     'auth_user_id' => auth()->id(),
+        //     'student_id' => $studentId,
+        // ]);
+
+        abort_if(
+            $attempt->student_id !== $studentId,
+            403,
+            'Unauthorized attempt access'
+        );
+    }
+
+    /* =========================================================
+      |  CLOSE SESSION (admin force close)
+      ========================================================= */
+    public function closeSession($sessionId)
+    {
+        $session = ProctoringSession::with('examAttempt')->findOrFail($sessionId);
+        $this->authorizeSession($session);
+
+        // End the proctoring session
+        $this->sessionService->end($session, 'terminated_by_proctor');
+
+        // Close the associated exam attempt if exists
+        if ($session->examAttempt && $session->examAttempt->status !== 'completed') {
+            $attempt = $session->examAttempt;
+
+            // Finalize active skill + log active level + update completed_skills
+            app(\App\Services\AttemptService::class)->finalizeActiveSkillAndLevelOnExit($attempt);
+            $attempt->refresh();
+
+            // Complete the attempt
+            app(\App\Services\AttemptService::class)->completeAttempt($attempt);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Session closed and exam terminated',
+            'session' => $session->fresh()
+        ]);
+    }
+
+
+
+
+    /* =========================================================
+ |  GET SESSION STATUS (lightweight — for student polling)
+ ========================================================= */
+    public function getSessionStatus($sessionId)
+    {
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
+
+        return response()->json([
+            'success' => true,
+            'status' => $session->status,
+        ]);
+    }
+
+    /* =========================================================
+     |  END SESSION VIA BEACON (browser close / logout)
+     |  navigator.sendBeacon لا يضمن إرسال الـ auth cookie
+     |  مأمّن بـ session_token بدل Sanctum
+     ========================================================= */
+    public function endSessionBeacon(Request $request, $sessionId)
+    {
+        $data = json_decode($request->getContent(), true) ?? [];
+
+        // تأمين بالـ session_token بدل الـ auth middleware
+        $token = $data['session_token'] ?? $request->header('X-Session-Token');
+
+        $session = ProctoringSession::find($sessionId);
+
+        if (!$session) {
+            return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+        }
+
+        // تحقق من الـ token
+        if (!$token || $session->session_token !== $token) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        // لو الجلسة خلصت بالفعل، مفيش داعي نعمل حاجة
+        if ($session->status === 'ended') {
+            return response()->json(['success' => true, 'message' => 'Already ended']);
+        }
+
+        $reason = $data['close_reason'] ?? 'connection_lost';
+
+        $session->update([
+            'status' => 'ended',
+            'recording_status' => 'completed',
+            'ended_at' => now(),
+            'close_reason' => $reason,
+            'duration_seconds' => $session->started_at
+                ? now()->diffInSeconds($session->started_at)
+                : null,
+        ]);
+
+        \Log::info('Proctoring session ended via beacon', [
+            'session_id' => $session->id,
+            'close_reason' => $reason,
+            'ended_at' => now()->toISOString(),
+        ]);
+
+        return response()->json(['success' => true]);
+    }
+
+    /* =========================================================
+     |  RECORD SKILL ENTRY
+     ========================================================= */
+    public function recordSkill(Request $request, $sessionId)
+    {
+        $validated = $request->validate([
+            'skill_id' => 'required|exists:skills,id',
+        ]);
+
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
+
+        // سلامة البيانات: إذا كانت هناك مهارات مفتوحة بدون exited_at، نغلقها الآن
+        $activeSkills = $session->skills()->wherePivotNull('exited_at')->get();
+        foreach ($activeSkills as $activeSkill) {
+            if ($activeSkill->id !== (int) $validated['skill_id']) {
+                $session->skills()->updateExistingPivot($activeSkill->id, [
+                    'exited_at' => now(),
+                ]);
+            }
+        }
+
+        // syncWithoutDetaching عشان لو المهارة موجودة أصلاً ما تتضافش تاني
+        $session->skills()->syncWithoutDetaching([
+            $validated['skill_id'] => [
+                'entered_at' => now(),
+                'exited_at' => null, // ✅ Reset exited_at to null on entering/re-entering
+            ],
+        ]);
+
+        return response()->json(['success' => true]);
+    }
+
+    /* =========================================================
+     |  RECORD SKILL EXIT
+     ========================================================= */
+    public function recordSkillExit(Request $request, $sessionId)
+    {
+        $validated = $request->validate([
+            'skill_id' => 'required|exists:skills,id',
+        ]);
+
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorizeSession($session);
+
+        $attempt = $session->examAttempt;
+        $questionsAnswered = 0;
+        if ($attempt) {
+            $questionsAnswered = \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)
+                ->whereHas('question', fn($q) => $q->where('skill_id', $validated['skill_id']))
+                ->count();
+        }
+
+        $this->sessionService->recordSkillExit($session, (int) $validated['skill_id'], $questionsAnswered);
+
+        return response()->json(['success' => true]);
+    }
+
+
+
 }

@@ -217,10 +217,10 @@ class ScoringService
             $studentMatches = json_decode($studentMatches, true) ?? [];
         }
         
-        Log::info('Matching Grade Start', [
-            'question_id' => $question->id,
-            'student_answers' => $studentMatches
-        ]);
+        // Log::info('Matching Grade Start', [
+        //     'question_id' => $question->id,
+        //     'student_answers' => $studentMatches
+        // ]);
 
         if (!is_array($studentMatches) || empty($studentMatches)) {
             return 0;
@@ -242,7 +242,7 @@ class ScoringService
             }
         }
 
-        Log::info('Matching Correct Pairs', ['correct_pairs' => $correctPairs]);
+        // Log::info('Matching Correct Pairs', ['correct_pairs' => $correctPairs]);
 
         $totalPairs = count($correctPairs);
         if ($totalPairs === 0) return 0;
@@ -258,7 +258,7 @@ class ScoringService
                 
                 if ($actual === $expected) {
                     $earned += $pointsPerPair;
-                    Log::info("Match Found", ['opt_id' => $id, 'text' => $actual]);
+                    // Log::info("Match Found", ['opt_id' => $id, 'text' => $actual]);
                 } else {
                     Log::info("Mismatch", ['opt_id' => $id, 'student' => $actual, 'expected' => $expected]);
                 }
@@ -266,7 +266,7 @@ class ScoringService
         }
 
         $finalScore = round($earned, 2);
-        Log::info('Matching Grade Result', ['score' => $finalScore]);
+        // Log::info('Matching Grade Result', ['score' => $finalScore]);
         
         return $finalScore;
     }

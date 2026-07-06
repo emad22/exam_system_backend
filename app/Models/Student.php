@@ -69,6 +69,18 @@ class Student extends Model
         return $this->belongsTo(Partner::class);
     }
 
+    public function proctoringSessions()
+    {
+        return $this->hasMany(ProctoringSession::class);
+    }
+
+    public function activeProctoringSession(): HasOne
+    {
+        return $this->hasOne(ProctoringSession::class, 'student_id')
+                    ->whereIn('status', ['pending', 'active', 'paused'])
+                    ->latest();
+    }
+
     public function attempts(): HasMany
     {
         return $this->hasMany(ExamAttempt::class);

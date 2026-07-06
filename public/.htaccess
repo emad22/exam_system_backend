@@ -23,3 +23,15 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# ─── PHP Upload & Body Limits ────────────────────────────────────────────────
+# Needed for proctoring: face/ID images are sent as base64 strings (~100-500 KB)
+<IfModule mod_php.c>
+    php_value upload_max_filesize 20M
+    php_value post_max_size 25M
+    php_value memory_limit 256M
+    php_value max_execution_time 60
+    php_value max_input_time 60
+</IfModule>
+# For PHP-FPM / CGI (php_value won't work, use php_admin_value via .user.ini instead)
+

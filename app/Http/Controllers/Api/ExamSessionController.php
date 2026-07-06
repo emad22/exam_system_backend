@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\ExamAttemptSkill;
+use App\Models\ProctoringSession;
 use App\Models\Skill;
 use App\Models\StudentExamConfig;
 use App\Models\User;
@@ -24,7 +25,8 @@ class ExamSessionController extends Controller
         private readonly ExamService $examService,
         private readonly QuestionService $questionService,
         private readonly AttemptService $attemptService,
-    ) {}
+    ) {
+    }
 
     /**
      * List all available exams for the student.
@@ -82,13 +84,18 @@ class ExamSessionController extends Controller
             }
         }
 
-        $getOrder = function($name) {
+        $getOrder = function ($name) {
             $name = strtolower($name);
-            if (str_contains($name, 'listening')) return 1;
-            if (str_contains($name, 'reading')) return 2;
-            if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram')) return 3;
-            if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ')) return 4;
-            if (str_contains($name, 'speaking') || str_contains($name, 'speak')) return 5;
+            if (str_contains($name, 'listening'))
+                return 1;
+            if (str_contains($name, 'reading'))
+                return 2;
+            if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram'))
+                return 3;
+            if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ'))
+                return 4;
+            if (str_contains($name, 'speaking') || str_contains($name, 'speak'))
+                return 5;
             return 99;
         };
 
@@ -114,13 +121,18 @@ class ExamSessionController extends Controller
     {
         $exam->load(['skills', 'category']);
         if ($exam->skills) {
-            $getOrder = function($name) {
+            $getOrder = function ($name) {
                 $name = strtolower($name);
-                if (str_contains($name, 'listening')) return 1;
-                if (str_contains($name, 'reading')) return 2;
-                if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram')) return 3;
-                if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ')) return 4;
-                if (str_contains($name, 'speaking') || str_contains($name, 'speak')) return 5;
+                if (str_contains($name, 'listening'))
+                    return 1;
+                if (str_contains($name, 'reading'))
+                    return 2;
+                if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram'))
+                    return 3;
+                if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ'))
+                    return 4;
+                if (str_contains($name, 'speaking') || str_contains($name, 'speak'))
+                    return 5;
                 return 99;
             };
             $sortedSkills = $exam->skills->sortBy(fn($s) => $getOrder($s->name))->values();
@@ -149,7 +161,7 @@ class ExamSessionController extends Controller
         }
 
         $ownerKey = $isDemo ? 'user_id' : 'student_id';
-        $ownerId  = $isDemo ? $user->id : $studentProfile->id;
+        $ownerId = $isDemo ? $user->id : $studentProfile->id;
 
         $requestedSkillId = $request->has('skill_id')
             ? (int) $request->skill_id
@@ -157,9 +169,9 @@ class ExamSessionController extends Controller
 
         // latest attempt
         $attempt = ExamAttempt::where($ownerKey, $ownerId)
-                                ->where('exam_id', $exam->id)
-                                ->orderByDesc('created_at')
-                                ->first();
+            ->where('exam_id', $exam->id)
+            ->orderByDesc('created_at')
+            ->first();
 
         /*
         |----------------------------------------------------
@@ -167,7 +179,7 @@ class ExamSessionController extends Controller
         |----------------------------------------------------
         */
         if (!$attempt) {
-            $attempt = $this->createNewAttempt( $request, $exam, $user, $studentProfile,  $isDemo );
+            $attempt = $this->createNewAttempt($request, $exam, $user, $studentProfile, $isDemo);
             if (!$attempt) {
                 return response()->json(['error' => 'Exam not assigned.'], 403);
             }
@@ -206,7 +218,8 @@ class ExamSessionController extends Controller
             $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
 
             $assignedSkills = collect($exam->skills)
-                ->filter(fn($skill) =>
+                ->filter(
+                    fn($skill) =>
                     $this->examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers)
                 )
                 ->values();
@@ -216,11 +229,11 @@ class ExamSessionController extends Controller
 
                 return match (true) {
                     str_contains($name, 'listening') => 1,
-                    str_contains($name, 'reading')    => 2,
+                    str_contains($name, 'reading') => 2,
                     str_contains($name, 'structure'),
-                    str_contains($name, 'grammar')    => 3,
-                    str_contains($name, 'writing')    => 4,
-                    str_contains($name, 'speaking')   => 5,
+                    str_contains($name, 'grammar') => 3,
+                    str_contains($name, 'writing') => 4,
+                    str_contains($name, 'speaking') => 5,
                     default => 99,
                 };
             };
@@ -249,7 +262,7 @@ class ExamSessionController extends Controller
             $attempt->update(['status' => 'ongoing']);
         }
 
-        $attempt = $this->handleResumeAttempt( $request, $attempt, $exam,  $user, $isDemo);
+        $attempt = $this->handleResumeAttempt($request, $attempt, $exam, $user, $isDemo);
 
         /*
         |----------------------------------------------------
@@ -279,14 +292,10 @@ class ExamSessionController extends Controller
             $admins = User::whereIn('role', ['admin', 'teacher'])->get();
             \Illuminate\Support\Facades\Notification::send($admins, new \App\Notifications\ExamExitedNotification($attempt));
 
-            $pos = $attempt->current_position ?? [];
-            if (!empty($pos['skill_ids']) && isset($pos['current_skill_index'])) {
-                $skillId = $pos['skill_ids'][$pos['current_skill_index']];
-                $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
-                $maxLevel = \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $skillId)->max('level_number') ?? 1;
-                $this->attemptService->finalizeSkill($attempt, $skillId, $skillScore, $maxLevel, 'completed');
-                $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
-            }
+            // Finalize active skill + log active level + update completed_skills
+            $this->attemptService->finalizeActiveSkillAndLevelOnExit($attempt);
+            $attempt->refresh();
+
             $this->attemptService->completeAttempt($attempt);
         }
         return response()->json(['success' => true]);
@@ -295,7 +304,8 @@ class ExamSessionController extends Controller
     public function resetDemo(Request $request, Exam $exam)
     {
         $user = $request->user();
-        if (!$this->examService->isDemoUser($user)) return response()->json(['error' => 'Unauthorized.'], 403);
+        if (!$this->examService->isDemoUser($user))
+            return response()->json(['error' => 'Unauthorized.'], 403);
         ExamAttempt::where('user_id', $user->id)->where('exam_id', $exam->id)->delete();
         return response()->json(['message' => 'Demo progress reset.']);
     }
@@ -315,11 +325,13 @@ class ExamSessionController extends Controller
 
     private function handleResumeAttempt(Request $request, ExamAttempt $attempt, Exam $exam, $user, bool $isDemo): ExamAttempt
     {
-        if (!$request->has('skill_id')) return $attempt;
+        if (!$request->has('skill_id'))
+            return $attempt;
         $requestedSkillId = (int) $request->skill_id;
         $pos = $attempt->current_position;
         $skillIndex = array_search($requestedSkillId, $pos['skill_ids']);
-        if ($skillIndex === false) return $attempt;
+        if ($skillIndex === false)
+            return $attempt;
 
         if ($isDemo) {
             $isFinished = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->where('skill_id', $requestedSkillId)->whereIn('status', ['completed', 'failed'])->exists();
@@ -328,19 +340,19 @@ class ExamSessionController extends Controller
                 $this->attemptService->completeAttempt($attempt);
                 $newAttempt = ExamAttempt::create(
                     [
-                        'user_id' => Auth::id(), 
-                        'exam_id' => $exam->id, 
-                        'status' => 'ongoing', 
-                        'started_at' => now(), 
+                        'user_id' => Auth::id(),
+                        'exam_id' => $exam->id,
+                        'status' => 'ongoing',
+                        'started_at' => now(),
                         'current_position' => [
-                            'skill_ids' => $pos['skill_ids'], 
-                            'current_skill_index' => $skillIndex, 
-                            'current_level' => $requestedLevel, 
+                            'skill_ids' => $pos['skill_ids'],
+                            'current_skill_index' => $skillIndex,
+                            'current_level' => $requestedLevel,
                             'current_skill_started_at' => null
-                            ]
+                        ]
                     ]
                 );
-                
+
                 ExamAttemptSkill::create([
                     'exam_attempt_id' => $newAttempt->id,
                     'skill_id' => $requestedSkillId,
@@ -355,15 +367,14 @@ class ExamSessionController extends Controller
             $pos['current_level'] = $requestedLevel;
         }
 
-       
         if ($pos['current_skill_index'] !== $skillIndex) {
             $existingSkill = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
                 ->where('skill_id', $requestedSkillId)->first();
-            
-            $pos['current_skill_started_at'] = ($existingSkill && $existingSkill->started_at) 
-                ? $existingSkill->started_at->toIso8601String() 
+
+            $pos['current_skill_started_at'] = ($existingSkill && $existingSkill->started_at)
+                ? $existingSkill->started_at->toIso8601String()
                 : null;
-                
+
         }
 
 
@@ -378,30 +389,39 @@ class ExamSessionController extends Controller
             $config = StudentExamConfig::where('student_id', $studentProfile->id ?? 0)->where('exam_id', $exam->id)->first();
             if (!$config) {
                 $config = \App\Models\Student::assignDefaultExam($studentProfile, $exam->id); //368
-                if (!$config) return null;
+                if (!$config)
+                    return null;
             }
         }
         $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
-        if (empty($allowedSkillIdentifiers)) $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
-        
+        if (empty($allowedSkillIdentifiers))
+            $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
+
         $assignedSkills = [];
         foreach ($exam->skills as $skill) {
-            if ($this->examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers)) $assignedSkills[] = $skill;
+            if ($this->examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers))
+                $assignedSkills[] = $skill;
         }
-        if (empty($assignedSkills)) return 'no_skills';
+        if (empty($assignedSkills))
+            return 'no_skills';
 
         // Sort skills based on the user's custom ordering map
-        $getOrder = function($name) {
+        $getOrder = function ($name) {
             $name = strtolower($name);
-            if (str_contains($name, 'listening')) return 1;
-            if (str_contains($name, 'reading')) return 2;
-            if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram')) return 3;
-            if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ')) return 4;
-            if (str_contains($name, 'speaking') || str_contains($name, 'speak')) return 5;
+            if (str_contains($name, 'listening'))
+                return 1;
+            if (str_contains($name, 'reading'))
+                return 2;
+            if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram'))
+                return 3;
+            if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ'))
+                return 4;
+            if (str_contains($name, 'speaking') || str_contains($name, 'speak'))
+                return 5;
             return 99;
         };
 
-        usort($assignedSkills, function($a, $b) use ($getOrder) {
+        usort($assignedSkills, function ($a, $b) use ($getOrder) {
             return $getOrder($a->name) - $getOrder($b->name);
         });
 
@@ -410,14 +430,15 @@ class ExamSessionController extends Controller
         $startIndex = 0;
         if ($request->has('skill_id')) {
             $found = array_search((int) $request->skill_id, $assignedSkillIds);
-            if ($found !== false) $startIndex = $found;
+            if ($found !== false)
+                $startIndex = $found;
         }
 
         $requestedLevel = ($isDemo && $request->has('level_id')) ? (int) $request->level_id : 1;
 
         $startingLevel = $this->questionService->getValidStartingLevel(
-            $exam->id, 
-            $assignedSkillIds[$startIndex] ?? 0, 
+            $exam->id,
+            $assignedSkillIds[$startIndex] ?? 0,
             $requestedLevel
         );
 
@@ -428,31 +449,55 @@ class ExamSessionController extends Controller
 
         $attempt = ExamAttempt::create(
             [
-                'student_id' => $studentProfile?->id, 
+                'student_id' => $studentProfile?->id,
                 'user_id' => Auth::id(),
-                'exam_id' => $exam->id, 
+                'exam_id' => $exam->id,
                 'status' => 'ongoing',
                 'ip_address' => $request->ip(),
-                'started_at' => now(), 
+                'started_at' => now(),
                 'current_position' => [
-                    'skill_ids' => $assignedSkillIds, 
-                    'current_skill_index' => $startIndex, 
+                    'skill_ids' => $assignedSkillIds,
+                    'current_skill_index' => $startIndex,
                     // 'current_level' => $startingLevel, 
-                    'completed_skills' => [], 
+                    'completed_skills' => [],
                     'current_skill_started_at' => null
-                    ]
+                ]
             ]
         );
-        
+
         // Explicitly create the first skill record to match started_at
         ExamAttemptSkill::firstOrCreate(
             [
-                'exam_attempt_id' => $attempt->id, 
+                'exam_attempt_id' => $attempt->id,
                 'skill_id' => $assignedSkillIds[$startIndex]
             ],
             ['started_at' => $attempt->started_at, 'status' => 'in_progress']
         );
 
+        // Link existing proctoring session (created during pre-exam verification) to this attempt
+        $this->linkProctoringSessionToAttempt($attempt);
+
         return $attempt;
+    }
+
+    /**
+     * Link existing proctoring session (created during pre-exam verification) to the exam attempt.
+     */
+    private function linkProctoringSessionToAttempt(ExamAttempt $attempt): void
+    {
+        $studentId = $attempt->student_id ?: $attempt->user_id;
+
+        // Find the most recent proctoring session for this student without an exam attempt
+        $existingSession = ProctoringSession::where('student_id', $studentId)
+            ->whereNull('exam_attempt_id')
+            ->where('status', 'pending')
+            ->latest()
+            ->first();
+
+        if ($existingSession) {
+            $existingSession->update([
+                'exam_attempt_id' => $attempt->id,
+            ]);
+        }
     }
 }

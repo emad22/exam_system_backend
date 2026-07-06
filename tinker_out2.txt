@@ -1,0 +1,5 @@
+refreshed_started_at: 2026-06-30 11:45:27
+refreshed_duration_seconds: 0
+auth_controller_started_at: 2026-06-30 11:45:52
+auth_controller_now: 2026-06-30 11:55:52
+auth_controller_totalSeconds: -600.639531

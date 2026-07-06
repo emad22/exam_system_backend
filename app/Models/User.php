@@ -47,6 +47,15 @@ class User extends Authenticatable
     ];
 
     /**
+     * The attributes that should be appended to the model's array form.
+     *
+     * @var array
+     */
+    protected $appends = [
+        'name',
+    ];
+
+    /**
      * The attributes that should be hidden for serialization.
      *
      * @var list<string>
@@ -69,6 +78,11 @@ class User extends Authenticatable
             'is_active' => 'boolean',
             'birth_date' => 'date'
         ];
+    }
+
+    public function getNameAttribute()
+    {
+        return trim(($this->first_name ?? '') . ' ' . ($this->last_name ?? ''));
     }
 
     public function student(): \Illuminate\Database\Eloquent\Relations\HasOne

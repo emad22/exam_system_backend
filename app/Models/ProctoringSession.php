@@ -35,9 +35,12 @@ class ProctoringSession extends Model
         'resumed_at',
         'ended_at',
         'duration_seconds',
+        'total_paused_seconds',
         'report_status',
         'report_id',
         'final_verdict',
+        'closed_at',
+        'close_reason',
     ];
 
     protected $casts = [
@@ -49,6 +52,7 @@ class ProctoringSession extends Model
         'resumed_at' => 'datetime',
         'ended_at' => 'datetime',
         'identity_verification_at' => 'datetime',
+        'closed_at' => 'datetime',
     ];
 
     // العلاقات
@@ -59,7 +63,7 @@ class ProctoringSession extends Model
 
     public function student(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'student_id');
+        return $this->belongsTo(Student::class, 'student_id');
     }
 
     public function proctor(): BelongsTo
@@ -100,7 +104,8 @@ class ProctoringSession extends Model
     // Scopes
     public function scopeActive($query)
     {
-        return $query->where('status', 'active');
+        return $query->whereIn('status', ['pending', 'active', 'paused'])
+            ->whereNull('closed_at');
     }
 
     public function scopeEnded($query)
@@ -117,7 +122,7 @@ class ProctoringSession extends Model
     public function getRiskLevelAttribute(): string
     {
         $score = $this->risk_score;
-        
+
         if ($score >= 80) {
             return 'critical';
         } elseif ($score >= 60) {
@@ -134,7 +139,7 @@ class ProctoringSession extends Model
         if (!$this->duration_seconds) {
             return 0;
         }
-        
+
         return (int) ($this->duration_seconds / 60);
     }
 
@@ -151,5 +156,16 @@ class ProctoringSession extends Model
     public function hasEnded(): bool
     {
         return $this->status === 'ended';
+    }
+
+
+    public function skills()
+    {
+        return $this->belongsToMany(
+            \App\Models\Skill::class,
+            'proctoring_session_skills'
+        )
+            ->withPivot(['entered_at', 'exited_at', 'questions_answered'])
+            ->withTimestamps();
     }
 }
