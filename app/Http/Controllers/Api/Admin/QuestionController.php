@@ -57,7 +57,7 @@ class QuestionController extends Controller
 
         $data = $request->all();
 
-        $questionsJson = $request->request->get('questions');
+        $questionsJson = $request->input('questions');
         if (is_string($questionsJson)) {
             $decodedQuestions = json_decode($questionsJson, true);
             if (is_array($decodedQuestions)) {
@@ -104,9 +104,9 @@ class QuestionController extends Controller
             'passage_content' => 'nullable|string',
             'passage_questions_limit' => 'nullable|integer|min:1',
             'passage_is_random' => 'nullable',
-            'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
-            'p_audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
-            'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
+            'p_media_file' => 'nullable|file|max:20480',
+            'p_audio_file' => 'nullable|file|max:20480',
+            'p_image_file' => 'nullable|file|mimetypes:image/jpeg,image/png,image/gif,image/svg+xml,image/webp|max:10240',
             'p_image_width' => 'nullable|numeric',
             'p_image_height' => 'nullable|numeric',
 
@@ -326,7 +326,7 @@ class QuestionController extends Controller
     {
         $data = $request->all();
 
-        $questionsJson = $request->request->get('questions');
+        $questionsJson = $request->input('questions');
         if (is_string($questionsJson)) {
             $decodedQuestions = json_decode($questionsJson, true);
             if (is_array($decodedQuestions)) {
@@ -373,9 +373,9 @@ class QuestionController extends Controller
             'passage_content' => 'nullable|string',
             'passage_questions_limit' => 'nullable|integer|min:1',
             'passage_is_random' => 'nullable',
-            'p_media_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
-            'p_audio_file' => 'nullable|file|mimes:mp3,wav,ogg,m4a|max:10240',
-            'p_image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:10240',
+            'p_media_file' => 'nullable|file|max:20480',
+            'p_audio_file' => 'nullable|file|max:20480',
+            'p_image_file' => 'nullable|file|mimetypes:image/jpeg,image/png,image/gif,image/svg+xml,image/webp|max:10240',
             'p_image_width' => 'nullable|numeric',
             'p_image_height' => 'nullable|numeric',
 
@@ -605,7 +605,7 @@ class QuestionController extends Controller
                             $optImagePath = $existingOption?->image_path; // دلوقتي هتلاقي الصورة
                         }
 
-                       
+
                         if (isset($opt['clear_audio']) && $opt['clear_audio']) {
                             $optAudioPath = null;
                         } elseif (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
@@ -624,7 +624,7 @@ class QuestionController extends Controller
                                 'sort_order' => ($oIdx + 1) * 10,
                                 'dir' => $opt['dir'] ?? 'ltr',
                                 'image_path' => $optImagePath,
-                                'sound_path'  => $optAudioPath,
+                                'sound_path' => $optAudioPath,
 
                             ]);
                         } else {
@@ -634,7 +634,7 @@ class QuestionController extends Controller
                                 'sort_order' => ($oIdx + 1) * 10,
                                 'dir' => $opt['dir'] ?? 'ltr',
                                 'image_path' => $optImagePath,
-                                'sound_path'=> $optAudioPath,
+                                'sound_path' => $optAudioPath,
                             ]);
                         }
                     }

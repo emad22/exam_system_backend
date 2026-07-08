@@ -11,7 +11,8 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('students', function (Blueprint $table) {
-            //
+            $table->boolean('is_demo')->default(false)->after('allows_retry');
+            $table->boolean('is_demo_proctored')->default(false)->after('is_demo');
         });
     }
 
@@ -21,7 +22,7 @@ return new class extends Migration {
     public function down(): void
     {
         Schema::table('students', function (Blueprint $table) {
-            //
+            $table->dropColumn(['is_demo', 'is_demo_proctored']);
         });
     }
 };

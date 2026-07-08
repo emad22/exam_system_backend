@@ -497,6 +497,7 @@ class ExamSessionController extends Controller
         if ($existingSession) {
             $existingSession->update([
                 'exam_attempt_id' => $attempt->id,
+                'status' => 'active',
             ]);
         }
     }

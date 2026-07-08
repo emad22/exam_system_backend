@@ -12,7 +12,7 @@ class Student extends Model
     use LogsActivity;
 
     // Credentials move to User table. This table stores the Profile.
-    
+
     protected $fillable = [
         'user_id',
         'student_code',
@@ -31,11 +31,15 @@ class Student extends Model
         'wordpress_user_id',
         'partner_id',
         'allows_retry',
+        'is_demo',
+        'is_demo_proctored',
     ];
 
     protected $casts = [
         'is_continue' => 'boolean',
         'allows_retry' => 'boolean',
+        'is_demo' => 'boolean',
+        'is_demo_proctored' => 'boolean',
         'birth_date' => 'date',
         'assigned_skills' => 'array',
     ];
@@ -77,8 +81,8 @@ class Student extends Model
     public function activeProctoringSession(): HasOne
     {
         return $this->hasOne(ProctoringSession::class, 'student_id')
-                    ->whereIn('status', ['pending', 'active', 'paused'])
-                    ->latest();
+            ->whereIn('status', ['pending', 'active', 'paused'])
+            ->latest();
     }
 
     public function attempts(): HasMany
@@ -131,18 +135,19 @@ class Student extends Model
         // Priority 3: Fallback to default/latest matching the category
         if (!$exam) {
             $exam = Exam::where('exam_category_id', $student->exam_category_id)
-                        ->where('is_default', true)
-                        ->latest()
-                        ->first();
+                ->where('is_default', true)
+                ->latest()
+                ->first();
         }
 
         if (!$exam) {
             $exam = Exam::where('exam_category_id', $student->exam_category_id)
-                        ->latest()
-                        ->first();
+                ->latest()
+                ->first();
         }
 
-        if (!$exam) return null;
+        if (!$exam)
+            return null;
 
         // 2. Determine Skill Selection Priority
         // ... rest of the existing logic ...
@@ -150,22 +155,22 @@ class Student extends Model
         // 2. Determine Skill Selection Priority Loop
         // Priority 1: Direct Student skills
         $assignedSkillIds = array_filter((array) $student->assigned_skills);
-        
+
         // Priority 2: Package skills
         if (empty($assignedSkillIds) && $student->package && $student->package->skills) {
             $assignedSkillIds = array_filter((array) $student->package->skills);
         }
-        
+
         // Priority 3: Inherit directly from Exam Defaults logic
         if (empty($assignedSkillIds)) {
             return StudentExamConfig::updateOrCreate(
                 ['student_id' => $student->id, 'exam_id' => $exam->id],
                 [
-                    'want_listening'  => (bool) $exam->default_want_listening,
-                    'want_reading'    => (bool) $exam->default_want_reading,
-                    'want_grammar'    => (bool) $exam->default_want_grammar,
-                    'want_writing'    => (bool) $exam->default_want_writing,
-                    'want_speaking'   => (bool) $exam->default_want_speaking,
+                    'want_listening' => (bool) $exam->default_want_listening,
+                    'want_reading' => (bool) $exam->default_want_reading,
+                    'want_grammar' => (bool) $exam->default_want_grammar,
+                    'want_writing' => (bool) $exam->default_want_writing,
+                    'want_speaking' => (bool) $exam->default_want_speaking,
                 ]
             );
         }
@@ -187,8 +192,8 @@ class Student extends Model
         $skillCodes = $skills->pluck('short_code')->filter()->map(fn($v) => strtolower(trim($v)))->toArray();
 
         // Helper to check
-        $hasSkill = function($aliases) use ($skillNames, $skillCodes) {
-            foreach((array)$aliases as $alias) {
+        $hasSkill = function ($aliases) use ($skillNames, $skillCodes) {
+            foreach ((array) $aliases as $alias) {
                 $alias = strtolower($alias);
                 if (in_array($alias, $skillNames) || in_array($alias, $skillCodes)) {
                     return true;
@@ -200,11 +205,11 @@ class Student extends Model
         return StudentExamConfig::updateOrCreate(
             ['student_id' => $student->id, 'exam_id' => $exam->id],
             [
-                'want_listening'  => $hasSkill(['listening', 'l']),
-                'want_reading'    => $hasSkill(['reading', 'reading comprehension', 'r']),
-                'want_grammar'    => $hasSkill(['grammar', 'structure', 'g']),
-                'want_writing'    => $hasSkill(['writing', 'w']),
-                'want_speaking'   => $hasSkill(['speaking', 's']),
+                'want_listening' => $hasSkill(['listening', 'l']),
+                'want_reading' => $hasSkill(['reading', 'reading comprehension', 'r']),
+                'want_grammar' => $hasSkill(['grammar', 'structure', 'g']),
+                'want_writing' => $hasSkill(['writing', 'w']),
+                'want_speaking' => $hasSkill(['speaking', 's']),
             ]
         );
     }
@@ -217,14 +222,14 @@ class Student extends Model
     {
         // 1. Pre-fetch all skills for mapping IDs to Codes
         $allSkillsMap = Skill::all()->keyBy('id');
-        
-        $normalize = function($skills) use ($allSkillsMap) {
+
+        $normalize = function ($skills) use ($allSkillsMap) {
             return collect((array) $skills)
-                ->map(function($s) use ($allSkillsMap) {
+                ->map(function ($s) use ($allSkillsMap) {
                     if (is_numeric($s) && isset($allSkillsMap[$s])) {
                         return $allSkillsMap[$s]->short_code;
                     }
-                    return (string)$s;
+                    return (string) $s;
                 })
                 ->map(fn($s) => strtoupper(trim($s)))
                 ->filter()
@@ -234,7 +239,8 @@ class Student extends Model
         };
 
         $assigned = $normalize($this->assigned_skills);
-        if (empty($assigned)) return;
+        if (empty($assigned))
+            return;
 
         // 2. Fetch all standard packages
         $packages = Package::where('id', '!=', 4)->get(); // 4 is Custom
@@ -242,7 +248,7 @@ class Student extends Model
 
         foreach ($packages as $package) {
             $packageSkills = $normalize($package->skills);
-            
+
             if (!empty($packageSkills) && $assigned === $packageSkills) {
                 $matchingPackageId = $package->id;
                 break;

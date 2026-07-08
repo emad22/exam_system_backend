@@ -1,0 +1,15 @@
+ Volume in drive C is Windows-SSD
+ Volume Serial Number is 96D5-9E5F
+
+ Directory of C:\wamp64\bin\php
+
+02/18/2024  12:58 PM    <DIR>          .
+02/18/2024  12:36 PM    <DIR>          ..
+02/18/2024  12:58 PM               108 DO_NOT_DELETE_8.1.26.txt
+02/18/2024  12:36 PM    <DIR>          php7.4.33
+02/18/2024  12:36 PM    <DIR>          php8.0.30
+02/18/2024  12:36 PM    <DIR>          php8.1.26
+02/18/2024  12:36 PM    <DIR>          php8.2.13
+02/18/2024  12:36 PM    <DIR>          php8.3.0
+               1 File(s)            108 bytes
+               7 Dir(s)  46,306,349,056 bytes free

@@ -158,8 +158,23 @@ class IdentityVerificationService
      * يستخرج الرقم القومي من صورة البطاقة باستخدام Google Vision API.
      * استبدلنا هنا منطق Gemini القديم (كان معطل ومش بيبارس الرد أصلاً).
      */
-    private function extractIdFromImage(string $image): array
+    private function extractIdFromImage($image): array
     {
+        if ($image instanceof \Illuminate\Http\UploadedFile) {
+            $imageContent = file_get_contents($image->getRealPath());
+            $image = base64_encode($imageContent);
+        } elseif (is_string($image) && preg_match('#^https?://#i', $image)) {
+            $imageContent = @file_get_contents($image);
+            $image = $imageContent ? base64_encode($imageContent) : '';
+        }
+
+        if (empty($image)) {
+            return [
+                'extracted_id' => '',
+                'confidence_score' => 0,
+            ];
+        }
+
         $rawText = $this->visionService->extractRawText($image);
 
         \Log::info('Google Vision OCR — raw text', [

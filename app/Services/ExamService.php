@@ -15,8 +15,15 @@ class ExamService
      */
     public function isDemoUser(?Authenticatable $user): bool
     {
-        if (!$user) return false;
-        return in_array(strtolower($user->role ?? ''), ['demo', 'deom', 'staff']);
+        if (!$user)
+            return false;
+        if (in_array(strtolower($user->role ?? ''), ['demo', 'deom', 'staff'])) {
+            return true;
+        }
+        if (isset($user->student) && $user->student && $user->student->is_demo) {
+            return true;
+        }
+        return false;
     }
 
     /**

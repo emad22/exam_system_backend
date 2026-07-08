@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Certificate;
+use App\Models\ExamAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -21,6 +22,7 @@ class CertificateController extends Controller
 
         $certificates = Certificate::with(['attempt.exam'])
             ->where('student_id', $student->id)
+            ->where('is_visible_to_student', true)
             ->latest()
             ->get();
 
@@ -32,12 +34,21 @@ class CertificateController extends Controller
      */
     public function download(Certificate $certificate)
     {
-        // Check authorization (ensure student owns the certificate)
+        // Check authorization (ensure student owns the certificate, or admin/teacher, or partner owns the student)
         $user = auth()->user();
-        if ($user->role !== 'admin' && $user->role !== 'teacher') {
-            if ($certificate->student_id !== $user->student?->id) {
+        if ($user->role === 'admin' || $user->role === 'teacher') {
+            // Authorized
+        } elseif ($user->role === 'partner') {
+            $partner = $user->partner;
+            if (!$partner || $certificate->student?->partner_id !== $partner->id) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
+        } elseif ($user->role === 'student' || $user->student) {
+            if ($certificate->student_id !== $user->student?->id || !$certificate->is_visible_to_student) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } else {
+            return response()->json(['error' => 'Unauthorized'], 403);
         }
 
         if (!$certificate->file_path || !Storage::disk('public')->exists($certificate->file_path)) {
@@ -61,14 +72,15 @@ class CertificateController extends Controller
     {
         $certificate = Certificate::with(['student.user', 'attempt.exam'])
             ->where('verification_code', $code)
+            ->where('is_visible_to_student', true)
             ->first();
 
         if (!$certificate) {
-            return response()->json(['error' => 'Invalid verification code.'], 404);
+            return response()->json(['error' => 'Certificate not found or not visible'], 404);
         }
 
         $service = app(\App\Services\CertificateService::class);
-        
+
         return response()->json([
             'valid' => true,
             'student_name' => $certificate->student->user->first_name . ' ' . $certificate->student->user->last_name,
@@ -79,7 +91,7 @@ class CertificateController extends Controller
             'actfl' => $service->mapToActfl($certificate->score),
             'issue_date' => $certificate->issue_date->format('M d, Y'),
             'certificate_number' => $certificate->certificate_number,
-            'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function($s) use ($service) {
+            'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function ($s) use ($service) {
                 return [
                     'name' => $s->skill->name,
                     'score' => $s->score,
@@ -93,6 +105,41 @@ class CertificateController extends Controller
     }
 
     /**
+     * Admin or Partner: Manually create (or regenerate) a certificate for an attempt.
+     */
+    public function createForAttempt(Request $request, ExamAttempt $attempt)
+    {
+        $user = $request->user();
+
+        // Partner ownership check
+        if ($user->role === 'partner') {
+            $partner = $user->partner;
+            if (!$partner || $attempt->student?->partner_id !== $partner->id) {
+                return response()->json(['error' => 'Unauthorized: student does not belong to your partner account.'], 403);
+            }
+        }
+
+        if (!$attempt->student) {
+            return response()->json(['error' => 'Attempt has no associated student.'], 422);
+        }
+
+        try {
+            $service = app(\App\Services\CertificateService::class);
+            $certificate = $service->generate($attempt);
+
+            // load relationships for the response
+            $certificate->load(['student.user', 'attempt.exam']);
+
+            return response()->json([
+                'message' => 'Certificate created successfully.',
+                'certificate' => $certificate,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Admin/Teacher: List all certificates.
      */
     public function adminIndex(Request $request)
@@ -100,10 +147,54 @@ class CertificateController extends Controller
         $query = Certificate::with(['student.user', 'attempt.exam']);
 
         if ($request->search) {
-            $query->whereHas('student.user', function($q) use ($request) {
+            $query->whereHas('student.user', function ($q) use ($request) {
                 $q->where('first_name', 'like', "%{$request->search}%")
-                  ->orWhere('last_name', 'like', "%{$request->search}%");
+                    ->orWhere('last_name', 'like', "%{$request->search}%");
             })->orWhere('certificate_number', 'like', "%{$request->search}%");
+        }
+
+        return response()->json($query->latest()->paginate(20));
+    }
+
+    /**
+     * Admin: Toggle certificate visibility for student.
+     */
+    public function toggleVisibility(Certificate $certificate)
+    {
+        $certificate->update([
+            'is_visible_to_student' => !$certificate->is_visible_to_student,
+        ]);
+
+        return response()->json([
+            'message' => 'Visibility updated.',
+            'is_visible_to_student' => $certificate->is_visible_to_student,
+        ]);
+    }
+
+    /**
+     * Partner: List certificates for students belonging to this partner.
+     */
+    public function partnerIndex(Request $request)
+    {
+        $user = $request->user();
+        $partner = $user->partner;
+
+        if (!$partner) {
+            return response()->json(['error' => 'Partner profile not found.'], 404);
+        }
+
+        $query = Certificate::with(['student.user', 'attempt.exam'])
+            ->whereHas('student', function ($q) use ($partner) {
+                $q->where('partner_id', $partner->id);
+            });
+
+        if ($request->search) {
+            $query->where(function ($outer) use ($request) {
+                $outer->whereHas('student.user', function ($q) use ($request) {
+                    $q->where('first_name', 'like', "%{$request->search}%")
+                        ->orWhere('last_name', 'like', "%{$request->search}%");
+                })->orWhere('certificate_number', 'like', "%{$request->search}%");
+            });
         }
 
         return response()->json($query->latest()->paginate(20));

@@ -1,0 +1,11 @@
+
+Fatal error: Uncaught RuntimeException: Composer detected issues in your platform: Your Composer dependencies require a PHP version ">= 8.4.0". You are running 8.3.0. in C:\wamp64\www\exam-system\backend\vendor\composer\platform_check.php on line 26
+
+RuntimeException: Composer detected issues in your platform: Your Composer dependencies require a PHP version ">= 8.4.0". You are running 8.3.0. in C:\wamp64\www\exam-system\backend\vendor\composer\platform_check.php on line 26
+
+Call Stack:
+    0.0058     488976   1. {main}() C:\wamp64\www\exam-system\backend\artisan:0
+    0.0088     492200   2. require('C:\wamp64\www\exam-system\backend\vendor\autoload.php') C:\wamp64\www\exam-system\backend\artisan:10
+    0.0110     585832   3. ComposerAutoloaderInit53b5d56b3b7e3cbac1713e68c8850f6c::getLoader() C:\wamp64\www\exam-system\backend\vendor\autoload.php:22
+    0.0122     590240   4. require('C:\wamp64\www\exam-system\backend\vendor\composer\platform_check.php') C:\wamp64\www\exam-system\backend\vendor\composer\autoload_real.php:25
+

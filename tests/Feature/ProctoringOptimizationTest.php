@@ -191,7 +191,7 @@ class ProctoringOptimizationTest extends TestCase
         $this->assertNotNull($session->closed_at);
     }
 
-    public function test_new_exam_attempt_creates_new_proctoring_session()
+    public function test_new_exam_attempt_reuses_existing_pending_proctoring_session()
     {
         $user = User::factory()->create(['role' => 'student']);
         $category = \App\Models\ExamCategory::create([
@@ -226,8 +226,9 @@ class ProctoringOptimizationTest extends TestCase
         ]);
 
         $response->assertStatus(200);
-        $this->assertCount(2, ProctoringSession::where('student_id', $student->id)->get());
-        $this->assertNotEquals($existingSession->id, $response->json('session_id'));
+        $this->assertCount(1, ProctoringSession::where('student_id', $student->id)->get());
+        $this->assertEquals($existingSession->id, $response->json('session_id'));
+        $this->assertEquals('active', $response->json('status'));
     }
 
     public function test_ended_session_id_is_not_reused_for_new_attempt()
@@ -444,7 +445,7 @@ class ProctoringOptimizationTest extends TestCase
         $response->assertJsonFragment([
             'success' => true,
             'session_id' => $activeSession->id,
-            'status' => 'pending',
+            'status' => 'active',
         ]);
 
         // Check it updated the active session's exam_attempt_id
@@ -460,7 +461,177 @@ class ProctoringOptimizationTest extends TestCase
         $response2->assertJsonFragment([
             'success' => true,
             'session_id' => $activeSession->id,
-            'status' => 'pending',
+            'status' => 'active',
         ]);
+    }
+
+    public function test_proctoring_session_comprehensive_lifecycle()
+    {
+        $user = User::factory()->create([
+            'role' => 'student',
+            'password' => bcrypt('password123'),
+            'is_active' => true
+        ]);
+        $category = \App\Models\ExamCategory::create([
+            'name' => 'Adults',
+            'slug' => 'adults',
+            'is_active' => true
+        ]);
+        $student = Student::create([
+            'user_id' => $user->id,
+            'exam_category_id' => $category->id,
+        ]);
+        $exam = \App\Models\Exam::create([
+            'title' => 'General Exam',
+            'exam_type' => 'adult',
+        ]);
+
+        // Scenario 1: Student logs in -> Creates a new ProctoringSession (status = pending, exam_attempt_id = null)
+        $response = $this->postJson('/api/v1/login', [
+            'login' => $user->email,
+            'password' => 'password123',
+        ]);
+        $response->assertStatus(200);
+
+        $this->assertCount(1, ProctoringSession::where('student_id', $student->id)->get());
+        $session1 = ProctoringSession::where('student_id', $student->id)->first();
+        $this->assertEquals('pending', $session1->status);
+        $this->assertNull($session1->exam_attempt_id);
+
+        // Scenario 2: Student opens proctoring page -> Reuses session1
+        $responseInitiate = $this->actingAs($user)->postJson('/api/v1/proctoring/session/initiate', []);
+        $responseInitiate->assertStatus(200);
+        $this->assertEquals($session1->id, $responseInitiate->json('session_id'));
+
+        // Scenario 3: Exam starts -> ExamAttempt created (attempt id = 55) -> reuse session1, update state to active/attempt-linked
+        $attempt = ExamAttempt::create([
+            'id' => 55,
+            'user_id' => $user->id,
+            'student_id' => $student->id,
+            'exam_id' => $exam->id,
+            'status' => 'in_progress',
+        ]);
+
+        $responseStart = $this->actingAs($user)->postJson('/api/v1/proctoring/session/initiate', [
+            'exam_attempt_id' => $attempt->id,
+        ]);
+        $responseStart->assertStatus(200);
+        $session1->refresh();
+        $this->assertEquals($session1->id, $responseStart->json('session_id'));
+        $this->assertEquals(55, $session1->exam_attempt_id);
+        $this->assertEquals('active', $session1->status);
+
+        // Scenario 4: Student logs out or closes browser -> session1 state updated to ended
+        $logoutResponse = $this->actingAs($user)->postJson('/api/v1/logout');
+        $logoutResponse->assertStatus(200);
+        $session1->refresh();
+        $this->assertEquals('ended', $session1->status);
+        $this->assertNotNull($session1->ended_at);
+
+        // Scenario 5: Student logs in again -> Creates a new session (session2: status = pending, exam_attempt_id = null)
+        $loginResponse2 = $this->postJson('/api/v1/login', [
+            'login' => $user->email,
+            'password' => 'password123',
+        ]);
+        $loginResponse2->assertStatus(200);
+
+        $this->assertCount(2, ProctoringSession::where('student_id', $student->id)->get());
+        $session2 = ProctoringSession::where('student_id', $student->id)->where('id', '!=', $session1->id)->first();
+        $this->assertEquals('pending', $session2->status);
+        $this->assertNull($session2->exam_attempt_id);
+
+        // Student clicks "Resume Exam" on attempt 55 -> session2 updated to active, exam_attempt_id = 55
+        $resumeResponse = $this->actingAs($user)->postJson('/api/v1/proctoring/session/initiate', [
+            'exam_attempt_id' => $attempt->id,
+        ]);
+        $resumeResponse->assertStatus(200);
+        $session2->refresh();
+        $this->assertEquals($session2->id, $resumeResponse->json('session_id'));
+        $this->assertEquals(55, $session2->exam_attempt_id);
+        $this->assertEquals('active', $session2->status);
+    }
+
+    public function test_initiate_session_rejects_mismatching_exam_attempt()
+    {
+        $user = User::factory()->create(['role' => 'student']);
+        $category = \App\Models\ExamCategory::create([
+            'name' => 'Adults',
+            'slug' => 'adults',
+            'is_active' => true
+        ]);
+        $student = Student::create([
+            'user_id' => $user->id,
+            'exam_category_id' => $category->id,
+        ]);
+        $exam = \App\Models\Exam::create([
+            'title' => 'General Exam',
+            'exam_type' => 'adult',
+        ]);
+
+        $attempt1 = ExamAttempt::create([
+            'student_id' => $student->id,
+            'exam_id' => $exam->id,
+            'status' => 'in_progress',
+        ]);
+
+        $attempt2 = ExamAttempt::create([
+            'student_id' => $student->id,
+            'exam_id' => $exam->id,
+            'status' => 'in_progress',
+        ]);
+
+        // Creating a session linked to attempt 1
+        $session = ProctoringSession::create([
+            'student_id' => $student->id,
+            'exam_attempt_id' => $attempt1->id,
+            'status' => 'pending',
+            'session_token' => 'session-for-attempt1',
+        ]);
+
+        // Requesting session with attempt 2 but passing session 1's ID. This should reject session 1 and return a new session
+        $response = $this->actingAs($user)->postJson('/api/v1/proctoring/session/initiate', [
+            'exam_attempt_id' => $attempt2->id,
+            'session_id' => $session->id,
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertNotEquals($session->id, $response->json('session_id'));
+    }
+
+    public function test_verify_identity_endpoint_accepts_uploaded_files()
+    {
+        $user = User::factory()->create(['role' => 'student']);
+        $category = \App\Models\ExamCategory::create([
+            'name' => 'Adults',
+            'slug' => 'adults',
+            'is_active' => true,
+        ]);
+        $student = Student::create([
+            'user_id' => $user->id,
+            'exam_category_id' => $category->id,
+            'student_code' => '29901011234567',
+        ]);
+
+        // Place a dummy file in the public disk
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        // Mock GoogleVisionService to return matching Egyptian National ID
+        $visionServiceMock = $this->createMock(\App\Services\GoogleVisionService::class);
+        $visionServiceMock->method('extractRawText')->willReturn('some raw text containing 29901011234567');
+        $visionServiceMock->method('extractEgyptianNationalId')->willReturn('29901011234567');
+        $this->app->instance(\App\Services\GoogleVisionService::class, $visionServiceMock);
+
+        $faceFile = \Illuminate\Http\UploadedFile::fake()->image('face.jpg');
+        $idFile = \Illuminate\Http\UploadedFile::fake()->image('id.jpg');
+
+        $response = $this->actingAs($user)->postJson('/api/v1/proctoring/verify-identity', [
+            'id_number' => '29901011234567',
+            'face_image' => $faceFile,
+            'id_image' => $idFile,
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertTrue($response->json('verified'));
+        $this->assertNotNull($response->json('session_id'));
     }
 }

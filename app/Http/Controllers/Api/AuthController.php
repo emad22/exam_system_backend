@@ -111,6 +111,18 @@ class AuthController extends Controller
                     'duration_seconds' => $duration,
                 ]);
             }
+
+            // Create a new pending proctoring session for this login
+            ProctoringSession::create([
+                'student_id' => $user->student->id,
+                'exam_attempt_id' => null,
+                'status' => 'pending',
+                'session_token' => \Illuminate\Support\Str::random(64),
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'risk_score' => 0,
+                'violations_count' => 0,
+            ]);
         }
 
         $user->tokens()->delete();

@@ -14,7 +14,7 @@ Route::middleware(['auth:sanctum', StudentOrDemoRole::class])->as('student.')->g
     Route::get('/exams/{exam}', [ExamSessionController::class, 'show'])->name('exams.show');
     Route::post('/exams/{exam}/start', [ExamSessionController::class, 'start'])->name('exams.start');
     Route::post('/exams/{exam}/reset-demo', [ExamSessionController::class, 'resetDemo'])->name('exams.reset-demo');
-    
+
     // Attempt Routes (Split across Session, Progress, Security, and Results)
     Route::prefix('attempts/{attempt}')->as('attempts.')->group(function () {
         // Session-related

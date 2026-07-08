@@ -89,7 +89,32 @@ class ProctoringSessionService
             ]);
         }
 
-        // 2. لو فيه جلسة مربوطة بنفس المحاولة دي بالظبط ولسه شغالة، استخدمها
+        // 2. إذا تم تمرير sessionId وكانت الجلسة صالحة وغير منتهية، نستخدمها ونربطها بالمحاولة
+        if ($sessionId) {
+            $session = ProctoringSession::where('student_id', $studentId)
+                ->where('id', $sessionId)
+                ->first();
+            if ($session && $session->status !== 'ended') {
+                // التأكد من تطابق محاولة الامتحان لمنع استخدام جلسة تخص محاولة أخرى
+                if ($attempt && $session->exam_attempt_id && $session->exam_attempt_id !== $attempt->id) {
+                    $session = null;
+                }
+            } else {
+                $session = null;
+            }
+
+            if ($session) {
+                if ($attempt && !$session->exam_attempt_id) {
+                    $session->update([
+                        'exam_attempt_id' => $attempt->id,
+                        'status' => 'active',
+                    ]);
+                }
+                return $session;
+            }
+        }
+
+        // 3. لو فيه جلسة مربوطة بنفس المحاولة دي بالظبط ولسه شغالة، استخدمها
         if ($attempt) {
             $existingForAttempt = ProctoringSession::where('student_id', $studentId)
                 ->where('exam_attempt_id', $attempt->id)
@@ -102,8 +127,8 @@ class ProctoringSessionService
             }
         }
 
-        // 3. لو فيه جلسة "عامة" اتعملت وقت اللوجين (من غير exam_attempt_id) ولسه شغالة،
-        //    نلحق المحاولة الحالية بيها بدل ما ننشئ صف جديد
+        // 4. لو فيه جلسة "عامة" اتعملت وقت اللوجين (من غير exam_attempt_id) ولسه شغالة،
+        //    نلحق المحاولة الحالية بيها ونخليها active بدل ما ننشئ صف جديد
         $sessionLevel = ProctoringSession::where('student_id', $studentId)
             ->whereNull('exam_attempt_id')
             ->whereIn('status', ['pending', 'active', 'paused'])
@@ -114,12 +139,13 @@ class ProctoringSessionService
             if ($attempt) {
                 $sessionLevel->update([
                     'exam_attempt_id' => $attempt->id,
+                    'status' => 'active',
                 ]);
             }
             return $sessionLevel->refresh();
         }
 
-        // 4. مفيش أي جلسة موجودة → ننشئ جلسة جديدة
+        // 5. مفيش أي جلسة موجودة → ننشئ جلسة جديدة
         return ProctoringSession::create([
             'student_id' => $studentId,
             'exam_attempt_id' => $attempt?->id,

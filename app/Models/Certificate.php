@@ -14,11 +14,13 @@ class Certificate extends Model
         'score',
         'issue_date',
         'verification_code',
-        'file_path'
+        'file_path',
+        'is_visible_to_student'
     ];
 
     protected $casts = [
         'issue_date' => 'datetime',
+        'is_visible_to_student' => 'boolean',
     ];
 
     public function student()

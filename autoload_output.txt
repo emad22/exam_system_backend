@@ -1,0 +1,14 @@
+Generating optimized autoload files
+Class App\Http\Controllers\Api\ParentController located in ./app/Http/Controllers/Api/Admin/ParentController.php does not comply with psr-4 autoloading standard (rule: App\ => ./app). Skipping.
+Class App\Http\Controllers\Api\ReportController located in ./app/Http/Controllers/Api/PartnerReportController.php does not comply with psr-4 autoloading standard (rule: App\ => ./app). Skipping.
+> Illuminate\Foundation\ComposerScripts::postAutoloadDump
+Script Illuminate\Foundation\ComposerScripts::postAutoloadDump handling the post-autoload-dump event terminated with an exception
+
+In platform_check.php line 26:
+                                                                              
+  Composer detected issues in your platform: Your Composer dependencies requ  
+  ire a PHP version ">= 8.4.0". You are running 8.2.13.                       
+                                                                              
+
+dump-autoload [-o|--optimize] [-a|--classmap-authoritative] [--apcu] [--apcu-prefix APCU-PREFIX] [--dry-run] [--dev] [--no-dev] [--ignore-platform-req IGNORE-PLATFORM-REQ] [--ignore-platform-reqs] [--strict-psr] [--strict-ambiguous]
+
