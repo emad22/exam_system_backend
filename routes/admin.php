@@ -24,6 +24,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::patch('/{student}', [Admin\StudentController::class, 'update'])->name('update');
         Route::delete('/{student}', [Admin\StudentController::class, 'destroy'])->name('destroy');
         Route::post('/{student}/reset', [Admin\StudentController::class, 'resetExamAttempts'])->name('reset');
+        Route::post('/{student}/toggle-bypass-identity-verification', [Admin\StudentController::class, 'toggleBypassIdentityVerification'])->name('toggle-bypass-identity-verification');
     });
 
     // Partner Management

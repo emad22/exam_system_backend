@@ -22,11 +22,12 @@ class CertificateTemplateController extends Controller
             'name' => 'required|string|max:255',
             'content_html' => 'required|string',
             'background_image' => 'nullable|image|max:2048',
-            'is_default' => 'sometimes|boolean'
+            'is_default' => 'sometimes|boolean',
+            'elements_json' => 'nullable|string',
         ]);
 
         $data = $request->only(['name', 'content_html', 'is_default']);
-
+        $data['elements_json'] = $request->input('elements_json');
         // XSS Protection
         if (isset($data['content_html'])) {
             $data['content_html'] = $this->sanitizeHtml($data['content_html']);
@@ -59,10 +60,12 @@ class CertificateTemplateController extends Controller
             'name' => 'required|string|max:255',
             'content_html' => 'required|string',
             'background_image' => 'nullable|image|max:2048',
-            'is_default' => 'sometimes|boolean'
+            'is_default' => 'sometimes|boolean',
+            'elements_json' => 'nullable|string',
         ]);
 
         $data = $request->only(['name', 'content_html', 'is_default']);
+        $data['elements_json'] = $request->input('elements_json');
 
         // XSS Protection
         if (isset($data['content_html'])) {

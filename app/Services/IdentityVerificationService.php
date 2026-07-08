@@ -26,6 +26,16 @@ class IdentityVerificationService
             ];
         }
 
+        // ✅ لازم الصورتين موجودين دايماً، سواء bypass أو لأ
+        if (empty($data['face_image']) || empty($data['id_image'])) {
+            return (object) [
+                'verified' => false,
+                'session_id' => null,
+                'score' => 0,
+                'message' => 'Face photo and ID image are both required'
+            ];
+        }
+
         // 1. رقم الهوية vs الداتابيز
         $studentCode = $this->normalize($data['id_number']);
         $dbCode = $this->normalize($student->student_code ?? '');
@@ -52,7 +62,7 @@ class IdentityVerificationService
         $faceVsIdDistance = isset($data['face_vs_id_distance']) ? (float) $data['face_vs_id_distance'] : null;
 
         // Sanity check
-        if ($faceVsIdScore !== null && $faceVsIdDistance !== null) {
+        if (!$student->bypass_identity_verification && $faceVsIdScore !== null && $faceVsIdDistance !== null) {
             $expectedScore = (int) round((1 - min($faceVsIdDistance, 1)) * 100);
             if (abs($expectedScore - $faceVsIdScore) > 2) {
                 return (object) [
@@ -66,7 +76,7 @@ class IdentityVerificationService
 
         // بعد الـ sanity check وقبل القرار النهائي
         $ocrMatch = true;
-        if (!empty($data['id_image'])) {
+        if (!$student->bypass_identity_verification && !empty($data['id_image'])) {
             $ocrResult = $this->extractIdFromImage($data['id_image']);
             $extractedId = $this->normalize($ocrResult['extracted_id'] ?? '');
 
@@ -82,8 +92,8 @@ class IdentityVerificationService
             }
         }
 
-        $faceMatch = $faceVsIdDistance !== null ? $faceVsIdDistance < 0.6 : true;
-        $verified = $codeMatch && $faceMatch && $ocrMatch;
+        $faceMatch = $student->bypass_identity_verification || ($faceVsIdDistance !== null ? $faceVsIdDistance < 0.6 : true);
+        $verified = $student->bypass_identity_verification || ($codeMatch && $faceMatch && $ocrMatch);
 
         try {
             $existingPendingSession = ProctoringSession::where('student_id', $student->id)
@@ -106,7 +116,7 @@ class IdentityVerificationService
 
             $session->update([
                 'identity_verified' => $verified,
-                'face_verification_score' => $faceVsIdScore ?? 0,
+                'face_verification_score' => $student->bypass_identity_verification ? ($faceVsIdScore ?? 100) : ($faceVsIdScore ?? 0),
                 'identity_verification_at' => now(),
                 'device_info' => array_merge($session->device_info ?? [], [
                     'id_number' => $data['id_number'],
@@ -114,11 +124,12 @@ class IdentityVerificationService
                     'id_image' => $idUrl,
                     'face_vs_id_distance' => $faceVsIdDistance,
                     'os' => $this->parseOS(request()->userAgent()),
+                    'bypassed' => $student->bypass_identity_verification,
                 ]),
                 'browser_info' => ['name' => $this->parseBrowser(request()->userAgent())],
             ]);
 
-            if (!$codeMatch) {
+            if (!$student->bypass_identity_verification && !$codeMatch) {
                 return (object) [
                     'verified' => false,
                     'session_id' => $session->id,
@@ -130,7 +141,7 @@ class IdentityVerificationService
             return (object) [
                 'verified' => $verified,
                 'session_id' => $session->id,
-                'score' => $faceVsIdScore ?? 0,
+                'score' => $student->bypass_identity_verification ? ($faceVsIdScore ?? 100) : ($faceVsIdScore ?? 0),
                 'message' => $verified ? 'Identity verified successfully' : 'Identity verification failed',
             ];
 

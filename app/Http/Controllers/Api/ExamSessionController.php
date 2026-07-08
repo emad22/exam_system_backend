@@ -338,18 +338,22 @@ class ExamSessionController extends Controller
             $requestedLevel = $request->has('level_id') ? $this->questionService->getValidStartingLevel($exam->id, $requestedSkillId, (int) $request->level_id) : 1;
             if ($isFinished) {
                 $this->attemptService->completeAttempt($attempt);
+
+                $currentPos = [
+                    'skill_ids' => $pos['skill_ids'],
+                    'current_skill_index' => $skillIndex,
+                    'completed_skills' => [],
+                    'current_skill_started_at' => null
+                ];
+                $currentPos[(string) $requestedSkillId]['current_level'] = $requestedLevel;
                 $newAttempt = ExamAttempt::create(
                     [
+                        'student_id' => $user->student?->id,
                         'user_id' => Auth::id(),
                         'exam_id' => $exam->id,
                         'status' => 'ongoing',
                         'started_at' => now(),
-                        'current_position' => [
-                            'skill_ids' => $pos['skill_ids'],
-                            'current_skill_index' => $skillIndex,
-                            'current_level' => $requestedLevel,
-                            'current_skill_started_at' => null
-                        ]
+                        'current_position' => $currentPos
                     ]
                 );
 
@@ -364,7 +368,13 @@ class ExamSessionController extends Controller
             }
             \App\Models\StudentAnswer::where('exam_attempt_id', $attempt->id)->whereHas('question', fn($q) => $q->where('skill_id', $requestedSkillId))->delete();
             \App\Models\ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->where('skill_id', $requestedSkillId)->delete();
-            $pos['current_level'] = $requestedLevel;
+            $pos[(string) $requestedSkillId]['current_level'] = $requestedLevel;
+
+            // Ensure an in_progress skill record exists for getNextBatch
+            ExamAttemptSkill::firstOrCreate(
+                ['exam_attempt_id' => $attempt->id, 'skill_id' => $requestedSkillId],
+                ['started_at' => now(), 'status' => 'in_progress']
+            );
         }
 
         if ($pos['current_skill_index'] !== $skillIndex) {
@@ -447,6 +457,18 @@ class ExamSessionController extends Controller
             $startingLevel = 1;
         }
 
+        $startingSkillId = $assignedSkillIds[$startIndex] ?? null;
+
+        $currentPos = [
+            'skill_ids' => $assignedSkillIds,
+            'current_skill_index' => $startIndex,
+            'completed_skills' => [],
+            'current_skill_started_at' => null
+        ];
+        if ($startingSkillId) {
+            $currentPos[(string) $startingSkillId]['current_level'] = $startingLevel;
+        }
+
         $attempt = ExamAttempt::create(
             [
                 'student_id' => $studentProfile?->id,
@@ -455,13 +477,7 @@ class ExamSessionController extends Controller
                 'status' => 'ongoing',
                 'ip_address' => $request->ip(),
                 'started_at' => now(),
-                'current_position' => [
-                    'skill_ids' => $assignedSkillIds,
-                    'current_skill_index' => $startIndex,
-                    // 'current_level' => $startingLevel, 
-                    'completed_skills' => [],
-                    'current_skill_started_at' => null
-                ]
+                'current_position' => $currentPos
             ]
         );
 

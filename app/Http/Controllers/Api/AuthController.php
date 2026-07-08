@@ -152,7 +152,7 @@ class AuthController extends Controller
         if ($user->student) {
             $user->load([
                 'student' => function ($query) {
-                    $query->select('id', 'user_id', 'partner_id', 'exam_category_id', 'student_code');
+                    $query->select('id', 'user_id', 'partner_id', 'exam_category_id', 'student_code', 'is_demo', 'is_demo_proctored', 'bypass_identity_verification');
                 },
                 'student.partner' => function ($query) {
                     $query->select('id', 'partner_name', 'proctoring_required');
@@ -175,6 +175,7 @@ class AuthController extends Controller
     //     if ($studentId) {
     //         $session = ProctoringSession::where('student_id', $studentId)
     //             ->where('status', 'active')
+    
     //             ->latest()
     //             ->first();
 

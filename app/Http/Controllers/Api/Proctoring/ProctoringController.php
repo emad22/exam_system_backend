@@ -88,7 +88,7 @@ class ProctoringController extends Controller
     {
         $validated = $request->validate([
             'face_image' => 'required',
-            'id_image' => 'nullable',
+            'id_image' => 'required',
             'id_number' => 'required|string|min:3|max:50',
             'exam_attempt_id' => 'nullable|exists:exam_attempts,id',
         ]);
@@ -396,16 +396,15 @@ class ProctoringController extends Controller
 
     private function authorizeAttempt(ExamAttempt $attempt)
     {
-        $studentId = auth()->user()->student?->id; // ✅ جيب student_id من الـ user
+        $user = auth()->user();
+        $studentId = $user->student?->id;
 
-        // \Log::debug('authorizeAttempt', [
-        //     'attempt_student_id' => $attempt->student_id,
-        //     'auth_user_id' => auth()->id(),
-        //     'student_id' => $studentId,
-        // ]);
+        // Allow if the attempt belongs to this student OR this user directly (demo user case)
+        $ownedByStudent = $studentId && $attempt->student_id === $studentId;
+        $ownedByUser = $attempt->user_id === $user->id;
 
         abort_if(
-            $attempt->student_id !== $studentId,
+            !$ownedByStudent && !$ownedByUser,
             403,
             'Unauthorized attempt access'
         );

@@ -33,6 +33,7 @@ class Student extends Model
         'allows_retry',
         'is_demo',
         'is_demo_proctored',
+        'bypass_identity_verification',
     ];
 
     protected $casts = [
@@ -40,6 +41,7 @@ class Student extends Model
         'allows_retry' => 'boolean',
         'is_demo' => 'boolean',
         'is_demo_proctored' => 'boolean',
+        'bypass_identity_verification' => 'boolean',
         'birth_date' => 'date',
         'assigned_skills' => 'array',
     ];

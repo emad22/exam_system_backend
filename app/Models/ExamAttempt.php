@@ -13,12 +13,12 @@ class ExamAttempt extends Model
 
     protected $fillable = [
         'user_id',
-        'student_id', 
-        'exam_id', 
-        'status', 
-        'overall_score', 
-        'current_position', 
-        'proctor_value', 
+        'student_id',
+        'exam_id',
+        'status',
+        'overall_score',
+        'current_position',
+        'proctor_value',
         'ip_address',
         'started_at',
         'finished_at',
@@ -26,7 +26,7 @@ class ExamAttempt extends Model
     ];
 
     protected $casts = [
-        'current_position' => 'json',
+        'current_position' => 'array',
         'started_at' => 'datetime',
         'finished_at' => 'datetime',
     ];
@@ -61,7 +61,7 @@ class ExamAttempt extends Model
         if ($action === 'created') {
             return "Student started exam: " . ($this->exam->title ?? 'Unknown Exam');
         }
-        
+
         if ($action === 'updated' && $this->status === 'completed') {
             return "Student completed exam: " . ($this->exam->title ?? 'Unknown Exam');
         }

@@ -29,7 +29,7 @@ class StudentController extends Controller
      */
     public function index(Request $request)
     {
-        $students = Student::with(['user', 'package','attempts'])->withCount('attempts')->paginate(30);
+        $students = Student::with(['user', 'package', 'attempts'])->withCount('attempts')->paginate(30);
         return response()->json($students);
     }
 
@@ -38,7 +38,7 @@ class StudentController extends Controller
      */
     public function store(Request $request)
     {
-        if ($request->has('student_code') && trim((string)$request->input('student_code')) === '') {
+        if ($request->has('student_code') && trim((string) $request->input('student_code')) === '') {
             $request->merge(['student_code' => null]);
         }
 
@@ -60,10 +60,8 @@ class StudentController extends Controller
             'come_from' => 'nullable|string|max:255',
             'student_type' => 'nullable|string|max:50',
             'year_of_arabic' => 'nullable|integer',
-            'is_continue' => 'nullable|boolean',
-            'allows_retry' => 'sometimes|boolean',
-
-
+            'is_demo' => 'sometimes|boolean',
+            'is_demo_proctored' => 'sometimes|boolean',
             'exam_id' => 'nullable|exists:exams,id',
             'exam_category_id' => 'nullable|exists:exam_categories,id',
             'assigned_skills' => 'nullable|array',
@@ -130,6 +128,8 @@ class StudentController extends Controller
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
             'is_continue' => $validated['is_continue'] ?? false,
             'allows_retry' => $validated['allows_retry'] ?? false,
+            'is_demo' => $validated['is_demo'] ?? false,
+            'is_demo_proctored' => $validated['is_demo_proctored'] ?? false,
             'package_id' => $validated['package_id'] ?? null,
             'exam_category_id' => $examCategoryId,
             'assigned_skills' => $assignedSkills,
@@ -152,7 +152,7 @@ class StudentController extends Controller
      */
     public function update(Request $request, Student $student)
     {
-        if ($request->has('student_code') && trim((string)$request->input('student_code')) === '') {
+        if ($request->has('student_code') && trim((string) $request->input('student_code')) === '') {
             $request->merge(['student_code' => null]);
         }
 
@@ -175,6 +175,8 @@ class StudentController extends Controller
             'is_continue' => 'sometimes|nullable|boolean',
             'allows_retry' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
+            'is_demo' => 'sometimes|boolean',
+            'is_demo_proctored' => 'sometimes|boolean',
             'package_id' => 'sometimes|nullable|exists:packages,id',
             'exam_category_id' => 'sometimes|required|exists:exam_categories,id',
             'assigned_skills' => 'sometimes|array',
@@ -203,6 +205,8 @@ class StudentController extends Controller
             'year_of_arabic',
             'is_continue',
             'allows_retry',
+            'is_demo',
+            'is_demo_proctored',
             'partner_id'
         ]);
 
@@ -221,10 +225,10 @@ class StudentController extends Controller
         if (isset($validated['assigned_skills']) || isset($validated['package_id'])) {
             // Find all attempts for this student
             $attempts = ExamAttempt::where('student_id', $student->id)->get();
-            
+
             // Get the list of allowed skills based on the updated student profile
             $examService = app(\App\Services\ExamService::class);
-            
+
             foreach ($attempts as $attempt) {
                 // Get allowed skill names/identifiers
                 $allowedSkillIdentifiers = $examService->getAllowedSkills($student);
@@ -238,17 +242,22 @@ class StudentController extends Controller
                     }
 
                     // Sort skills by standard order map
-                    $getOrder = function($name) {
+                    $getOrder = function ($name) {
                         $name = strtolower($name);
-                        if (str_contains($name, 'listening')) return 1;
-                        if (str_contains($name, 'reading')) return 2;
-                        if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram')) return 3;
-                        if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ')) return 4;
-                        if (str_contains($name, 'speaking') || str_contains($name, 'speak')) return 5;
+                        if (str_contains($name, 'listening'))
+                            return 1;
+                        if (str_contains($name, 'reading'))
+                            return 2;
+                        if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram'))
+                            return 3;
+                        if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ'))
+                            return 4;
+                        if (str_contains($name, 'speaking') || str_contains($name, 'speak'))
+                            return 5;
                         return 99;
                     };
 
-                    usort($assignedSkills, function($a, $b) use ($getOrder) {
+                    usort($assignedSkills, function ($a, $b) use ($getOrder) {
                         return $getOrder($a->name) - $getOrder($b->name);
                     });
 
@@ -276,7 +285,7 @@ class StudentController extends Controller
 
                     $pos = $attempt->current_position ?? [];
                     $pos['skill_ids'] = $assignedSkillIds;
-                    
+
                     // If the current index is out of bounds or empty, set to first uncompleted skill or 0
                     if (empty($pos['skill_ids'])) {
                         $pos['current_skill_index'] = 0;
@@ -388,8 +397,8 @@ class StudentController extends Controller
 
             // Map attempt skills
             $attempt->attemptSkills->each(function ($as) use ($levelMap, $levelLookup, $attemptAnswers) {
-                $displayLevel = $as->status === 'completed' 
-                    ? $as->max_level_reached 
+                $displayLevel = $as->status === 'completed'
+                    ? $as->max_level_reached
                     : max($as->max_level_reached - 1, 1);
                 $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
 
@@ -427,7 +436,7 @@ class StudentController extends Controller
             if ($lastSeenQ) {
                 $correctOption = $lastSeenQ->options->where('is_correct', true)->first();
                 $studentAnsRecord = $attemptAnswers->firstWhere('question_id', $lastSeenQ->id);
-                
+
                 $studentChoice = 'No Answer Provided';
                 if ($studentAnsRecord) {
                     if ($studentAnsRecord->option_id) {
@@ -470,7 +479,7 @@ class StudentController extends Controller
             }
 
             // Recent performance
-            $attempt->recent_answers = $attemptAnswers->take(5)->map(function($ans) {
+            $attempt->recent_answers = $attemptAnswers->take(5)->map(function ($ans) {
                 return [
                     'question_text' => strip_tags($ans->question->content ?? $ans->question->instructions ?? 'Question'),
                     'is_correct' => (bool) $ans->is_correct,
@@ -585,9 +594,9 @@ class StudentController extends Controller
             ->toArray();
 
         // Get users with matching emails or usernames who are students
-        $users = User::where(function($q) use ($request) {
+        $users = User::where(function ($q) use ($request) {
             $q->whereIn('email', $request->emails)
-              ->orWhereIn('username', $request->emails);
+                ->orWhereIn('username', $request->emails);
         })->whereHas('student')->with('student')->get();
         $updatedCount = 0;
 
@@ -744,6 +753,25 @@ class StudentController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => 'Failed to reset candidate progress: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Toggle the bypass_identity_verification status for a student.
+     */
+    public function toggleBypassIdentityVerification(Request $request, Student $student)
+    {
+        try {
+            $student->update([
+                'bypass_identity_verification' => !$student->bypass_identity_verification
+            ]);
+
+            return response()->json([
+                'message' => 'Candidate identity verification bypass status updated successfully.',
+                'bypass_identity_verification' => $student->bypass_identity_verification
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to update candidate bypass status: ' . $e->getMessage()], 500);
         }
     }
 }

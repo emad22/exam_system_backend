@@ -58,7 +58,7 @@ class ExamProgressController extends Controller
          * current_level لازم ييجي من الـ position نفسها
          * أو default = 1
          */
-        $levelNum = $pos[$skillId]['current_level'] ?? 1;
+        $levelNum = $pos[(string) $skillId]['current_level'] ?? 1;
 
         $level = Level::where('skill_id', $skillId)
             ->where('level_number', $levelNum)
@@ -489,7 +489,7 @@ class ExamProgressController extends Controller
                 if ($nextLevelExists) {
 
                     // ✅ يكمل للمستوى التالي بغض النظر عن النجاح أو الرسوب
-                    $nextPos[$skillId]['current_level'] = $levelNum + 1;
+                    $nextPos[(string) $skillId]['current_level'] = $levelNum + 1;
 
                 } else {
 
@@ -515,7 +515,7 @@ class ExamProgressController extends Controller
                 if ($student?->allows_retry && $level->allows_retry) {
 
                     // إعادة نفس المستوى
-                    $nextPos[$skillId]['current_level'] = $levelNum;
+                    $nextPos[(string) $skillId]['current_level'] = $levelNum;
 
                 } else {
 
@@ -566,7 +566,7 @@ class ExamProgressController extends Controller
 
                     if ($nextLevelExists) {
 
-                        $nextPos[$skillId]['current_level'] = $levelNum + 1;
+                        $nextPos[(string) $skillId]['current_level'] = $levelNum + 1;
 
                     } else {
 

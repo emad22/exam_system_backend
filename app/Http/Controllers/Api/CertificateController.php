@@ -7,6 +7,8 @@ use App\Models\Certificate;
 use App\Models\ExamAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Auth;
+
 
 class CertificateController extends Controller
 {
@@ -68,12 +70,31 @@ class CertificateController extends Controller
     /**
      * Verify a certificate publically.
      */
-    public function verify($code)
+    public function verify($code, Request $request)
     {
-        $certificate = Certificate::with(['student.user', 'attempt.exam'])
-            ->where('verification_code', $code)
-            ->where('is_visible_to_student', true)
-            ->first();
+        $query = Certificate::with(['student.user', 'attempt.exam'])
+            ->where('verification_code', $code);
+
+        $user = $this->resolveOptionalUser($request);
+
+        $isPrivileged = $user && in_array($user->role, ['admin', 'teacher']);
+
+        // لو Partner، لازم كمان الشهادة تبقى تابعة لطلابه
+        if ($user && $user->role === 'partner') {
+            $partner = $user->partner;
+            if ($partner) {
+                $query->whereHas('student', function ($q) use ($partner) {
+                    $q->where('partner_id', $partner->id);
+                });
+                $isPrivileged = true;
+            }
+        }
+
+        if (!$isPrivileged) {
+            $query->where('is_visible_to_student', true);
+        }
+
+        $certificate = $query->first();
 
         if (!$certificate) {
             return response()->json(['error' => 'Certificate not found or not visible'], 404);
@@ -198,5 +219,20 @@ class CertificateController extends Controller
         }
 
         return response()->json($query->latest()->paginate(20));
+    }
+
+
+    /**
+     * Resolve user from bearer token manually, without forcing auth (route stays public).
+     */
+    private function resolveOptionalUser(Request $request)
+    {
+        $token = $request->bearerToken();
+        if (!$token) {
+            return null;
+        }
+
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+        return $accessToken?->tokenable;
     }
 }
