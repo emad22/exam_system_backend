@@ -162,6 +162,7 @@ class ReportController extends Controller
                     $pos['current_level'] = 1;
                     $pos['current_skill_started_at'] = null;
                 }
+                unset($pos[$skillId]);           
             }
 
             $attempt->current_position = $pos;
@@ -222,24 +223,16 @@ class ReportController extends Controller
                 return response()->json(['error' => 'No level found to reset for this skill.'], 404);
             }
 
-            // 2. جيب الـ level اللي قبله (لو موجود) عشان نعرف التوقيت
-            $previousLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                ->where('skill_id', $skillId)
-                ->orderBy('level_number', 'desc')
-                ->skip(1)
-                ->first();
+            // 2. احذف الأجوبة الخاصة بهذا المستوى وما بعده
+            $levelsToKeep = \App\Models\Level::where('skill_id', $skillId)
+                ->where('level_number', '<', $lastLevel->level_number)
+                ->pluck('id');
 
-            // 3. احذف StudentAnswers اللي اتعملت من بداية اللevel دي
             $answersQuery = StudentAnswer::where('exam_attempt_id', $attempt->id)
-                ->where('skill_id', $skillId);
-
-            if ($previousLevel) {
-                // احذف الأجوبة اللي جات بعد انتهاء الـ level السابق
-                $answersQuery->where('created_at', '>', $previousLevel->updated_at);
-            } else {
-                // لو دي أول level، احذف كل أجوبة الـ skill دي
-                $answersQuery->where('created_at', '>=', $lastLevel->created_at);
-            }
+                ->where('skill_id', $skillId)
+                ->whereDoesntHave('question', function ($q) use ($levelsToKeep) {
+                    $q->whereIn('level_id', $levelsToKeep);
+                });
 
             $deletedAnswers = $answersQuery->count();
             $answersQuery->delete();
@@ -254,16 +247,17 @@ class ReportController extends Controller
                 ->first();
 
             if ($attemptSkill) {
-                // احسب الـ score من الـ levels الباقية بعد الحذف
-                $remainingAvgScore = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                    ->where('skill_id', $skillId)
-                    ->sum('score') ?? 0;
+                // احسب الـ score من الـ levels الباقية بعد الحذف باستخدام المنطق المعتمد
+                $attemptService = app(\App\Services\AttemptService::class);
+                $remainingAvgScore = $attemptService->computeSkillScore($attempt, $skillId);
 
                 $attemptSkill->status = 'in_progress';
                 $attemptSkill->finished_at = null;
                 $attemptSkill->score = $remainingAvgScore;
                 $attemptSkill->max_level_reached = max(1, $lastLevel->level_number - 1);
                 $attemptSkill->save();
+
+                $attemptService->updateOverallScore($attempt, $skillId, $remainingAvgScore);
             }
 
             // 5. رجّع current_position
@@ -272,21 +266,31 @@ class ReportController extends Controller
                 $pos = json_decode($pos, true);
             }
 
+            // حساب الوقت المستغرق في المستويات السابقة وتخزينه في resumed_time فقط
+            $previousLevel = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $skillId)
+                ->orderBy('level_number', 'desc')
+                ->first(); // هذا هو المستوى السابق فعلياً لأننا حذفنا lastLevel
+
+            if ($previousLevel && $attemptSkill && $attemptSkill->started_at) {
+                $timeSpentSeconds = abs($previousLevel->updated_at->diffInSeconds($attemptSkill->started_at));
+                $pos[(string) $skillId]['resumed_time'] = now()->subSeconds($timeSpentSeconds)->toIso8601String();
+            } else {
+                $pos[(string) $skillId]['resumed_time'] = now()->toIso8601String();
+            }
+
             // بدل ما نحط current_level في الـ position الرئيسية
             // خزّنه جوه object المهارة نفسها
-            $remainingLevelsCount = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
-                ->where('skill_id', $skillId)
-                ->max('level_number') ?? 1;
-
-            // حدّث current_level جوه الـ skill object بس
+            
+            // حدّث current_level جوه الـ skill object بس عشان يرجع يعيد نفس المستوى اللي اتحذف
             if (isset($pos[$skillId])) {
-                $pos[$skillId]['current_level'] = $remainingLevelsCount;
+                $pos[$skillId]['current_level'] = $lastLevel->level_number;
                 // عايز اعمل تحديث الى completed_skills 
                 $pos['completed_skills'] = array_filter($pos['completed_skills'], function ($completedSkillId) use ($skillId) {
                     return $completedSkillId != $skillId;
                 });
             } else {
-                $pos[$skillId]['current_level'] = $remainingLevelsCount;
+                $pos[$skillId]['current_level'] = $lastLevel->level_number;
                 $pos['completed_skills'] = array_filter($pos['completed_skills'], function ($completedSkillId) use ($skillId) {
                     return $completedSkillId != $skillId;
                 });
@@ -299,12 +303,20 @@ class ReportController extends Controller
             if ($attempt->status === 'completed') {
                 $attempt->status = 'ongoing';
                 $attempt->finished_at = null;
+            }
 
-                // شيل الـ skill من completed_skills لو موجودة
-                if (isset($pos['completed_skills'])) {
-                    $pos['completed_skills'] = array_values(
-                        array_filter($pos['completed_skills'], fn($id) => $id != $skillId)
-                    );
+            // شيل الـ skill من completed_skills لو موجودة
+            if (isset($pos['completed_skills'])) {
+                $pos['completed_skills'] = array_values(
+                    array_filter($pos['completed_skills'], fn($id) => $id != $skillId)
+                );
+            }
+
+            // إرجاع current_skill_index لمهارة المستوى المحذوف عشان الطالب يقدر يمتحنها
+            if (isset($pos['skill_ids'])) {
+                $resetIndex = array_search($skillId, $pos['skill_ids']);
+                if ($resetIndex !== false) {
+                    $pos['current_skill_index'] = $resetIndex;
                 }
             }
 

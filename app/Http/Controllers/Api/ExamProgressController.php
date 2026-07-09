@@ -144,6 +144,16 @@ class ExamProgressController extends Controller
             }
         }
 
+        $returnedStartedAt = $pos['current_skill_started_at'];
+
+        if (isset($pos[(string) $skillId]['resumed_time'])) {
+            $returnedStartedAt = $pos[(string) $skillId]['resumed_time'];
+            unset($pos[(string) $skillId]['resumed_time']);
+            $attempt->update([
+                'current_position' => $pos
+            ]);
+        }
+
         return response()->json([
             'skill' => $attempt->exam->skills->firstWhere('id', $skillId),
             'level' => $level,
@@ -158,7 +168,7 @@ class ExamProgressController extends Controller
             'time_limit' => $attempt->exam->time_limit ?? 0,
             'skill_duration' => $isDemo ? 0 : $skillDuration,
 
-            'current_skill_started_at' => $pos['current_skill_started_at'],
+            'current_skill_started_at' => $returnedStartedAt,
             'skill_cheat_warnings' => $skillRecord->cheat_warnings ?? 0,
 
             // مهم جداً للتتبع
