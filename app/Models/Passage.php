@@ -13,6 +13,7 @@ class Passage extends Model
         'type',
         'title',
         'content',
+        'general_instructions',
         'media_path',
         'audio_path',
         'image_path',

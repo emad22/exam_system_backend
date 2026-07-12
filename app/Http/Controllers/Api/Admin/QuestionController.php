@@ -115,6 +115,7 @@ class QuestionController extends Controller
             'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
             'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
+            'questions.*.general_instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
             'questions.*.sort_order' => 'nullable|integer',
             'questions.*.image_width' => 'nullable|numeric',
@@ -205,6 +206,7 @@ class QuestionController extends Controller
                     'type' => $request->passage_type,
                     'title' => $request->passage_title,
                     'content' => $request->passage_content,
+                    'general_instructions' => $request->input('passage_general_instructions'),
                     'media_path' => $pMediaPath,
                     'audio_path' => $pAudioPath,
                     'image_path' => $pImagePath,
@@ -385,6 +387,7 @@ class QuestionController extends Controller
             'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
             'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
+            'questions.*.general_instructions' => 'nullable|string',
             'questions.*.points' => 'required|integer|min:1',
             'questions.*.sort_order' => 'nullable|integer',
             'questions.*.image_width' => 'nullable|numeric',
@@ -445,28 +448,29 @@ class QuestionController extends Controller
                 $passageId = null;
 
             } elseif ($request->passage_mode === 'existing') {
-                // Link to selected passage
                 $passageId = $request->passage_id;
 
-                // If the selected passage is the SAME as the question's current passage,
-                // also update its content fields (user may have edited them)
-                if ($passageId && $question->passage_id == $passageId && $question->passage) {
-                    $pMediaPath = $request->boolean('clear_p_media') ? null : ($request->hasFile('p_media_file') ? $request->file('p_media_file')->store('passages', 'public') : $question->passage->media_path);
-                    $pAudioPath = $request->boolean('clear_p_audio') ? null : ($request->hasFile('p_audio_file') ? $request->file('p_audio_file')->store('passages/audio', 'public') : $question->passage->audio_path);
-                    $pImagePath = $request->boolean('clear_p_image') ? null : ($request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $question->passage->image_path);
+                if ($passageId) {
+                    $passage = Passage::find($passageId);
+                    if ($passage) {
+                        $pMediaPath = $request->boolean('clear_p_media') ? null : ($request->hasFile('p_media_file') ? $request->file('p_media_file')->store('passages', 'public') : $passage->media_path);
+                        $pAudioPath = $request->boolean('clear_p_audio') ? null : ($request->hasFile('p_audio_file') ? $request->file('p_audio_file')->store('passages/audio', 'public') : $passage->audio_path);
+                        $pImagePath = $request->boolean('clear_p_image') ? null : ($request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $passage->image_path);
 
-                    $question->passage->update([
-                        'type' => $request->passage_type ?? $question->passage->type,
-                        'title' => $request->passage_title ?? $question->passage->title,
-                        'content' => $request->passage_content ?? $question->passage->content,
-                        'media_path' => $pMediaPath,
-                        'audio_path' => $pAudioPath,
-                        'image_path' => $pImagePath,
-                        'image_width' => $request->has('p_image_width') ? $request->p_image_width : $question->passage->image_width,
-                        'image_height' => $request->has('p_image_height') ? $request->p_image_height : $question->passage->image_height,
-                        'questions_limit' => $request->passage_questions_limit ?? $question->passage->questions_limit,
-                        'is_random' => $request->boolean('passage_is_random'),
-                    ]);
+                        $passage->update([
+                            'type' => $request->passage_type ?? $passage->type,
+                            'title' => $request->passage_title ?? $passage->title,
+                            'content' => $request->passage_content ?? $passage->content,
+                            'general_instructions' => $request->has('passage_general_instructions') ? $request->input('passage_general_instructions') : $passage->general_instructions,
+                            'media_path' => $pMediaPath,
+                            'audio_path' => $pAudioPath,
+                            'image_path' => $pImagePath,
+                            'image_width' => $request->has('p_image_width') ? $request->p_image_width : $passage->image_width,
+                            'image_height' => $request->has('p_image_height') ? $request->p_image_height : $passage->image_height,
+                            'questions_limit' => $request->passage_questions_limit ?? $passage->questions_limit,
+                            'is_random' => $request->boolean('passage_is_random'),
+                        ]);
+                    }
                 }
 
             } elseif ($request->passage_mode === 'new') {
@@ -478,6 +482,7 @@ class QuestionController extends Controller
                     'type' => $request->passage_type,
                     'title' => $request->passage_title,
                     'content' => $request->passage_content,
+                    'general_instructions' => $request->input('passage_general_instructions'),
                     'media_path' => $pMediaPath,
                     'image_width' => $request->p_image_width,
                     'image_height' => $request->p_image_height,
@@ -506,7 +511,7 @@ class QuestionController extends Controller
 
             // 3. Process Batch if provided, else single update
             $questionsData = $request->questions ?? [
-                array_merge($request->only(['type', 'content', 'instructions', 'points', 'min_words', 'max_words', 'options', 'image_width', 'image_height']), ['id' => $question->id])
+                array_merge($request->only(['type', 'content', 'instructions', 'general_instructions', 'points', 'min_words', 'max_words', 'options', 'image_width', 'image_height']), ['id' => $question->id])
             ];
 
             foreach ($questionsData as $index => $qData) {

@@ -188,12 +188,12 @@ class IdentityVerificationService
 
         $rawText = $this->visionService->extractRawText($image);
 
-        \Log::info('Google Vision OCR — raw text', [
-            'raw_text' => $rawText,
-        ]);
+        // \Log::info('Google Vision OCR — raw text', [
+        //     'raw_text' => $rawText,
+        // ]);
 
         if (!$rawText) {
-            \Log::info('Google Vision OCR returned no text.');
+            // \Log::info('Google Vision OCR returned no text.');
             return [
                 'extracted_id' => '',
                 'confidence_score' => 0,
@@ -202,14 +202,14 @@ class IdentityVerificationService
 
         $extractedId = $this->visionService->extractEgyptianNationalId($rawText);
 
-        \Log::info('Google Vision OCR — extracted national ID', [
-            'extracted_id' => $extractedId,
-        ]);
+        // \Log::info('Google Vision OCR — extracted national ID', [
+        //     'extracted_id' => $extractedId,
+        // ]);
 
         if (!$extractedId) {
-            \Log::info('Google Vision OCR: no valid national ID pattern found.', [
-                'raw_text_sample' => substr($rawText, 0, 200),
-            ]);
+            // \Log::info('Google Vision OCR: no valid national ID pattern found.', [
+            //     'raw_text_sample' => substr($rawText, 0, 200),
+            // ]);
 
             return [
                 'extracted_id' => '',
@@ -258,26 +258,26 @@ class IdentityVerificationService
             $base64 = $this->toBase64($image);
             $binary = base64_decode($base64, true);
             if (!$binary) {
-                \Log::warning('storeImage: base64_decode returned false', ['name' => $name]);
+                // \Log::warning('storeImage: base64_decode returned false', ['name' => $name]);
                 return null;
             }
 
             $fileName = $folder . '/' . $name . '_' . time() . '.jpg';
             $written = Storage::disk('public')->put($fileName, $binary);
             if (!$written) {
-                \Log::error('storeImage: failed to write base64 image to disk (check folder permissions)', [
-                    'fileName' => $fileName,
-                    'folder' => $folder,
-                ]);
+                // \Log::error('storeImage: failed to write base64 image to disk (check folder permissions)', [
+                //     'fileName' => $fileName,
+                //     'folder' => $folder,
+                // ]);
                 return null;
             }
             return Storage::disk('public')->url($fileName);
         } catch (\Exception $e) {
-            \Log::error('storeImage failed', [
-                'message' => $e->getMessage(),
-                'folder' => $folder,
-                'name' => $name,
-            ]);
+            // \Log::error('storeImage failed', [
+            //     'message' => $e->getMessage(),
+            //     'folder' => $folder,
+            //     'name' => $name,
+            // ]);
             return null;
         }
     }

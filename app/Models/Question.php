@@ -20,6 +20,7 @@ class Question extends Model
         'passage_id',
         'type', 
         'instructions',
+        'general_instructions',
         'content', 
         'media_path', 
         'audio_path',
