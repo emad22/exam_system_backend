@@ -26,8 +26,8 @@ class IdentityVerificationService
             ];
         }
 
-        // ✅ لازم الصورتين موجودين دايماً، سواء bypass أو لأ
-        if (empty($data['face_image']) || empty($data['id_image'])) {
+        // ✅ لازم الصورتين موجودين دايماً، إلا لو bypass
+        if (!$student->bypass_identity_verification && (empty($data['face_image']) || empty($data['id_image']))) {
             return (object) [
                 'verified' => false,
                 'session_id' => null,
@@ -37,12 +37,12 @@ class IdentityVerificationService
         }
 
         // 1. رقم الهوية vs الداتابيز
-        $studentCode = $this->normalize($data['id_number']);
+        $studentCode = isset($data['id_number']) ? $this->normalize($data['id_number']) : '';
         $dbCode = $this->normalize($student->student_code ?? '');
         $codeMatch = $dbCode === $studentCode;
 
         // 2. احتفظ بالصور فوراً في التخزين حتى لو فشل التحقق النهائي لاحقاً
-        $faceUrl = $this->storeImage($data['face_image'], 'proctoring/faces', $user->id . '_face');
+        $faceUrl = !empty($data['face_image']) ? $this->storeImage($data['face_image'], 'proctoring/faces', $user->id . '_face') : null;
         $idUrl = !empty($data['id_image']) ? $this->storeImage($data['id_image'], 'proctoring/ids', $user->id . '_id') : null;
 
         if (!$faceUrl) {

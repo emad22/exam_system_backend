@@ -324,10 +324,10 @@ class ProctoringController extends Controller
 
         if (!$faceImageUrl) {
             return response()->json([
-                'success' => false,
+                'success' => true,
                 'face_image_url' => null,
                 'message' => 'No registered face image found for this session.',
-            ], 404);
+            ]);
         }
 
         // Return secure route URL instead of public storage link
