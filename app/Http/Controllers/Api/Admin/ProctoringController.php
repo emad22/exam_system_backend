@@ -636,7 +636,76 @@ class ProctoringController extends Controller
         return $recommendations;
     }
 
+    /**
+     * Delete a proctoring session
+     */
+    public function destroy($sessionId)
+    {
+        $session = ProctoringSession::findOrFail($sessionId);
 
+        // حذف البيانات المرتبطة بالجلسة أولاً
+        ExamViolation::where('proctoring_session_id', $sessionId)->delete();
+        DB::table('face_detection_logs')->where('proctoring_session_id', $sessionId)->delete();
+        DB::table('device_detection_logs')->where('proctoring_session_id', $sessionId)->delete();
 
+        $session->delete();
 
+        return response()->json([
+            'success' => true,
+            'message' => 'Proctoring session deleted successfully.'
+        ]);
+    }
+
+    /**
+     * Delete ALL proctoring sessions for a specific student
+     */
+    public function deleteAllStudentSessions($studentId)
+    {
+        $sessionIds = ProctoringSession::where('student_id', $studentId)->pluck('id');
+
+        if ($sessionIds->isEmpty()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'No sessions found for this student.',
+                'deleted_count' => 0,
+            ]);
+        }
+
+        // حذف كل البيانات المرتبطة بجلسات الطالب
+        ExamViolation::whereIn('proctoring_session_id', $sessionIds)->delete();
+        DB::table('face_detection_logs')->whereIn('proctoring_session_id', $sessionIds)->delete();
+        DB::table('device_detection_logs')->whereIn('proctoring_session_id', $sessionIds)->delete();
+        DB::table('proctoring_reports')->whereIn('proctoring_session_id', $sessionIds)->delete();
+
+        $count = ProctoringSession::where('student_id', $studentId)->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => "All {$count} proctoring sessions for this student have been deleted.",
+            'deleted_count' => $count,
+        ]);
+    }
+
+    /**
+     * Bulk delete proctoring sessions
+     */
+    public function bulkDestroy(Request $request)
+    {
+        $validated = $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'required|integer|exists:proctoring_sessions,id',
+        ]);
+
+        // حذف البيانات المرتبطة بالجلسات أولاً
+        ExamViolation::whereIn('proctoring_session_id', $validated['ids'])->delete();
+        DB::table('face_detection_logs')->whereIn('proctoring_session_id', $validated['ids'])->delete();
+        DB::table('device_detection_logs')->whereIn('proctoring_session_id', $validated['ids'])->delete();
+
+        ProctoringSession::whereIn('id', $validated['ids'])->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Selected proctoring sessions deleted successfully.'
+        ]);
+    }
 }

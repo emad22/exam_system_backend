@@ -634,4 +634,73 @@ class ProctoringOptimizationTest extends TestCase
         $this->assertTrue($response->json('verified'));
         $this->assertNotNull($response->json('session_id'));
     }
+
+    public function test_admin_can_delete_proctoring_session()
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'is_active' => true]);
+        $studentUser = User::factory()->create(['role' => 'student']);
+        $category = \App\Models\ExamCategory::create([
+            'name' => 'Adults',
+            'slug' => 'adults',
+            'is_active' => true,
+        ]);
+        $student = Student::create([
+            'user_id' => $studentUser->id,
+            'exam_category_id' => $category->id,
+        ]);
+
+        $session = ProctoringSession::create([
+            'student_id' => $student->id,
+            'status' => 'ended',
+            'session_token' => 'session-token-to-delete',
+        ]);
+
+        // Verify it exists
+        $this->assertDatabaseHas('proctoring_sessions', ['id' => $session->id]);
+
+        $response = $this->actingAs($admin)->deleteJson("/api/v1/admin/proctoring/{$session->id}");
+
+        $response->assertStatus(200);
+        $response->assertJson(['success' => true]);
+        $this->assertDatabaseMissing('proctoring_sessions', ['id' => $session->id]);
+    }
+
+    public function test_admin_can_bulk_delete_proctoring_sessions()
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'is_active' => true]);
+        $studentUser = User::factory()->create(['role' => 'student']);
+        $category = \App\Models\ExamCategory::create([
+            'name' => 'Adults',
+            'slug' => 'adults',
+            'is_active' => true,
+        ]);
+        $student = Student::create([
+            'user_id' => $studentUser->id,
+            'exam_category_id' => $category->id,
+        ]);
+
+        $session1 = ProctoringSession::create([
+            'student_id' => $student->id,
+            'status' => 'ended',
+            'session_token' => 'bulk-session-1',
+        ]);
+        $session2 = ProctoringSession::create([
+            'student_id' => $student->id,
+            'status' => 'ended',
+            'session_token' => 'bulk-session-2',
+        ]);
+
+        // Verify they exist
+        $this->assertDatabaseHas('proctoring_sessions', ['id' => $session1->id]);
+        $this->assertDatabaseHas('proctoring_sessions', ['id' => $session2->id]);
+
+        $response = $this->actingAs($admin)->postJson("/api/v1/admin/proctoring/bulk-delete", [
+            'ids' => [$session1->id, $session2->id]
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['success' => true]);
+        $this->assertDatabaseMissing('proctoring_sessions', ['id' => $session1->id]);
+        $this->assertDatabaseMissing('proctoring_sessions', ['id' => $session2->id]);
+    }
 }

@@ -393,6 +393,9 @@ class QuestionController extends Controller
             'questions.*.sort_order' => 'nullable|integer',
             'questions.*.image_width' => 'nullable|numeric',
             'questions.*.image_height' => 'nullable|numeric',
+            'questions.*.clear_q_image' => 'nullable|boolean',
+            'questions.*.clear_q_audio' => 'nullable|boolean',
+            'questions.*.clear_q_media' => 'nullable|boolean',
             'questions.*.options' => 'nullable|array',
         ]);
 
@@ -565,18 +568,24 @@ class QuestionController extends Controller
                 // احتفظ بالصور الموجودة لو مفيش صورة جديدة
                 if ($qMediaPath) {
                     $data['media_path'] = $qMediaPath;
+                } elseif (filter_var($qData['clear_q_media'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    $data['media_path'] = null;
                 } elseif ($qInstance->exists) {
                     $data['media_path'] = $qInstance->media_path; // keep existing
                 }
 
                 if ($qAudioPath) {
                     $data['audio_path'] = $qAudioPath;
+                } elseif (filter_var($qData['clear_q_audio'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    $data['audio_path'] = null;
                 } elseif ($qInstance->exists) {
                     $data['audio_path'] = $qInstance->audio_path;
                 }
 
                 if ($qImagePath) {
                     $data['image_path'] = $qImagePath;
+                } elseif (filter_var($qData['clear_q_image'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    $data['image_path'] = null;
                 } elseif ($qInstance->exists) {
                     $data['image_path'] = $qInstance->image_path;
                 }

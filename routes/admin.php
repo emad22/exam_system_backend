@@ -147,6 +147,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/', [Admin\ProctoringController::class, 'index'])->name('index');
         Route::get('/statistics', [Admin\ProctoringController::class, 'statistics'])->name('statistics');
         Route::get('/student/{studentId}', [Admin\ProctoringController::class, 'studentSessions'])->name('student-sessions');
+        Route::delete('/student/{studentId}/all', [Admin\ProctoringController::class, 'deleteAllStudentSessions'])->name('student-delete-all');
         Route::get('/{session}', [Admin\ProctoringController::class, 'show'])->name('show');
         Route::get('/{session}/violations', [Admin\ProctoringController::class, 'violations'])->name('violations');
         Route::patch('/{session}/status', [Admin\ProctoringController::class, 'updateStatus'])->name('update-status');
@@ -154,6 +155,8 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/{session}/report', [Admin\ProctoringController::class, 'report'])->name('report');
         Route::get('/{session}/export', [Admin\ProctoringController::class, 'exportReport'])->name('export-report');
         Route::post('/{session}/end-skill', [Admin\ProctoringController::class, 'endSkillExam'])->name('end-skill');
+        Route::delete('/{session}', [Admin\ProctoringController::class, 'destroy'])->name('destroy');
+        Route::post('/bulk-delete', [Admin\ProctoringController::class, 'bulkDestroy'])->name('bulk-delete');
     });
 
     // Utilities
