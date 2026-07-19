@@ -30,8 +30,8 @@ class CertificateService
         }
 
         if (!$template) {
-            $template = CertificateTemplate::where('is_default', true)->first() 
-                        ?? CertificateTemplate::first();
+            $template = CertificateTemplate::where('is_default', true)->first()
+                ?? CertificateTemplate::first();
         }
 
         if (!$template) {
@@ -59,7 +59,7 @@ class CertificateService
 
         // 5. Generate PDF
         $pdfPath = $this->renderAndSavePdf($certificate, $template, $attempt);
-        
+
         $certificate->update(['file_path' => $pdfPath]);
 
         return $certificate;
@@ -77,6 +77,7 @@ class CertificateService
         $student = $attempt->student;
         $user = $student->user;
         $exam = $attempt->exam;
+
         // Prefer a FRONTEND_URL environment variable (e.g. http://localhost:5173) for user-facing links.
         $frontendBase = env('FRONTEND_URL', config('app.url'));
         $verificationUrl = rtrim($frontendBase, '/') . "/verify-certificate/{$certificate->verification_code}";
@@ -88,7 +89,6 @@ class CertificateService
                 $qrPng = \SimpleSoftwareIO\QrCode\Facades\QrCode::format('png')->size(300)->margin(1)->generate($verificationUrl);
                 $qrImage = base64_encode($qrPng);
             } else {
-                // Fallback to public QR generator
                 $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($verificationUrl);
                 $qrPng = @file_get_contents($qrUrl);
                 if ($qrPng !== false) {
@@ -99,62 +99,58 @@ class CertificateService
             $qrImage = null;
         }
 
-
-        // Replace Placeholders in HTML
-        $placeholders = [
-            '{name}' => $user->first_name . ' ' . $user->last_name,
-            '{date}' => $certificate->issue_date->format('M d, Y'),
-            '{score}' => $certificate->score,
-            '{total_points}' => round(($certificate->score / 100) * 900),
-            '{cefr}' => $this->mapToCefr($certificate->score),
-            '{actfl}' => $this->mapToActfl($certificate->score),
-            '{exam}' => $exam->name,
-            '{number}' => $certificate->certificate_number,
-            '{verification_url}' => url("/verify-certificate/{$certificate->verification_code}"),
-            '{skills_table}' => $this->generateSkillsTable($attempt),
-            '{qr_code}' => 'data:image/png;base64,' . $qrImage,
-        ];
-
-        // Build content by replacing placeholders in the stored template HTML
-        $content = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
-
-        // Convert any /storage/... image src to absolute storage path so DomPDF can load it
-        try {
-            $content = preg_replace_callback('/src=(["\'])\/(storage\/[^"\']+)\1/i', function ($m) {
-                $rel = $m[2];
-                $relPath = preg_replace('#^storage/#', '', $rel);
-                $full = storage_path('app/public/' . $relPath);
-                if (file_exists($full)) {
-                    return 'src="' . $full . '"';
-                }
-                return $m[0];
-            }, $content);
-        } catch (\Throwable $e) {
-            // ignore processing errors
+        // Resolve logo path for DomPDF (must be a local filesystem path, not a URL)
+        $logoPath = null;
+        // Check Laravel's public directory for the logo file
+        $publicLogo = public_path('my-logo.png');
+        if (file_exists($publicLogo)) {
+            $logoPath = $publicLogo;
         }
 
-        // Render the blade wrapper so the resulting HTML matches what verify() shows in the browser
-        $fullHtml = view('certificates.template', ['content' => $content, 'template' => $template])->render();
+        // Build skills data array
+        $skillsData = [];
+        $skillRecords = $attempt->attemptSkills()->with('skill')->get();
+        foreach ($skillRecords as $s) {
+            $skillsData[] = [
+                'name' => $s->skill->name ?? '',
+                'points' => round(($s->score / 100) * 900),
+                'score' => $s->score,
+                'cefr' => $this->mapToCefr($s->score),
+                'actfl' => $this->mapToActfl($s->score),
+                'date' => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y'),
+            ];
+        }
 
-        // Log debug info about template/content used to render PDF
+        $overallScore = $attempt->overall_score ?? 0;
+        $totalPoints = round(($overallScore / 100) * 900);
+        $issueDate = $certificate->issue_date->format('M d, Y');
+
+        // Render the dedicated PDF Blade view that mirrors the verify-certificate page
+        $fullHtml = view('certificates.certificate_pdf', [
+            'studentName' => $user->first_name . ' ' . $user->last_name,
+            'score' => $overallScore,
+            'totalPoints' => $totalPoints,
+            'cefr' => $this->mapToCefr($overallScore),
+            'actfl' => $this->mapToActfl($overallScore),
+            'issueDate' => $issueDate,
+            'certNumber' => $certificate->certificate_number,
+            'skills' => $skillsData,
+            'qrImage' => $qrImage,
+            'logoPath' => $logoPath,
+        ])->render();
+
         try {
-            Log::info('CertificateService: rendering PDF', [
+            Log::info('CertificateService: rendering PDF with certificate_pdf blade', [
                 'certificate_id' => $certificate->id,
-                'template_id' => $template->id,
-                'has_content_html' => !empty($template->content_html),
-                'has_elements_json' => !empty($template->elements_json ?? ''),
+                'student' => $user->first_name . ' ' . $user->last_name,
             ]);
         } catch (\Throwable $e) {
-            // ignore logging failures
         }
 
-        // Render PDF from the blade output and apply watermark wrapper
-        $pdf = Pdf::loadHTML($this->wrapHtml($fullHtml, $template))
-                  ->setPaper('a4', 'landscape');
+        $pdf = Pdf::loadHTML($fullHtml)->setPaper('a4', 'landscape');
 
         $fileName = "certificates/{$certificate->certificate_number}.pdf";
-        
-        // Ensure directory exists
+
         if (!Storage::disk('public')->exists('certificates')) {
             Storage::disk('public')->makeDirectory('certificates');
         }
@@ -239,7 +235,8 @@ class CertificateService
 
     protected function generateSkillsTable($attempt)
     {
-        if (!$attempt) return '';
+        if (!$attempt)
+            return '';
 
         $rows = '';
         $skills = $attempt->attemptSkills()->with('skill')->get();
@@ -294,15 +291,24 @@ class CertificateService
     {
         $points = round(($score / 100) * 900);
 
-        if ($points >= 801) return 'C1.2';
-        if ($points >= 701) return 'C1.1';
-        if ($points >= 668) return 'B2.2';
-        if ($points >= 634) return 'B2.1';
-        if ($points >= 601) return 'B1.2';
-        if ($points >= 501) return 'B1.1';
-        if ($points >= 401) return 'A2.2';
-        if ($points >= 301) return 'A2.1';
-        if ($points >= 201) return 'A1.2';
+        if ($points >= 801)
+            return 'C1.2';
+        if ($points >= 701)
+            return 'C1.1';
+        if ($points >= 668)
+            return 'B2.2';
+        if ($points >= 634)
+            return 'B2.1';
+        if ($points >= 601)
+            return 'B1.2';
+        if ($points >= 501)
+            return 'B1.1';
+        if ($points >= 401)
+            return 'A2.2';
+        if ($points >= 301)
+            return 'A2.1';
+        if ($points >= 201)
+            return 'A1.2';
         return 'A1.1';
     }
 
@@ -310,16 +316,26 @@ class CertificateService
     {
         $points = round(($score / 100) * 900);
 
-        if ($points >= 801) return 'Superior';
-        if ($points >= 701) return 'Advanced High';
-        if ($points >= 668) return 'Advanced Mid+';
-        if ($points >= 634) return 'Advanced Mid';
-        if ($points >= 601) return 'Advanced Low';
-        if ($points >= 501) return 'Intermediate High';
-        if ($points >= 401) return 'Intermediate Mid';
-        if ($points >= 301) return 'Intermediate Low';
-        if ($points >= 201) return 'Novice High';
-        if ($points >= 101) return 'Novice Mid';
+        if ($points >= 801)
+            return 'Superior';
+        if ($points >= 701)
+            return 'Advanced High';
+        if ($points >= 668)
+            return 'Advanced Mid+';
+        if ($points >= 634)
+            return 'Advanced Mid';
+        if ($points >= 601)
+            return 'Advanced Low';
+        if ($points >= 501)
+            return 'Intermediate High';
+        if ($points >= 401)
+            return 'Intermediate Mid';
+        if ($points >= 301)
+            return 'Intermediate Low';
+        if ($points >= 201)
+            return 'Novice High';
+        if ($points >= 101)
+            return 'Novice Mid';
         return 'Novice Low';
     }
 }
