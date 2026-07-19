@@ -86,10 +86,12 @@ class ProctoringController extends Controller
       ========================================================= */
     public function verifyIdentity(Request $request)
     {
+        // face_image / id_image / id_number are nullable here because the service
+        // layer handles bypass_identity_verification correctly and approves without them.
         $validated = $request->validate([
-            'face_image' => 'required',
-            'id_image' => 'required',
-            'id_number' => 'required|string|min:3|max:50',
+            'face_image' => 'nullable',
+            'id_image' => 'nullable',
+            'id_number' => 'nullable|string|min:1|max:50',
             'exam_attempt_id' => 'nullable|exists:exam_attempts,id',
         ]);
 

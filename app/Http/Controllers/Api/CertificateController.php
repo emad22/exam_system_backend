@@ -193,6 +193,35 @@ class CertificateController extends Controller
     }
 
     /**
+     * Admin: Delete a certificate and its stored file.
+     */
+    public function destroy(Certificate $certificate)
+    {
+        $user = auth()->user();
+
+        // Only staff (admin/teacher) or partner owning the student may delete
+        if ($user->role === 'admin' || $user->role === 'teacher') {
+            // allowed
+        } elseif ($user->role === 'partner') {
+            $partner = $user->partner;
+            if (!$partner || $certificate->student?->partner_id !== $partner->id) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } else {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        // Delete stored file if exists
+        if ($certificate->file_path && Storage::disk('public')->exists($certificate->file_path)) {
+            Storage::disk('public')->delete($certificate->file_path);
+        }
+
+        $certificate->delete();
+
+        return response()->json(['message' => 'Certificate deleted successfully.']);
+    }
+
+    /**
      * Partner: List certificates for students belonging to this partner.
      */
     public function partnerIndex(Request $request)

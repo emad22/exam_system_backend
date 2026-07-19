@@ -8,69 +8,7 @@ use Illuminate\Support\Str;
 
 class ProctoringSessionService
 {
-    /**
-     * Create or reuse session
-     */
-    // public function initiate(?ExamAttempt $attempt, $request, ?int $sessionId = null): ProctoringSession
-    // {
-    //     $studentId = auth()->user()->student?->id;
-
-    //     if ($attempt) {
-    //         abort_if($attempt->student_id !== $studentId, 403);
-    //     }
-
-    //     // 1. إذا كانت هناك جلسة منتهية مع نفس الطالب، نُنشئ جلسة جديدة مباشرةً.
-    //     if ($studentId) {
-    //         $latestEndedSession = ProctoringSession::where('student_id', $studentId)
-    //             ->where('status', 'ended')
-    //             ->latest()
-    //             ->first();
-
-    //         if ($latestEndedSession) {
-    //             $latestEndedSession->update([
-    //                 'status' => 'ended',
-    //             ]);
-    //         }
-    //     }
-
-    //     // 2. إذا كانت المحاولة منتهية، لا نُنشئ جلسة جديدة.
-    //     if ($attempt && $attempt->status === 'completed') {
-    //         return new ProctoringSession([
-    //             'status' => 'ended',
-    //             'exam_attempt_id' => $attempt->id,
-    //         ]);
-    //     }
-
-    //     // 3. إذا كانت هناك جلسة نشطة/معلقة، نعيد استخدامها.
-    //     if ($attempt) {
-    //         $existingActive = ProctoringSession::where('student_id', $studentId)
-    //             ->where('exam_attempt_id', $attempt->id)
-    //             ->whereIn('status', ['pending', 'active', 'paused'])
-    //             ->latest()
-    //             ->first();
-
-    //         if ($existingActive) {
-    //             return $existingActive;
-    //         }
-    //     }
-
-    //     // 4. نُنشئ جلسة جديدة دائمًا عند بدء أي محاولة جديدة.
-    //     $session = ProctoringSession::create(
-    //         [
-    //             'student_id' => $studentId,
-    //             'exam_attempt_id' => $attempt?->id,
-    //             'status' => 'pending',
-    //             'session_token' => Str::random(64),
-    //             'ip_address' => $request->ip(),
-    //             'user_agent' => $request->userAgent(),
-    //             'risk_score' => 0,
-    //             'violations_count' => 0,
-    //         ]
-    //     );
-
-    //     return $session;
-    // }
-
+   
 
 
     public function initiate(?ExamAttempt $attempt, $request, ?int $sessionId = null): ProctoringSession

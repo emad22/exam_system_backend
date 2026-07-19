@@ -8,6 +8,8 @@ use App\Models\ExamAttempt;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
+use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class CertificateService
 {
@@ -16,21 +18,27 @@ class CertificateService
      */
     public function generate(ExamAttempt $attempt)
     {
-        // 2. Get the template (default or first available)
-        $template = CertificateTemplate::where('is_default', true)->first() 
-                    ?? CertificateTemplate::first();
+        // 1. Check if certificate already exists
+        $certificate = $attempt->certificate;
+
+        // Determine template preference:
+        // - If a certificate exists and already has a template_id, use that template.
+        // - Otherwise use the default template (is_default) or the first available.
+        $template = null;
+        if ($certificate && $certificate->template_id) {
+            $template = CertificateTemplate::find($certificate->template_id);
+        }
+
+        if (!$template) {
+            $template = CertificateTemplate::where('is_default', true)->first() 
+                        ?? CertificateTemplate::first();
+        }
 
         if (!$template) {
             throw new \Exception("No certificate template found. Please create one in Admin panel.");
         }
 
-        // 1. Check if certificate already exists
-        $certificate = $attempt->certificate;
-        
-        if ($certificate) {
-            // Update existing record to use current default template
-            $certificate->update(['template_id' => $template->id]);
-        } else {
+        if (!$certificate) {
             // 3. Prepare Data
             $certificateNumber = $this->generateCertificateNumber();
             $verificationCode = Str::random(12);
@@ -69,6 +77,28 @@ class CertificateService
         $student = $attempt->student;
         $user = $student->user;
         $exam = $attempt->exam;
+        // Prefer a FRONTEND_URL environment variable (e.g. http://localhost:5173) for user-facing links.
+        $frontendBase = env('FRONTEND_URL', config('app.url'));
+        $verificationUrl = rtrim($frontendBase, '/') . "/verify-certificate/{$certificate->verification_code}";
+
+        // Generate QR image (base64). Prefer local package if available, otherwise fall back to external API.
+        $qrImage = null;
+        try {
+            if (class_exists(\SimpleSoftwareIO\QrCode\Facades\QrCode::class)) {
+                $qrPng = \SimpleSoftwareIO\QrCode\Facades\QrCode::format('png')->size(300)->margin(1)->generate($verificationUrl);
+                $qrImage = base64_encode($qrPng);
+            } else {
+                // Fallback to public QR generator
+                $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($verificationUrl);
+                $qrPng = @file_get_contents($qrUrl);
+                if ($qrPng !== false) {
+                    $qrImage = base64_encode($qrPng);
+                }
+            }
+        } catch (\Throwable $e) {
+            $qrImage = null;
+        }
+
 
         // Replace Placeholders in HTML
         $placeholders = [
@@ -81,13 +111,45 @@ class CertificateService
             '{exam}' => $exam->name,
             '{number}' => $certificate->certificate_number,
             '{verification_url}' => url("/verify-certificate/{$certificate->verification_code}"),
-            '{skills_table}' => $this->generateSkillsTable($attempt)
+            '{skills_table}' => $this->generateSkillsTable($attempt),
+            '{qr_code}' => 'data:image/png;base64,' . $qrImage,
         ];
 
-        $html = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
+        // Build content by replacing placeholders in the stored template HTML
+        $content = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
 
-        // Render PDF
-        $pdf = Pdf::loadHTML($this->wrapHtml($html, $template))
+        // Convert any /storage/... image src to absolute storage path so DomPDF can load it
+        try {
+            $content = preg_replace_callback('/src=(["\'])\/(storage\/[^"\']+)\1/i', function ($m) {
+                $rel = $m[2];
+                $relPath = preg_replace('#^storage/#', '', $rel);
+                $full = storage_path('app/public/' . $relPath);
+                if (file_exists($full)) {
+                    return 'src="' . $full . '"';
+                }
+                return $m[0];
+            }, $content);
+        } catch (\Throwable $e) {
+            // ignore processing errors
+        }
+
+        // Render the blade wrapper so the resulting HTML matches what verify() shows in the browser
+        $fullHtml = view('certificates.template', ['content' => $content, 'template' => $template])->render();
+
+        // Log debug info about template/content used to render PDF
+        try {
+            Log::info('CertificateService: rendering PDF', [
+                'certificate_id' => $certificate->id,
+                'template_id' => $template->id,
+                'has_content_html' => !empty($template->content_html),
+                'has_elements_json' => !empty($template->elements_json ?? ''),
+            ]);
+        } catch (\Throwable $e) {
+            // ignore logging failures
+        }
+
+        // Render PDF from the blade output and apply watermark wrapper
+        $pdf = Pdf::loadHTML($this->wrapHtml($fullHtml, $template))
                   ->setPaper('a4', 'landscape');
 
         $fileName = "certificates/{$certificate->certificate_number}.pdf";
@@ -108,27 +170,68 @@ class CertificateService
         if ($template->background_image) {
             $backgroundPath = storage_path('app/public/' . $template->background_image);
         }
-        
+        $bgTag = '';
+        if ($backgroundPath) {
+            $bgTag = "<img class='bg-image' src='{$backgroundPath}' alt='background' />";
+        }
+
         return "
         <html>
         <head>
             <meta http-equiv='Content-Type' content='text/html; charset=utf-8'/>
             <style>
-                @page { margin: 0; }
+                @page { size: A4 landscape; margin: 0; }
                 body { 
                     font-family: 'DejaVu Sans', sans-serif; 
                     margin: 0; 
                     padding: 0;
-                    background-image: url('{$backgroundPath}');
-                    background-size: cover;
-                    background-repeat: no-repeat;
                     width: 100%;
                     height: 100%;
+                    position: relative;
+                }
+                .bg-image {
+                    position: absolute;
+                    left: 50%;
+                    top: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 60%;
+                    height: auto;
+                    opacity: 0.04;
+                    object-fit: contain;
+                    z-index: 0;
+                    pointer-events: none;
+                }
+                .content {
+                    position: relative;
+                    z-index: 1;
+                    width: 1123px;
+                    height: 794px;
+                    margin: 0 auto;
+                    box-sizing: border-box;
+                    overflow: hidden;
+                    page-break-inside: avoid;
+                }
+                /* Force signatures to bottom of page to avoid being pushed to next page */
+                .content .signatures {
+                    position: absolute;
+                    bottom: 60px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: 90%;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-end;
+                    z-index: 2;
+                }
+                .content table.scores {
+                    margin-top: 40px;
+                    page-break-inside: avoid;
                 }
             </style>
         </head>
         <body>
-            {$content}
+            {$bgTag}
+            <div class='content'>{$content}</div>
         </body>
         </html>
         ";
@@ -137,27 +240,54 @@ class CertificateService
     protected function generateSkillsTable($attempt)
     {
         if (!$attempt) return '';
-        
-        $html = '';
+
+        $rows = '';
         $skills = $attempt->attemptSkills()->with('skill')->get();
-        
+
         foreach ($skills as $s) {
             $points = round(($s->score / 100) * 900);
-            $cefr = $this->mapToCefr($s->score);
-            $actfl = $this->mapToActfl($s->score);
             $date = $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y');
-            
-            $html .= "<tr>
-                <td>Section: " . ucfirst($s->skill->name) . "</td>
-                <td>{$points}/900</td>
-                <td>" . number_format($s->score, 1) . "%</td>
-                <td>{$cefr}</td>
-                <td>{$actfl}</td>
-                <td>{$date}</td>
+            $rows .= "<tr>
+                <td style='padding:8px;border:1px solid #444;text-align:left;'>Section: " . htmlspecialchars(ucfirst($s->skill->name)) . "</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$points}/900</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>" . number_format($s->score, 1) . "%</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToCefr($s->score)}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToActfl($s->score)}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$date}</td>
             </tr>";
         }
-        
-        return $html;
+
+        // Overall row
+        $overallScore = $attempt->overall_score ?? 0;
+        $overallPoints = round(($overallScore / 100) * 900);
+        $issueDate = $attempt->issue_date_formatted ?? now()->format('M d, Y');
+        $rows .= "<tr style='font-weight:bold; background:#f1f5f9;'>
+            <td style='padding:8px;border:1px solid #444;text-align:left;'>Overall Score</td>
+            <td style='padding:8px;border:1px solid #444;text-align:center;'>{$overallPoints}/900</td>
+            <td style='padding:8px;border:1px solid #444;text-align:center;'>" . number_format($overallScore, 1) . "%</td>
+            <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToCefr($overallScore)}</td>
+            <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToActfl($overallScore)}</td>
+            <td style='padding:8px;border:1px solid #444;text-align:center;'>{$issueDate}</td>
+        </tr>";
+
+        // Wrap rows in a complete table so injected HTML is valid
+        $table = "<table class='scores-table' style='width:100%;margin-top:25px;border-collapse:collapse;font-size:11px;'>
+            <thead>
+                <tr>
+                    <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Test</th>
+                    <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Score</th>
+                    <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Score%</th>
+                    <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Level (CEFR)</th>
+                    <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Level (ACTFL)</th>
+                    <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {$rows}
+            </tbody>
+        </table>";
+
+        return $table;
     }
 
     public function mapToCefr($score)

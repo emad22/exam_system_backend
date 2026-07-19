@@ -127,6 +127,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
     Route::get('/certificates', [CertificateController::class, 'adminIndex'])->name('certificates.index');
     Route::patch('/certificates/{certificate}/toggle-visibility', [CertificateController::class, 'toggleVisibility'])->name('certificates.toggle-visibility');
     Route::post('/certificates/create-for-attempt/{attempt}', [CertificateController::class, 'createForAttempt'])->name('certificates.create-for-attempt');
+    Route::delete('/certificates/{certificate}', [CertificateController::class, 'destroy'])->name('certificates.destroy');
     Route::get('/certificate-templates/{template}/preview', [Admin\CertificateTemplateController::class, 'previewPdf'])->name('certificate-templates.preview');
     Route::apiResource('certificate-templates', Admin\CertificateTemplateController::class)->names('certificate-templates');
 

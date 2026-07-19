@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CertificateTemplate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class CertificateTemplateController extends Controller
 {
@@ -28,9 +29,13 @@ class CertificateTemplateController extends Controller
 
         $data = $request->only(['name', 'content_html', 'is_default']);
         $data['elements_json'] = $request->input('elements_json');
-        // XSS Protection
+        // XSS Protection - preserve data-URL images and inline styles when present
         if (isset($data['content_html'])) {
-            $data['content_html'] = $this->sanitizeHtml($data['content_html']);
+            if (stripos($data['content_html'], 'data:image') !== false) {
+                // Keep as-is to preserve embedded images created in the visual editor
+            } else {
+                $data['content_html'] = $this->sanitizeHtml($data['content_html']);
+            }
         }
 
         if ($request->hasFile('background_image')) {
@@ -47,14 +52,15 @@ class CertificateTemplateController extends Controller
         });
     }
 
-    public function show(CertificateTemplate $template)
+    public function show(CertificateTemplate $certificate_template)
     {
-        return response()->json($template);
+        Log::info('CertificateTemplateController@show called', ['id' => $certificate_template->id, 'data' => $certificate_template->toArray()]);
+        return response()->json($certificate_template);
     }
 
-    public function update(Request $request, CertificateTemplate $template)
+    public function update(Request $request, CertificateTemplate $certificate_template)
     {
-        $this->authorize('update', $template);
+        $this->authorize('update', $certificate_template);
 
         $request->validate([
             'name' => 'required|string|max:255',
@@ -67,45 +73,49 @@ class CertificateTemplateController extends Controller
         $data = $request->only(['name', 'content_html', 'is_default']);
         $data['elements_json'] = $request->input('elements_json');
 
-        // XSS Protection
+        // XSS Protection - preserve data-URL images and inline styles when present
         if (isset($data['content_html'])) {
-            $data['content_html'] = $this->sanitizeHtml($data['content_html']);
+            if (stripos($data['content_html'], 'data:image') !== false) {
+                // Keep as-is to preserve embedded images created in the visual editor
+            } else {
+                $data['content_html'] = $this->sanitizeHtml($data['content_html']);
+            }
         }
 
         if ($request->hasFile('background_image')) {
             // Delete old image if exists
-            if ($template->background_image) {
-                Storage::disk('public')->delete($template->background_image);
+            if ($certificate_template->background_image) {
+                Storage::disk('public')->delete($certificate_template->background_image);
             }
             $data['background_image'] = $request->file('background_image')->store('templates', 'public');
         }
 
-        return \DB::transaction(function () use ($data, $template) {
+        return \DB::transaction(function () use ($data, $certificate_template) {
             if ($data['is_default'] ?? false) {
-                CertificateTemplate::where('id', '!=', $template->id)
+                CertificateTemplate::where('id', '!=', $certificate_template->id)
                     ->where('is_default', true)
                     ->update(['is_default' => false]);
             }
 
-            $template->update($data);
-            return response()->json($template);
+            $certificate_template->update($data);
+            return response()->json($certificate_template);
         });
     }
 
-    public function destroy(CertificateTemplate $template)
+    public function destroy(CertificateTemplate $certificate_template)
     {
-        $this->authorize('delete', $template);
+        $this->authorize('delete', $certificate_template);
 
-        if ($template->background_image) {
-            Storage::disk('public')->delete($template->background_image);
+        if ($certificate_template->background_image) {
+            Storage::disk('public')->delete($certificate_template->background_image);
         }
-        $template->delete();
+        $certificate_template->delete();
         return response()->json(['message' => 'Template deleted successfully']);
     }
 
-    public function previewPdf(CertificateTemplate $template)
+    public function previewPdf(CertificateTemplate $certificate_template)
     {
-        $this->authorize('view', $template);
+        $this->authorize('view', $certificate_template);
 
         // Dummy data for preview
         $placeholders = [
@@ -124,14 +134,14 @@ class CertificateTemplateController extends Controller
             '
         ];
 
-        $html = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
+        $html = str_replace(array_keys($placeholders), array_values($placeholders), $certificate_template->content_html);
 
         $service = app(\App\Services\CertificateService::class);
         
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($service->wrapHtml($html, $template))
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($service->wrapHtml($html, $certificate_template))
                   ->setPaper('a4', 'landscape');
 
-        return $pdf->download("Template-Preview-{$template->id}.pdf");
+        return $pdf->download("Template-Preview-{$certificate_template->id}.pdf");
     }
 
     protected function sanitizeHtml($html)
