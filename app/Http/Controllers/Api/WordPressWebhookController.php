@@ -100,6 +100,16 @@ class WordPressWebhookController extends Controller
                 'is_continue' => false,
                 'registration_date' => now(),
             ]);
+            //adding ArabAcademy as partner...................................................................................................
+            $arabAcademyPartner = \App\Models\Partner::where('partner_name', 'ArabAcademy')->first();
+            if ($arabAcademyPartner) {
+                if (is_null($student->partner_id)) {
+                    $student->partner_id = $arabAcademyPartner->id;
+                    $student->save();
+                }
+            } else {
+                \Illuminate\Support\Facades\Log::error('Partner ArabAcademy not found.');
+            }
 
             // Automated Exam Enrollment & Skill Filtering
             Student::assignDefaultExam($student);
