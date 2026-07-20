@@ -518,6 +518,20 @@ class QuestionController extends Controller
                 array_merge($request->only(['type', 'content', 'instructions', 'general_instructions', 'points', 'min_words', 'max_words', 'options', 'image_width', 'image_height']), ['id' => $question->id])
             ];
 
+            // 3.a Remove any questions that were deleted in the UI from this passage
+            if ($passageId) {
+                $incomingIds = collect($questionsData)->pluck('id')->filter()->toArray();
+                $existingIds = Question::where('passage_id', $passageId)->pluck('id')->toArray();
+                $toDelete = array_diff($existingIds, $incomingIds);
+                if (!empty($toDelete)) {
+                    $questionsToDelete = Question::whereIn('id', $toDelete)->get();
+                    foreach ($questionsToDelete as $dq) {
+                        $dq->options()->delete();
+                        $dq->delete();
+                    }
+                }
+            }
+
             foreach ($questionsData as $index => $qData) {
                 $qMediaPath = null;
                 $qAudioPath = null;

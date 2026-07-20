@@ -125,26 +125,117 @@ class CertificateService
         $totalPoints = round(($overallScore / 100) * 900);
         $issueDate = $certificate->issue_date->format('M d, Y');
 
-        // Render the dedicated PDF Blade view that mirrors the verify-certificate page
-        $fullHtml = view('certificates.certificate_pdf', [
-            'studentName' => $user->first_name . ' ' . $user->last_name,
-            'score' => $overallScore,
-            'totalPoints' => $totalPoints,
-            'cefr' => $this->mapToCefr($overallScore),
-            'actfl' => $this->mapToActfl($overallScore),
-            'issueDate' => $issueDate,
-            'certNumber' => $certificate->certificate_number,
-            'skills' => $skillsData,
-            'qrImage' => $qrImage,
-            'logoPath' => $logoPath,
-        ])->render();
+        if ($template && !empty($template->content_html)) {
+            // 1. Build skills table rows HTML to replace {skills_table}
+            $skillsHtml = '';
+            foreach ($skillsData as $s) {
+                $skillsHtml .= "<tr>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/900</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($s['score'] ?? 0.0), 1) . "%</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['cefr']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['actfl']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['date']}</td>
+                </tr>";
+            }
+            // Add overall row
+            $skillsHtml .= "<tr style='font-weight:bold; background:#f1f5f9;'>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Overall Score</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$totalPoints}/900</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($overallScore ?? 0.0), 1) . "%</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$this->mapToCefr($overallScore)}</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$this->mapToActfl($overallScore)}</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$issueDate}</td>
+            </tr>";
 
-        try {
-            Log::info('CertificateService: rendering PDF with certificate_pdf blade', [
-                'certificate_id' => $certificate->id,
-                'student' => $user->first_name . ' ' . $user->last_name,
-            ]);
-        } catch (\Throwable $e) {
+            // If {skills_table} is not wrapped inside a <table>/<tbody> in the template content, wrap it
+            $hasTableWrapper = str_contains($template->content_html, '<tbody>{skills_table}')
+                || str_contains($template->content_html, '<table>{skills_table}')
+                || str_contains($template->content_html, '<thead>');
+
+            if (!$hasTableWrapper) {
+                $skillsHtml = "<table style='width:100%; border-collapse:collapse; font-size:12px;'>
+                    <thead>
+                        <tr style='background:#f8fafc;'>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>TEST</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>SCORE</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>SCORE%</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>LEVEL (CEFR)</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>LEVEL (ACTFL)</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>DATE</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {$skillsHtml}
+                    </tbody>
+                </table>";
+            }
+
+            // 2. Build QR image HTML if present
+            $qrHtml = '';
+            if ($qrImage) {
+                $qrHtml = "<img src=\"data:image/png;base64,{$qrImage}\" style=\"width:100%; height:100%; object-fit:contain;\" />";
+            }
+
+            // 3. Define and map all placeholders (including legacy seeder structure keys)
+            $placeholders = [
+                '{name}' => htmlspecialchars($user->first_name . ' ' . $user->last_name),
+                '{exam}' => htmlspecialchars($exam->title ?? $exam->name ?? ''),
+                '{score}' => number_format((float) ($overallScore ?? 0.0), 1),
+                '{total_points}' => $totalPoints,
+                '{cefr}' => $this->mapToCefr($overallScore),
+                '{actfl}' => $this->mapToActfl($overallScore),
+                '{date}' => $issueDate,
+                '{number}' => $certificate->certificate_number,
+                '{verification_url}' => $verificationUrl,
+                '{qr_code}' => $qrHtml,
+                '{skills_table}' => $skillsHtml,
+                // Legacy seeder fallbacks
+                '{certificate_number}' => $certificate->certificate_number,
+                '{issue_date}' => $issueDate,
+                '{signer_left_name}' => 'Sayed Ramadan',
+                '{signer_left_title}' => 'Program Director',
+                '{org_address_line1}' => '3 alif Al-Nabataat Street,',
+                '{org_address_line2}' => 'Garden City, Cairo, Egypt',
+                '{signer_right_name}' => 'Hanan Dawah',
+                '{signer_right_title}' => 'Registrar',
+            ];
+
+            $filledHtml = strtr($template->content_html, $placeholders);
+
+            // 4. Wrap template inside A4 Landscape layout with styling and background
+            $fullHtml = $this->wrapVisualTemplateHtml($filledHtml, $template);
+
+            try {
+                Log::info('CertificateService: rendering PDF with database visual template', [
+                    'certificate_id' => $certificate->id,
+                    'template_id' => $template->id,
+                    'student' => $user->first_name . ' ' . $user->last_name,
+                ]);
+            } catch (\Throwable $e) {
+            }
+        } else {
+            // Render the dedicated PDF Blade view that mirrors the verify-certificate page (Fallback)
+            $fullHtml = view('certificates.certificate_pdf', [
+                'studentName' => $user->first_name . ' ' . $user->last_name,
+                'score' => $overallScore,
+                'totalPoints' => $totalPoints,
+                'cefr' => $this->mapToCefr($overallScore),
+                'actfl' => $this->mapToActfl($overallScore),
+                'issueDate' => $issueDate,
+                'certNumber' => $certificate->certificate_number,
+                'skills' => $skillsData,
+                'qrImage' => $qrImage,
+                'logoPath' => $logoPath,
+            ])->render();
+
+            try {
+                Log::info('CertificateService: rendering PDF with certificate_pdf blade (fallback)', [
+                    'certificate_id' => $certificate->id,
+                    'student' => $user->first_name . ' ' . $user->last_name,
+                ]);
+            } catch (\Throwable $e) {
+            }
         }
 
         $pdf = Pdf::loadHTML($fullHtml)->setPaper('a4', 'landscape');
@@ -160,15 +251,67 @@ class CertificateService
         return $fileName;
     }
 
+   public function wrapVisualTemplateHtml($content, $template)
+    {
+        $backgroundPath = '';
+        if ($template->background_image) {
+            $backgroundPath = storage_path('app/public/' . $template->background_image);
+        }
+        $bgStyle = '';
+        if ($backgroundPath && file_exists($backgroundPath)) {
+            $bgStyle = "background-image: url('{$backgroundPath}');";
+        }
+
+        $content = trim($content); // مهم
+        return "
+        <html>
+        <head>
+            <meta http-equiv='Content-Type' content='text/html; charset=utf-8'/>
+            <style>
+                @page { size: A4 landscape; margin: 0; }
+                html, body {
+                    margin: 0;
+                    padding: 0;
+                }
+                body {
+                    font-family: 'DejaVu Sans', Arial, sans-serif;
+                    width: 1123px;
+                    height: 794px;
+                    max-height: 794px;
+                    overflow: hidden;
+                    {$bgStyle}
+                    background-size: cover;
+                    background-position: center;
+                    background-repeat: no-repeat;
+                    page-break-after: avoid;
+                    page-break-inside: avoid;
+                }
+                * {
+                    page-break-inside: avoid;
+                    page-break-after: avoid;
+                }
+                table, tr, td, th {
+                    page-break-inside: avoid !important;
+                }
+            </style>
+        </head>
+        <body>
+            <div class='page-wrapper'>{$content}</div>
+        </body>
+        </html>
+        ";
+    }
+
     public function wrapHtml($content, $template)
     {
         $backgroundPath = '';
         if ($template->background_image) {
             $backgroundPath = storage_path('app/public/' . $template->background_image);
         }
-        $bgTag = '';
-        if ($backgroundPath) {
-            $bgTag = "<img class='bg-image' src='{$backgroundPath}' alt='background' />";
+        $bgStyle = '';
+        if ($backgroundPath && file_exists($backgroundPath)) {
+            // Use explicit A4 landscape dimensions for background to avoid overflow
+            $bgStyle = "background-image: url('{$backgroundPath}'); background-size: 297mm 210mm; background-position: center center; background-repeat: no-repeat; opacity: 0.04;";
         }
 
         return "
@@ -184,28 +327,20 @@ class CertificateService
                     width: 100%;
                     height: 100%;
                     position: relative;
-                }
-                .bg-image {
-                    position: absolute;
-                    left: 50%;
-                    top: 50%;
-                    transform: translate(-50%, -50%);
-                    width: 60%;
-                    height: auto;
-                    opacity: 0.04;
-                    object-fit: contain;
-                    z-index: 0;
-                    pointer-events: none;
+                    overflow: hidden;
                 }
                 .content {
                     position: relative;
                     z-index: 1;
-                    width: 1123px;
-                    height: 794px;
+                    /* A4 landscape exact size to match @page */
+                    width: 297mm;
+                    height: 210mm;
                     margin: 0 auto;
                     box-sizing: border-box;
                     overflow: hidden;
                     page-break-inside: avoid;
+                    {$bgStyle}
+                    opacity: 1;
                 }
                 /* Force signatures to bottom of page to avoid being pushed to next page */
                 .content .signatures {
@@ -226,7 +361,6 @@ class CertificateService
             </style>
         </head>
         <body>
-            {$bgTag}
             <div class='content'>{$content}</div>
         </body>
         </html>

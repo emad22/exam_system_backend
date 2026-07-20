@@ -216,10 +216,8 @@ class StudentController extends Controller
 
         $student->update($studentUpdate);
 
-        // Synchronize package if skills were modified
-        if (isset($validated['assigned_skills'])) {
-            $student->syncPackageWithSkills();
-        }
+        // NOTE: Removed automatic package reconciliation from student update.
+        // The system will no longer change `package_id` based on `assigned_skills` during an admin edit.
 
         // Re-sync student's active exam attempts if skills or package changed
         if (isset($validated['assigned_skills']) || isset($validated['package_id'])) {

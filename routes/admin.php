@@ -2,13 +2,53 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Admin;
+use App\Models\CertificateTemplate;
+use App\Services\CertificateService;
 use App\Http\Controllers\Api\QuestionImportController;
 use App\Http\Middleware\AdminRole;
 use App\Http\Middleware\StaffRole;
 use App\Http\Controllers\Api\CertificateController;
 
+
+
+
+
+// Developer debug route: returns the wrapped template HTML (only when APP_DEBUG=true)
+Route::get('/dev/certificate-templates/{id}/preview-debug', function ($id) {
+    if (!env('APP_DEBUG')) {
+        abort(403, 'Debug preview disabled');
+    }
+
+    $template = CertificateTemplate::find($id);
+    if (!$template) {
+        abort(404);
+    }
+
+    // sample placeholders for preview
+    $placeholders = [
+        '{name}' => 'Sample Student',
+        '{date}' => now()->format('M d, Y'),
+        '{score}' => '82.7',
+        '{total_points}' => '745',
+        '{cefr}' => 'C1.2',
+        '{actfl}' => 'Advanced High',
+        '{exam}' => 'Sample Exam',
+        '{number}' => 'CERT-SAMPLE-001',
+        '{verification_url}' => url('/verify-certificate/sample'),
+        '{skills_table}' => '<tr><td>Section: Composition</td><td>810/900</td><td>90.0%</td><td>C2</td><td>Superior</td><td>25 Aug. 2022</td></tr>'
+    ];
+
+    $html = str_replace(array_keys($placeholders), array_values($placeholders), $template->content_html);
+    $service = app(CertificateService::class);
+    $wrapped = $service->wrapHtml($html, $template);
+    return response($wrapped, 200)->header('Content-Type', 'text/html; charset=utf-8');
+})->withoutMiddleware(['auth:sanctum', StaffRole::class]);
+
+
 Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admin.')->group(function () {
     Route::get('/stats', [Admin\DashboardController::class, 'stats'])->name('stats');
+
+
 
     // Student Management
     Route::prefix('students')->as('students.')->group(function () {
