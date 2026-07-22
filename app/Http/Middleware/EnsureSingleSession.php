@@ -17,6 +17,13 @@ class EnsureSingleSession
     {
         $user = $request->user();
 
+        if ($user) {
+            $isDemo = app(\App\Services\ExamService::class)->isDemoUser($user);
+            if ($isDemo) {
+                return $next($request);
+            }
+        }
+
         if ($user && $user->last_token_id !== null) {
             $currentTokenId = $user->currentAccessToken()->id;
 

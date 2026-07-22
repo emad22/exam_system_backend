@@ -25,10 +25,12 @@ class CertificateTemplateController extends Controller
             'background_image' => 'nullable|image|max:2048',
             'is_default' => 'sometimes|boolean',
             'elements_json' => 'nullable|string',
+            'background_settings' => 'nullable|string',
         ]);
 
         $data = $request->only(['name', 'content_html', 'is_default']);
         $data['elements_json'] = $request->input('elements_json');
+        $data['background_settings'] = $request->input('background_settings');
         // XSS Protection - preserve data-URL images and inline styles when present
         if (isset($data['content_html'])) {
             if (stripos($data['content_html'], 'data:image') !== false) {
@@ -68,10 +70,12 @@ class CertificateTemplateController extends Controller
             'background_image' => 'nullable|image|max:2048',
             'is_default' => 'sometimes|boolean',
             'elements_json' => 'nullable|string',
+            'background_settings' => 'nullable|string',
         ]);
 
         $data = $request->only(['name', 'content_html', 'is_default']);
         $data['elements_json'] = $request->input('elements_json');
+        $data['background_settings'] = $request->input('background_settings');
 
         // XSS Protection - preserve data-URL images and inline styles when present
         if (isset($data['content_html'])) {
@@ -98,7 +102,7 @@ class CertificateTemplateController extends Controller
             }
 
             $certificate_template->update($data);
-            return response()->json($certificate_template);
+            return response()->json($certificate_template->fresh());
         });
     }
 
@@ -137,9 +141,9 @@ class CertificateTemplateController extends Controller
         $html = str_replace(array_keys($placeholders), array_values($placeholders), $certificate_template->content_html);
 
         $service = app(\App\Services\CertificateService::class);
-        
+
         $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($service->wrapHtml($html, $certificate_template))
-                  ->setPaper('a4', 'landscape');
+            ->setPaper('a4', 'landscape');
 
         return $pdf->download("Template-Preview-{$certificate_template->id}.pdf");
     }

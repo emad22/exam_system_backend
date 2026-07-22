@@ -41,6 +41,7 @@ class ProctoringSession extends Model
         'final_verdict',
         'closed_at',
         'close_reason',
+        'sanctum_token_id',
     ];
 
     protected $casts = [

@@ -170,7 +170,8 @@ class CertificateController extends Controller
         if ($request->search) {
             $query->whereHas('student.user', function ($q) use ($request) {
                 $q->where('first_name', 'like', "%{$request->search}%")
-                    ->orWhere('last_name', 'like', "%{$request->search}%");
+                    ->orWhere('last_name', 'like', "%{$request->search}%")
+                    ->orWhere('username', 'like', "%{$request->search}%");
             })->orWhere('certificate_number', 'like', "%{$request->search}%");
         }
 
@@ -242,7 +243,8 @@ class CertificateController extends Controller
             $query->where(function ($outer) use ($request) {
                 $outer->whereHas('student.user', function ($q) use ($request) {
                     $q->where('first_name', 'like', "%{$request->search}%")
-                        ->orWhere('last_name', 'like', "%{$request->search}%");
+                        ->orWhere('last_name', 'like', "%{$request->search}%")
+                        ->orWhere('username', 'like', "%{$request->search}%");
                 })->orWhere('certificate_number', 'like', "%{$request->search}%");
             });
         }

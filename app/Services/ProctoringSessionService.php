@@ -8,15 +8,18 @@ use Illuminate\Support\Str;
 
 class ProctoringSessionService
 {
-   
+
 
 
     public function initiate(?ExamAttempt $attempt, $request, ?int $sessionId = null): ProctoringSession
     {
         $studentId = auth()->user()->student?->id;
+        $user = auth()->user();
+        $isDemo = app(\App\Services\ExamService::class)->isDemoUser($user);
+        $tokenId = $user->currentAccessToken() ? $user->currentAccessToken()->id : null;
 
         if ($attempt) {
-            abort_if($attempt->student_id !== $studentId, 403);
+            abort_if($attempt->student_id !== $studentId && $attempt->user_id !== $user->id, 403);
         }
 
         // 1. لو المحاولة منتهية، مفيش جلسة جديدة
@@ -29,9 +32,14 @@ class ProctoringSessionService
 
         // 2. إذا تم تمرير sessionId وكانت الجلسة صالحة وغير منتهية، نستخدمها ونربطها بالمحاولة
         if ($sessionId) {
-            $session = ProctoringSession::where('student_id', $studentId)
-                ->where('id', $sessionId)
-                ->first();
+            $sessionQuery = ProctoringSession::where('student_id', $studentId)
+                ->where('id', $sessionId);
+
+            if ($isDemo && $tokenId) {
+                $sessionQuery->where('sanctum_token_id', $tokenId);
+            }
+
+            $session = $sessionQuery->first();
             if ($session && $session->status !== 'ended') {
                 // التأكد من تطابق محاولة الامتحان لمنع استخدام جلسة تخص محاولة أخرى
                 if ($attempt && $session->exam_attempt_id && $session->exam_attempt_id !== $attempt->id) {
@@ -54,11 +62,15 @@ class ProctoringSessionService
 
         // 3. لو فيه جلسة مربوطة بنفس المحاولة دي بالظبط ولسه شغالة، استخدمها
         if ($attempt) {
-            $existingForAttempt = ProctoringSession::where('student_id', $studentId)
+            $sessionQuery = ProctoringSession::where('student_id', $studentId)
                 ->where('exam_attempt_id', $attempt->id)
-                ->whereIn('status', ['pending', 'active', 'paused'])
-                ->latest()
-                ->first();
+                ->whereIn('status', ['pending', 'active', 'paused']);
+
+            if ($isDemo && $tokenId) {
+                $sessionQuery->where('sanctum_token_id', $tokenId);
+            }
+
+            $existingForAttempt = $sessionQuery->latest()->first();
 
             if ($existingForAttempt) {
                 return $existingForAttempt;
@@ -67,11 +79,15 @@ class ProctoringSessionService
 
         // 4. لو فيه جلسة "عامة" اتعملت وقت اللوجين (من غير exam_attempt_id) ولسه شغالة،
         //    نلحق المحاولة الحالية بيها ونخليها active بدل ما ننشئ صف جديد
-        $sessionLevel = ProctoringSession::where('student_id', $studentId)
+        $sessionQuery = ProctoringSession::where('student_id', $studentId)
             ->whereNull('exam_attempt_id')
-            ->whereIn('status', ['pending', 'active', 'paused'])
-            ->latest()
-            ->first();
+            ->whereIn('status', ['pending', 'active', 'paused']);
+
+        if ($isDemo && $tokenId) {
+            $sessionQuery->where('sanctum_token_id', $tokenId);
+        }
+
+        $sessionLevel = $sessionQuery->latest()->first();
 
         if ($sessionLevel) {
             if ($attempt) {
@@ -93,6 +109,7 @@ class ProctoringSessionService
             'user_agent' => $request->userAgent(),
             'risk_score' => 0,
             'violations_count' => 0,
+            'sanctum_token_id' => $isDemo ? $tokenId : null
         ]);
     }
 

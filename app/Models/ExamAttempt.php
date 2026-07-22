@@ -22,7 +22,8 @@ class ExamAttempt extends Model
         'ip_address',
         'started_at',
         'finished_at',
-        'last_seen_question_id'
+        'last_seen_question_id',
+        'sanctum_token_id'
     ];
 
     protected $casts = [

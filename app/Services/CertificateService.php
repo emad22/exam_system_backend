@@ -251,15 +251,42 @@ class CertificateService
         return $fileName;
     }
 
-   public function wrapVisualTemplateHtml($content, $template)
+    public function wrapVisualTemplateHtml($content, $template)
     {
         $backgroundPath = '';
         if ($template->background_image) {
             $backgroundPath = storage_path('app/public/' . $template->background_image);
         }
-        $bgStyle = '';
+
+        $bgLayerHtml = '';
         if ($backgroundPath && file_exists($backgroundPath)) {
-            $bgStyle = "background-image: url('{$backgroundPath}');";
+            // Parse background settings from JSON
+            $settings = [];
+            if (!empty($template->background_settings)) {
+                if (is_array($template->background_settings)) {
+                    $settings = $template->background_settings;
+                } else {
+                    $settings = json_decode($template->background_settings, true) ?: [];
+                }
+            }
+
+            $opacity = isset($settings['opacity']) ? floatval($settings['opacity']) : 1.0;
+            $size = isset($settings['size']) ? htmlspecialchars($settings['size']) : 'cover';
+            $position = isset($settings['position']) ? htmlspecialchars($settings['position']) : 'center';
+            $customCss = isset($settings['custom_css']) ? $settings['custom_css'] : '';
+
+            // Base64 encode the image for reliable rendering in DomPDF
+            $bgBase64 = '';
+            try {
+                $bgData = file_get_contents($backgroundPath);
+                $bgType = pathinfo($backgroundPath, PATHINFO_EXTENSION);
+                $bgBase64 = 'data:image/' . $bgType . ';base64,' . base64_encode($bgData);
+            } catch (\Throwable $e) {
+                $bgBase64 = $backgroundPath;
+            }
+
+            $bgLayerStyles = "position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: -100; opacity: {$opacity}; background-image: url('{$bgBase64}'); background-size: {$size}; background-position: {$position}; background-repeat: no-repeat; {$customCss}";
+            $bgLayerHtml = "<div style=\"{$bgLayerStyles}\"></div>";
         }
 
         $content = trim($content); // مهم
@@ -272,19 +299,33 @@ class CertificateService
                 html, body {
                     margin: 0;
                     padding: 0;
+                    width: 297mm;
+                    height: 210mm;
+                    overflow: hidden;
+                    page-break-after: avoid;
+                    page-break-inside: avoid;
                 }
                 body {
                     font-family: 'DejaVu Sans', Arial, sans-serif;
-                    width: 1123px;
-                    height: 794px;
-                    max-height: 794px;
+                    position: relative;
+                }
+                .page-wrapper {
+                    width: 297mm;
+                    height: 210mm;
+                    margin: 0;
+                    padding: 0;
                     overflow: hidden;
-                    {$bgStyle}
-                    background-size: cover;
-                    background-position: center;
-                    background-repeat: no-repeat;
-                    page-break-after: avoid;
+                    position: relative;
                     page-break-inside: avoid;
+                    page-break-after: avoid;
+                }
+                .page-wrapper > div {
+                    width: 1120px !important;
+                    height: 790px !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    page-break-inside: avoid !important;
+                    page-break-after: avoid !important;
                 }
                 * {
                     page-break-inside: avoid;
@@ -296,6 +337,7 @@ class CertificateService
             </style>
         </head>
         <body>
+            {$bgLayerHtml}
             <div class='page-wrapper'>{$content}</div>
         </body>
         </html>

@@ -216,6 +216,10 @@ class StudentController extends Controller
 
         $student->update($studentUpdate);
 
+        // Recalculate default exam/configs after updating package or assigned skills
+        // This ensures the exam tied to the student's package is available in their configs.
+        Student::assignDefaultExam($student);
+
         // NOTE: Removed automatic package reconciliation from student update.
         // The system will no longer change `package_id` based on `assigned_skills` during an admin edit.
 

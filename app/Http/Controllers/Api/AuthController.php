@@ -83,8 +83,10 @@ class AuthController extends Controller
             ], 403);
         }
 
+        $isDemo = app(\App\Services\ExamService::class)->isDemoUser($user);
+
         // Close any active proctoring sessions for the student since login session is replaced
-        if ($user->student) {
+        if ($user->student && !$isDemo) {
             $activeSessions = ProctoringSession::where('student_id', $user->student->id)
                 ->whereIn('status', ['pending', 'active', 'paused'])
                 ->get();
@@ -125,7 +127,9 @@ class AuthController extends Controller
             ]);
         }
 
-        $user->tokens()->delete();
+        if (!$isDemo) {
+            $user->tokens()->delete();
+        }
 
         $deviceName = $request->input('device_name', 'auth_token');
         $newToken = $user->createToken($deviceName);
@@ -175,7 +179,7 @@ class AuthController extends Controller
     //     if ($studentId) {
     //         $session = ProctoringSession::where('student_id', $studentId)
     //             ->where('status', 'active')
-    
+
     //             ->latest()
     //             ->first();
 

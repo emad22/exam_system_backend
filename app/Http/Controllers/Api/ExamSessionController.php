@@ -40,7 +40,14 @@ class ExamSessionController extends Controller
         }
 
         if ($this->examService->isDemoUser($user)) {
-            return response()->json($this->buildDemoExamList($user));
+            $demoExams = $this->buildDemoExamList($user);
+            // If demo user has a student profile with a package exam, prioritize it
+            $studentProfile = $user->student;
+            $packageExamId = $studentProfile->package->exam_id ?? null;
+            if ($packageExamId) {
+                $demoExams = collect($demoExams)->sortByDesc(fn($e) => ($e['id'] ?? null) === $packageExamId ? 1 : 0)->values()->all();
+            }
+            return response()->json($demoExams);
         }
 
         $studentProfile = $user->student;
@@ -114,6 +121,12 @@ class ExamSessionController extends Controller
                 ->keys()->values();
         });
 
+        // If the student has a package-linked exam, make sure it appears first in the list
+        $packageExamId = $studentProfile->package->exam_id ?? null;
+        if ($packageExamId) {
+            $exams = $exams->sortByDesc(fn($e) => $e->id === $packageExamId ? 1 : 0)->values();
+        }
+
         return response()->json($exams);
     }
 
@@ -167,10 +180,17 @@ class ExamSessionController extends Controller
             ? (int) $request->skill_id
             : null;
 
+        $tokenId = $request->user()->currentAccessToken() ? $request->user()->currentAccessToken()->id : null;
+
         // latest attempt
-        $attempt = ExamAttempt::where($ownerKey, $ownerId)
-            ->where('exam_id', $exam->id)
-            ->orderByDesc('created_at')
+        $attemptQuery = ExamAttempt::where($ownerKey, $ownerId)
+            ->where('exam_id', $exam->id);
+
+        if ($isDemo && $tokenId) {
+            $attemptQuery->where('sanctum_token_id', $tokenId);
+        }
+
+        $attempt = $attemptQuery->orderByDesc('created_at')
             ->first();
 
         /*
@@ -306,7 +326,15 @@ class ExamSessionController extends Controller
         $user = $request->user();
         if (!$this->examService->isDemoUser($user))
             return response()->json(['error' => 'Unauthorized.'], 403);
-        ExamAttempt::where('user_id', $user->id)->where('exam_id', $exam->id)->delete();
+        $tokenId = $user->currentAccessToken() ? $user->currentAccessToken()->id : null;
+        $query = ExamAttempt::where('user_id', $user->id)
+            ->where('exam_id', $exam->id);
+
+        if ($tokenId) {
+            $query->where('sanctum_token_id', $tokenId);
+        }
+
+        $query->delete();
         return response()->json(['message' => 'Demo progress reset.']);
     }
 
@@ -315,7 +343,18 @@ class ExamSessionController extends Controller
     private function buildDemoExamList($user): array
     {
         $exams = Exam::with(['category', 'skills'])->get();
-        $demoAttempts = ExamAttempt::where('user_id', $user->id)->whereIn('exam_id', $exams->pluck('id'))->orderBy('created_at', 'desc')->get()->groupBy('exam_id')->map(fn($g) => $g->first());
+        $tokenId = $user->currentAccessToken() ? $user->currentAccessToken()->id : null;
+        $attemptsQuery = ExamAttempt::where('user_id', $user->id)
+            ->whereIn('exam_id', $exams->pluck('id'));
+
+        if ($tokenId) {
+            $attemptsQuery->where('sanctum_token_id', $tokenId);
+        }
+
+        $demoAttempts = $attemptsQuery->orderBy('created_at', 'desc')
+            ->get()
+            ->groupBy('exam_id')
+            ->map(fn($g) => $g->first());
         $exams->each(function ($exam) use ($demoAttempts) {
             $exam->latest_attempt = $demoAttempts->get($exam->id);
             $exam->completed_skill_ids = [];
@@ -346,6 +385,7 @@ class ExamSessionController extends Controller
                     'current_skill_started_at' => null
                 ];
                 $currentPos[(string) $requestedSkillId]['current_level'] = $requestedLevel;
+                $tokenId = $request->user()->currentAccessToken() ? $request->user()->currentAccessToken()->id : null;
                 $newAttempt = ExamAttempt::create(
                     [
                         'student_id' => $user->student?->id,
@@ -353,7 +393,8 @@ class ExamSessionController extends Controller
                         'exam_id' => $exam->id,
                         'status' => 'ongoing',
                         'started_at' => now(),
-                        'current_position' => $currentPos
+                        'current_position' => $currentPos,
+                        'sanctum_token_id' => $tokenId
                     ]
                 );
 
@@ -395,6 +436,7 @@ class ExamSessionController extends Controller
 
     private function createNewAttempt(Request $request, Exam $exam, $user, $studentProfile, bool $isDemo): ExamAttempt|string|null
     {
+        $tokenId = $user->currentAccessToken() ? $user->currentAccessToken()->id : null;
         if (!$isDemo) {
             $config = StudentExamConfig::where('student_id', $studentProfile->id ?? 0)->where('exam_id', $exam->id)->first();
             if (!$config) {
@@ -477,7 +519,8 @@ class ExamSessionController extends Controller
                 'status' => 'ongoing',
                 'ip_address' => $request->ip(),
                 'started_at' => now(),
-                'current_position' => $currentPos
+                'current_position' => $currentPos,
+                'sanctum_token_id' => $isDemo ? $tokenId : null
             ]
         );
 
@@ -502,13 +545,19 @@ class ExamSessionController extends Controller
     private function linkProctoringSessionToAttempt(ExamAttempt $attempt): void
     {
         $studentId = $attempt->student_id ?: $attempt->user_id;
+        $tokenId = auth()->user()->currentAccessToken() ? auth()->user()->currentAccessToken()->id : null;
+        $isDemo = app(\App\Services\ExamService::class)->isDemoUser(auth()->user());
 
         // Find the most recent proctoring session for this student without an exam attempt
-        $existingSession = ProctoringSession::where('student_id', $studentId)
+        $existingSessionQuery = ProctoringSession::where('student_id', $studentId)
             ->whereNull('exam_attempt_id')
-            ->where('status', 'pending')
-            ->latest()
-            ->first();
+            ->where('status', 'pending');
+
+        if ($isDemo && $tokenId) {
+            $existingSessionQuery->where('sanctum_token_id', $tokenId);
+        }
+
+        $existingSession = $existingSessionQuery->latest()->first();
 
         if ($existingSession) {
             $existingSession->update([
