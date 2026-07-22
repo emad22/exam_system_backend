@@ -112,7 +112,7 @@ class QuestionController extends Controller
 
             // Questions Batch
             'questions' => 'required|array|min:1',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
             'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
             'questions.*.general_instructions' => 'nullable|string',
@@ -280,7 +280,7 @@ class QuestionController extends Controller
                 ]);
 
                 // 4. Create Options
-                if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
+                if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'speaking_live', 'upload'])) {
                     foreach ($qData['options'] as $oIdx => $opt) {
                         $optImagePath = null;
                         if (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
@@ -385,7 +385,7 @@ class QuestionController extends Controller
             // Questions Batch
             'questions' => 'required|array|min:1',
             'questions.*.id' => 'nullable|integer',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
             'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
             'questions.*.general_instructions' => 'nullable|string',
@@ -613,7 +613,7 @@ class QuestionController extends Controller
                 $qInstance->save();
 
                 // 4. Update Options
-                if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'upload'])) {
+                if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'speaking_live', 'upload'])) {
 
                     $incomingIds = collect($qData['options'])->pluck('id')->filter()->toArray();
 

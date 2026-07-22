@@ -54,6 +54,7 @@ class ExamSessionController extends Controller
         if (!$studentProfile) {
             return response()->json([]);
         }
+        $studentProfile->loadMissing('package');
 
         $assignedExamIds = $studentProfile->configs()->pluck('exam_id')->toArray();
 
@@ -235,13 +236,16 @@ class ExamSessionController extends Controller
         */
         if (!$isDemo && $studentProfile) {
 
+            $studentProfile->loadMissing('package');
             $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
 
+            // Resolve to IDs via DB — exact matching, no string false-positives
+            $allowedSkillIds = !empty($allowedSkillIdentifiers)
+                ? $this->examService->resolveSkillIds($allowedSkillIdentifiers)
+                : $exam->skills->pluck('id')->toArray();
+
             $assignedSkills = collect($exam->skills)
-                ->filter(
-                    fn($skill) =>
-                    $this->examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers)
-                )
+                ->filter(fn($skill) => in_array($skill->id, $allowedSkillIds))
                 ->values();
 
             $order = function ($name) {
@@ -355,10 +359,27 @@ class ExamSessionController extends Controller
             ->get()
             ->groupBy('exam_id')
             ->map(fn($g) => $g->first());
-        $exams->each(function ($exam) use ($demoAttempts) {
+
+        // Apply the same skill filtering as regular students
+        // Priority 1: assigned_skills → Priority 2: package skills → Priority 3: all
+        $studentProfile = $user->student;
+        $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
+        $allowedSkillIds = !empty($allowedSkillIdentifiers)
+            ? $this->examService->resolveSkillIds($allowedSkillIdentifiers)
+            : [];
+
+        $exams->each(function ($exam) use ($demoAttempts, $allowedSkillIds) {
+            // Filter skills if the student has specific assignments
+            if (!empty($allowedSkillIds)) {
+                $exam->setRelation(
+                    'skills',
+                    $exam->skills->filter(fn($s) => in_array($s->id, $allowedSkillIds))->values()
+                );
+            }
             $exam->latest_attempt = $demoAttempts->get($exam->id);
             $exam->completed_skill_ids = [];
         });
+
         return $exams->toArray();
     }
 
@@ -445,15 +466,16 @@ class ExamSessionController extends Controller
                     return null;
             }
         }
+        $studentProfile->loadMissing('package');
         $allowedSkillIdentifiers = $this->examService->getAllowedSkills($studentProfile);
-        if (empty($allowedSkillIdentifiers))
-            $allowedSkillIdentifiers = $exam->skills->pluck('name')->toArray();
 
-        $assignedSkills = [];
-        foreach ($exam->skills as $skill) {
-            if ($this->examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers))
-                $assignedSkills[] = $skill;
-        }
+        // Resolve identifiers to actual Skill IDs via DB — exact matching, no false-positives
+        $allowedSkillIds = empty($allowedSkillIdentifiers)
+            ? $exam->skills->pluck('id')->toArray()
+            : $this->examService->resolveSkillIds($allowedSkillIdentifiers);
+
+        $assignedSkills = $exam->skills->filter(fn($s) => in_array($s->id, $allowedSkillIds))->values()->all();
+
         if (empty($assignedSkills))
             return 'no_skills';
 

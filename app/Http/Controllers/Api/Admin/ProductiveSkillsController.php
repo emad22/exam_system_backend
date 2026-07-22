@@ -21,7 +21,7 @@ class ProductiveSkillsController extends Controller
     public function index(Request $request)
     {
         $query = ExamAttempt::whereHas('answers', function ($q) {
-            $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking']))
+            $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking', 'speaking_live']))
               ->where('is_manual_graded', false);
         })->with(['student.user', 'exam']);
 
@@ -34,13 +34,13 @@ class ProductiveSkillsController extends Controller
         // Attach pending counts per attempt
         $attempts->getCollection()->transform(function ($attempt) {
             $answers = StudentAnswer::where('exam_attempt_id', $attempt->id)
-                ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking']))
+                ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking', 'speaking_live']))
                 ->where('is_manual_graded', false)
                 ->with('question:id,type')
                 ->get();
 
             $attempt->pending_writing = $answers->filter(fn($a) => $a->question->type === 'writing')->count();
-            $attempt->pending_speaking = $answers->filter(fn($a) => $a->question->type === 'speaking')->count();
+            $attempt->pending_speaking = $answers->filter(fn($a) => in_array($a->question->type, ['speaking', 'speaking_live']))->count();
             $attempt->total_pending   = $answers->count();
 
             return $attempt;
@@ -55,7 +55,7 @@ class ProductiveSkillsController extends Controller
     public function showAttempt(ExamAttempt $attempt)
     {
         $answers = StudentAnswer::where('exam_attempt_id', $attempt->id)
-            ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking']))
+            ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking', 'speaking_live']))
             ->select('id', 'exam_attempt_id', 'question_id', 'skill_id', 'text_answer', 'media_answer', 'word_count', 'points_awarded', 'teacher_feedback', 'is_manual_graded', 'created_at', 'updated_at')
             ->with(['question.skill'])
             ->orderBy('question_id')

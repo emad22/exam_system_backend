@@ -388,7 +388,7 @@ class StudentController extends Controller
             ->get()
             ->groupBy('exam_attempt_id');
 
-        $student->attempts->each(function ($attempt) use ($levelMap, $levelLookup, $allAnswers) {
+        $student->attempts->each(function ($attempt) use ($levelMap, $levelLookup, $skillLookup, $allAnswers) {
             $total = $attempt->attemptSkills->sum('score');
             $count = $attempt->attemptSkills->count();
             $attempt->total_score = $total;
@@ -404,11 +404,12 @@ class StudentController extends Controller
                     : max($as->max_level_reached - 1, 1);
                 $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
 
-                // Find the last question seen for THIS specific skill from pre-fetched answers
-                $lastAns = $attemptAnswers->first(fn($ans) => $ans->skill_id == $as->skill_id);
+                // Find the last answer for THIS specific skill from pre-fetched answers
+                $lastAns = $attemptAnswers->first(fn($ans) => ($ans->question?->skill_id ?? null) == $as->skill_id);
 
                 if ($lastAns && $as->status !== 'completed') {
                     $q = $lastAns->question;
+                    if (!$q) return; // guard against deleted question
                     $correctOpt = $q->options->where('is_correct', true)->first();
                     $displayContent = strip_tags($q->content ?? '');
                     if (empty($displayContent)) {
@@ -416,12 +417,15 @@ class StudentController extends Controller
                     }
 
                     $levelRecord = $levelLookup->get($q->level_id);
+                    $matchedOpt  = $lastAns->option_id ? $q->options->firstWhere('id', $lastAns->option_id) : null;
                     $as->termination_point = [
-                        'question_id' => $q->id,
-                        'level_number' => $levelRecord ? $levelRecord->level_number : '?',
-                        'question_text' => $displayContent,
-                        'correct_answer' => $correctOpt ? strip_tags($correctOpt->option_text) : 'N/A',
-                        'student_answer' => $lastAns->option_id ? strip_tags($q->options->firstWhere('id', $lastAns->option_id)->option_text ?? 'N/A') : ($lastAns->text_answer ?? 'N/A')
+                        'question_id'    => $q->id,
+                        'level_number'   => $levelRecord ? $levelRecord->level_number : '?',
+                        'question_text'  => $displayContent,
+                        'correct_answer' => $correctOpt ? strip_tags($correctOpt->option_text ?? '') : 'N/A',
+                        'student_answer' => $matchedOpt
+                            ? strip_tags($matchedOpt->option_text ?? 'N/A')
+                            : ($lastAns->text_answer ?? 'N/A'),
                     ];
                 }
             });
@@ -456,14 +460,14 @@ class StudentController extends Controller
 
                 $qLevel = $levelLookup->get($lastSeenQ->level_id);
                 $attempt->last_activity = [
-                    'skill_name' => $lastSeenQ->skill->name ?? 'Unknown',
-                    'level_number' => $qLevel ? $qLevel->level_number : '?',
-                    'level_name' => $qLevel ? ($levelMap[$qLevel->level_number] ?? 'Unknown') : 'Unknown',
-                    'question_text' => $displayContent,
-                    'correct_answer' => $correctOption ? strip_tags($correctOption->option_text) : 'N/A',
+                    'skill_name'     => $lastSeenQ->skill?->name ?? 'Unknown',
+                    'level_number'   => $qLevel ? $qLevel->level_number : '?',
+                    'level_name'     => $qLevel ? ($levelMap[$qLevel->level_number] ?? 'Unknown') : 'Unknown',
+                    'question_text'  => $displayContent,
+                    'correct_answer' => $correctOption ? strip_tags($correctOption->option_text ?? '') : 'N/A',
                     'student_answer' => $studentChoice,
-                    'question_id' => $lastSeenQ->id,
-                    'time' => $attempt->updated_at->diffForHumans()
+                    'question_id'    => $lastSeenQ->id,
+                    'time'           => $attempt->updated_at->diffForHumans()
                 ];
             } else {
                 $pos = $attempt->current_position;
@@ -483,9 +487,9 @@ class StudentController extends Controller
             // Recent performance
             $attempt->recent_answers = $attemptAnswers->take(5)->map(function ($ans) {
                 return [
-                    'question_text' => strip_tags($ans->question->content ?? $ans->question->instructions ?? 'Question'),
-                    'is_correct' => (bool) $ans->is_correct,
-                    'time' => $ans->created_at->format('H:i:s'),
+                    'question_text' => strip_tags($ans->question?->content ?? $ans->question?->instructions ?? 'Question'),
+                    'is_correct'    => (bool) $ans->is_correct,
+                    'time'          => $ans->created_at?->format('H:i:s') ?? '',
                 ];
             });
         });

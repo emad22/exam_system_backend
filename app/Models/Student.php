@@ -80,7 +80,7 @@ class Student extends Model
         return $this->hasMany(ProctoringSession::class);
     }
 
-    public function activeProctoringSession(): HasOne
+    public function activeProctoringSession()
     {
         return $this->hasOne(ProctoringSession::class, 'student_id')
             ->whereIn('status', ['pending', 'active', 'paused'])
@@ -193,12 +193,28 @@ class Student extends Model
         $skillNames = $skills->pluck('name')->map(fn($v) => strtolower(trim($v)))->toArray();
         $skillCodes = $skills->pluck('short_code')->filter()->map(fn($v) => strtolower(trim($v)))->toArray();
 
-        // Helper to check
+        // Helper to check — supports partial/contains matching so that
+        // "speaking" matches both "Speaking" and "Live Speaking"
         $hasSkill = function ($aliases) use ($skillNames, $skillCodes) {
             foreach ((array) $aliases as $alias) {
-                $alias = strtolower($alias);
-                if (in_array($alias, $skillNames) || in_array($alias, $skillCodes)) {
-                    return true;
+                $alias = strtolower(trim($alias));
+                if ($alias === '') continue;
+
+                foreach ($skillNames as $name) {
+                    if ($name === $alias) return true;
+                    if (mb_strlen($alias) >= 3 && mb_strlen($name) >= 3) {
+                        if (str_contains($name, $alias) || str_contains($alias, $name)) {
+                            return true;
+                        }
+                    }
+                }
+                foreach ($skillCodes as $code) {
+                    if ($code === $alias) return true;
+                    if (mb_strlen($alias) >= 3 && mb_strlen($code) >= 3) {
+                        if (str_contains($code, $alias) || str_contains($alias, $code)) {
+                            return true;
+                        }
+                    }
                 }
             }
             return false;
@@ -208,10 +224,10 @@ class Student extends Model
             ['student_id' => $student->id, 'exam_id' => $exam->id],
             [
                 'want_listening' => $hasSkill(['listening', 'l']),
-                'want_reading' => $hasSkill(['reading', 'reading comprehension', 'r']),
-                'want_grammar' => $hasSkill(['grammar', 'structure', 'g']),
-                'want_writing' => $hasSkill(['writing', 'w']),
-                'want_speaking' => $hasSkill(['speaking', 's']),
+                'want_reading'   => $hasSkill(['reading', 'reading comprehension', 'r']),
+                'want_grammar'   => $hasSkill(['grammar', 'structure', 'g']),
+                'want_writing'   => $hasSkill(['writing', 'w']),
+                'want_speaking'  => $hasSkill(['speaking', 's']),
             ]
         );
     }

@@ -244,7 +244,7 @@ class ExamProgressController extends Controller
 
                     $lastQuestionId = $question->id;
 
-                    if (in_array($question->type, ['speaking', 'writing'])) {
+                    if (in_array($question->type, ['speaking', 'writing', 'speaking_live'])) {
                         $pointsAwarded = 0;
                     } else {
                         $totalPossiblePoints += $question->points;
