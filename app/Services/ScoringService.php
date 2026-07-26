@@ -25,6 +25,7 @@ class ScoringService
             'matching' => $this->gradeMatching($question, $answerData),
             'ordering' => $this->gradeOrdering($question, $answerData) ? $question->points : 0,
             'highlight' => $this->gradeHighlight($question, $answerData),
+            'pdf_annotation', 'writing', 'speaking', 'speaking_live' => 0, // Requires manual grading
             default => $this->gradeText($question, $answerData) ? $question->points : 0,
         };
     }
@@ -43,6 +44,7 @@ class ScoringService
             : json_encode($answerData['matching_answers'] ?? [], JSON_UNESCAPED_UNICODE),
             'ordering' => json_encode($answerData['ordering_answers'] ?? [], JSON_UNESCAPED_UNICODE),
             'highlight' => json_encode($answerData['highlight_answers'] ?? [], JSON_UNESCAPED_UNICODE),
+            'pdf_annotation' => is_array($answerData['pdf_annotations'] ?? null) ? json_encode($answerData['pdf_annotations'], JSON_UNESCAPED_UNICODE) : ($answerData['text_answer'] ?? null),
             default => $answerData['text_answer'] ?? null,
         };
     }
@@ -52,13 +54,18 @@ class ScoringService
      */
     public function storeAudioFile(Request $request, string $attemptId, int $answerIndex): ?string
     {
-        if (!$request->hasFile("answers.{$answerIndex}.audio_file")) {
-            return null;
+        if ($request->hasFile("answers.{$answerIndex}.audio_file")) {
+            return $request
+                ->file("answers.{$answerIndex}.audio_file")
+                ->store("attempts/{$attemptId}/answers", 'public');
+        }
+        if ($request->hasFile("answers.{$answerIndex}.pdf_file")) {
+            return $request
+                ->file("answers.{$answerIndex}.pdf_file")
+                ->store("attempts/{$attemptId}/answers", 'public');
         }
 
-        return $request
-            ->file("answers.{$answerIndex}.audio_file")
-            ->store("attempts/{$attemptId}/answers", 'public');
+        return null;
     }
 
     // ─── Private per-type graders ────────────────────────────────────────────

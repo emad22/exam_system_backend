@@ -8,7 +8,7 @@ Route::get('/', function () {
     return redirect(env('FRONTEND_URL', 'https://alpt.arabacademy.com') . '/login');
 });
 
-// دالة لمعالجة عرض الصور عشان نستخدمها في المسارين
+// دالة لمعالجة عرض الملفات مع إرسال هيدرات CORS للحماية وتسهيل العرض في الفروانت اند
 $storageHandler = function ($path) {
     $fullPath = storage_path('app/public/' . $path);
 
@@ -19,11 +19,27 @@ $storageHandler = function ($path) {
     $file = File::get($fullPath);
     $type = File::mimeType($fullPath);
 
-    return Response::make($file, 200)->header("Content-Type", $type);
+    return Response::make($file, 200)
+        ->header("Content-Type", $type)
+        ->header("Access-Control-Allow-Origin", "*")
+        ->header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
+        ->header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
 };
 
 // الراوت لو السيرفر بيبعت /storage مباشرة
 Route::get('/storage/{path}', $storageHandler)->where('path', '.*');
+Route::options('/storage/{path}', function () {
+    return response('', 200)
+        ->header('Access-Control-Allow-Origin', '*')
+        ->header('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+})->where('path', '.*');
 
-// الراوت لو السيرفر بيبعت /api/storage (زي ما بيحصل عندك)
+// الراوت لو السيرفر بيبعت /api/storage
 Route::get('/api/storage/{path}', $storageHandler)->where('path', '.*');
+Route::options('/api/storage/{path}', function () {
+    return response('', 200)
+        ->header('Access-Control-Allow-Origin', '*')
+        ->header('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+})->where('path', '.*');

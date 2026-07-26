@@ -11,7 +11,7 @@ class Question extends Model
 {
     use LogsActivity;
 
-    protected $appends = ['media_url', 'audio_url', 'image_url'];
+    protected $appends = ['media_url', 'audio_url', 'image_url', 'pdf_url'];
 
     protected $fillable = [
         'skill_id', 
@@ -25,6 +25,7 @@ class Question extends Model
         'media_path', 
         'audio_path',
         'image_path',
+        'pdf_path',
         'image_width',
         'image_height',
         'points',
@@ -98,6 +99,20 @@ class Question extends Model
     {
         if ($this->image_path) {
             return asset('storage/' . $this->image_path); // ✅ already correct
+        }
+        return null;
+    }
+
+    public function getPdfUrlAttribute()
+    {
+        if ($this->id && ($this->pdf_path || ($this->media_path && str_ends_with(strtolower($this->media_path), '.pdf')))) {
+            return url("api/v1/questions/{$this->id}/pdf");
+        }
+        if ($this->pdf_path) {
+            return asset('storage/' . $this->pdf_path);
+        }
+        if ($this->media_path && str_ends_with(strtolower($this->media_path), '.pdf')) {
+            return asset('storage/' . $this->media_path);
         }
         return null;
     }

@@ -244,7 +244,7 @@ class ExamProgressController extends Controller
 
                     $lastQuestionId = $question->id;
 
-                    if (in_array($question->type, ['speaking', 'writing', 'speaking_live'])) {
+                    if (in_array($question->type, ['speaking', 'writing', 'speaking_live', 'pdf_annotation'])) {
                         $pointsAwarded = 0;
                     } else {
                         $totalPossiblePoints += $question->points;
@@ -425,6 +425,8 @@ class ExamProgressController extends Controller
         $mediaAnswer = null;
         if ($request->hasFile('audio_file')) {
             $mediaAnswer = $request->file('audio_file')->store("attempts/{$attempt->id}/answers", 'public');
+        } elseif ($request->hasFile('pdf_file')) {
+            $mediaAnswer = $request->file('pdf_file')->store("attempts/{$attempt->id}/answers", 'public');
         }
 
         $textAnswer = $this->scoringService->serializeAnswerForStorage($question, $request->all());

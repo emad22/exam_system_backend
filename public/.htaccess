@@ -24,6 +24,13 @@
     RewriteRule ^ index.php [L]
 </IfModule>
 
+# ─── CORS Headers for Static Files (Storage / Uploads) ──────────────────────
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE"
+    Header set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+</IfModule>
+
 # ─── PHP Upload & Body Limits ────────────────────────────────────────────────
 # Needed for proctoring: face/ID images are sent as base64 strings (~100-500 KB)
 <IfModule mod_php.c>

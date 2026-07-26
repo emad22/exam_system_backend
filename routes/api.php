@@ -47,6 +47,9 @@ Route::prefix('v1')->as('v1.')->group(function () {
     Route::get('/public/system-requirements', [SystemRequirementController::class, 'activeList'])->name('public.requirements');
     Route::get('/public/exam-categories', [ExamCategoryController::class, 'index'])->name('public.categories');
 
+    // PDF Stream Endpoint (CORS-safe for interactive PDF question)
+    Route::get('/questions/{question}/pdf', [\App\Http\Controllers\Api\Admin\QuestionController::class, 'streamPdf'])->name('questions.stream-pdf');
+
     // External Integrations
     Route::post('/webhook/wordpress/student-registration', [WordPressWebhookController::class, 'register'])->name('webhooks.wordpress');
 

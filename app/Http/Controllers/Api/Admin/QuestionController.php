@@ -112,7 +112,7 @@ class QuestionController extends Controller
 
             // Questions Batch
             'questions' => 'required|array|min:1',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word,pdf_annotation',
             'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
             'questions.*.general_instructions' => 'nullable|string',
@@ -242,6 +242,7 @@ class QuestionController extends Controller
                 $qMediaPath = null;
                 $qAudioPath = null;
                 $qImagePath = null;
+                $qPdfPath = null;
 
                 $fileKey = "questions.{$index}.q_media_file";
                 if ($request->hasFile($fileKey)) {
@@ -258,6 +259,13 @@ class QuestionController extends Controller
                     $qImagePath = $request->file($imageKey)->store('questions/images', 'public');
                 }
 
+                $pdfKey = "questions.{$index}.q_pdf_file";
+                if ($request->hasFile($pdfKey)) {
+                    $qPdfPath = $request->file($pdfKey)->store('questions/pdfs', 'public');
+                } elseif ($qMediaPath && str_ends_with(strtolower($qMediaPath), '.pdf')) {
+                    $qPdfPath = $qMediaPath;
+                }
+
                 $question = Question::create([
                     'skill_id' => $request->skill_id,
                     'exam_id' => $request->exam_id,
@@ -270,6 +278,7 @@ class QuestionController extends Controller
                     'media_path' => $qMediaPath,
                     'audio_path' => $qAudioPath,
                     'image_path' => $qImagePath,
+                    'pdf_path' => $qPdfPath,
                     'image_width' => $qData['image_width'] ?? null,
                     'image_height' => $qData['image_height'] ?? null,
                     'points' => $qData['points'] ?? 1,
@@ -385,7 +394,7 @@ class QuestionController extends Controller
             // Questions Batch
             'questions' => 'required|array|min:1',
             'questions.*.id' => 'nullable|integer',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word',
+            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word,pdf_annotation',
             'questions.*.content' => 'nullable|string',
             'questions.*.instructions' => 'nullable|string',
             'questions.*.general_instructions' => 'nullable|string',
@@ -396,6 +405,7 @@ class QuestionController extends Controller
             'questions.*.clear_q_image' => 'nullable|boolean',
             'questions.*.clear_q_audio' => 'nullable|boolean',
             'questions.*.clear_q_media' => 'nullable|boolean',
+            'questions.*.clear_q_pdf' => 'nullable|boolean',
             'questions.*.options' => 'nullable|array',
         ]);
 
@@ -536,9 +546,11 @@ class QuestionController extends Controller
                 $qMediaPath = null;
                 $qAudioPath = null;
                 $qImagePath = null;
+                $qPdfPath = null;
                 $fileKey = "questions.{$index}.q_media_file";
                 $audioKey = "questions.{$index}.q_audio_file";
                 $imageKey = "questions.{$index}.q_image_file";
+                $pdfKey = "questions.{$index}.q_pdf_file";
 
                 // Single update handling
                 if (count($questionsData) === 1) {
@@ -548,6 +560,8 @@ class QuestionController extends Controller
                         $audioKey = 'q_audio_file';
                     if (!$request->hasFile($imageKey) && $request->hasFile('q_image_file'))
                         $imageKey = 'q_image_file';
+                    if (!$request->hasFile($pdfKey) && $request->hasFile('q_pdf_file'))
+                        $pdfKey = 'q_pdf_file';
                 }
 
                 if ($request->hasFile($fileKey)) {
@@ -558,6 +572,11 @@ class QuestionController extends Controller
                 }
                 if ($request->hasFile($imageKey)) {
                     $qImagePath = $request->file($imageKey)->store('questions/images', 'public');
+                }
+                if ($request->hasFile($pdfKey)) {
+                    $qPdfPath = $request->file($pdfKey)->store('questions/pdfs', 'public');
+                } elseif ($qMediaPath && str_ends_with(strtolower($qMediaPath), '.pdf')) {
+                    $qPdfPath = $qMediaPath;
                 }
 
                 $qInstance = isset($qData['id']) ? Question::find($qData['id']) : new Question();
@@ -579,7 +598,7 @@ class QuestionController extends Controller
                     'max_words' => $qData['max_words'] ?? null,
                 ];
 
-                // احتفظ بالصور الموجودة لو مفيش صورة جديدة
+                // احتفظ بالصور والميديا الموجودة لو مفيش جديد
                 if ($qMediaPath) {
                     $data['media_path'] = $qMediaPath;
                 } elseif (filter_var($qData['clear_q_media'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
@@ -602,6 +621,14 @@ class QuestionController extends Controller
                     $data['image_path'] = null;
                 } elseif ($qInstance->exists) {
                     $data['image_path'] = $qInstance->image_path;
+                }
+
+                if ($qPdfPath) {
+                    $data['pdf_path'] = $qPdfPath;
+                } elseif (filter_var($qData['clear_q_pdf'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    $data['pdf_path'] = null;
+                } elseif ($qInstance->exists) {
+                    $data['pdf_path'] = $qInstance->pdf_path;
                 }
 
                 $data['updated_by'] = $request->user()?->id;
@@ -874,5 +901,25 @@ class QuestionController extends Controller
             'path' => $path,
             'url' => asset('storage/' . $path)
         ]);
+    }
+
+    /**
+     * Stream PDF file for interactive PDF question
+     */
+    public function streamPdf(Question $question)
+    {
+        $path = $question->pdf_path ?? $question->media_path;
+        if (!$path || !\Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
+            return response()->json(['message' => 'PDF file not found'], 404);
+        }
+
+        $file = \Illuminate\Support\Facades\Storage::disk('public')->get($path);
+        $mime = \Illuminate\Support\Facades\Storage::disk('public')->mimeType($path) ?? 'application/pdf';
+
+        return response($file, 200)
+            ->header('Content-Type', $mime)
+            ->header('Access-Control-Allow-Origin', '*')
+            ->header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            ->header('Access-Control-Allow-Headers', 'Origin, Content-Type, Authorization, X-Requested-With');
     }
 }
