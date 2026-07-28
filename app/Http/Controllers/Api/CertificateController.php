@@ -165,17 +165,103 @@ class CertificateController extends Controller
      */
     public function adminIndex(Request $request)
     {
-        $query = Certificate::with(['student.user', 'attempt.exam']);
+        $query = Certificate::with(['student.user', 'student.partner', 'attempt.exam']);
+
+        if ($request->partner_id) {
+            $query->whereHas('student', function ($q) use ($request) {
+                $q->where('partner_id', $request->partner_id);
+            });
+        }
 
         if ($request->search) {
-            $query->whereHas('student.user', function ($q) use ($request) {
-                $q->where('first_name', 'like', "%{$request->search}%")
-                    ->orWhere('last_name', 'like', "%{$request->search}%")
-                    ->orWhere('username', 'like', "%{$request->search}%");
-            })->orWhere('certificate_number', 'like', "%{$request->search}%");
+            $query->where(function ($q) use ($request) {
+                $q->whereHas('student.user', function ($sq) use ($request) {
+                    $sq->where('first_name', 'like', "%{$request->search}%")
+                        ->orWhere('last_name', 'like', "%{$request->search}%")
+                        ->orWhere('username', 'like', "%{$request->search}%");
+                })->orWhere('certificate_number', 'like', "%{$request->search}%");
+            });
         }
 
         return response()->json($query->latest()->paginate(20));
+    }
+
+    /**
+     * Admin/Partner: Bulk download certificates as ZIP archive.
+     */
+    public function bulkDownload(Request $request)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'certificate_ids' => 'nullable|array',
+            'certificate_ids.*' => 'integer|exists:certificates,id',
+            'partner_id' => 'nullable|integer|exists:partners,id',
+        ]);
+
+        $query = Certificate::with(['student.user', 'attempt.exam']);
+
+        if ($user->role === 'partner') {
+            $partner = $user->partner;
+            if (!$partner) {
+                return response()->json(['error' => 'Partner profile not found.'], 404);
+            }
+            $query->whereHas('student', fn($q) => $q->where('partner_id', $partner->id));
+        } elseif ($request->partner_id) {
+            $query->whereHas('student', fn($q) => $q->where('partner_id', $request->partner_id));
+        }
+
+        if (!empty($request->certificate_ids)) {
+            $query->whereIn('id', $request->certificate_ids);
+        }
+
+        $certificates = $query->get();
+
+        if ($certificates->isEmpty()) {
+            return response()->json(['error' => 'No certificates found for download.'], 404);
+        }
+
+        $service = app(\App\Services\CertificateService::class);
+        $zipFileName = 'Certificates_' . time() . '.zip';
+        $tempZipDir = storage_path('app/temp');
+        $tempZipPath = $tempZipDir . '/' . $zipFileName;
+
+        if (!file_exists($tempZipDir)) {
+            mkdir($tempZipDir, 0755, true);
+        }
+
+        $zip = new \ZipArchive();
+        if ($zip->open($tempZipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+            return response()->json(['error' => 'Failed to create ZIP file.'], 500);
+        }
+
+        foreach ($certificates as $certificate) {
+            if (!$certificate->file_path || !Storage::disk('public')->exists($certificate->file_path)) {
+                try {
+                    $service->generate($certificate->attempt);
+                    $certificate->refresh();
+                } catch (\Exception $e) {
+                    continue;
+                }
+            }
+
+            if ($certificate->file_path && Storage::disk('public')->exists($certificate->file_path)) {
+                $fullPath = Storage::disk('public')->path($certificate->file_path);
+                $firstName = $certificate->student?->user?->first_name ?? 'Student';
+                $lastName = $certificate->student?->user?->last_name ?? '';
+                $cleanName = preg_replace('/[^\w\s-]/u', '', trim("{$firstName}_{$lastName}"));
+                $fileNameInZip = "Certificate_{$cleanName}_{$certificate->certificate_number}.pdf";
+                $zip->addFile($fullPath, $fileNameInZip);
+            }
+        }
+
+        $zip->close();
+
+        if (!file_exists($tempZipPath)) {
+            return response()->json(['error' => 'ZIP file could not be generated.'], 500);
+        }
+
+        return response()->download($tempZipPath, $zipFileName)->deleteFileAfterSend(true);
     }
 
     /**

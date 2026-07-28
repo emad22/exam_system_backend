@@ -159,7 +159,7 @@ class AuthController extends Controller
                     $query->select('id', 'user_id', 'partner_id', 'exam_category_id', 'student_code', 'is_demo', 'is_demo_proctored', 'bypass_identity_verification');
                 },
                 'student.partner' => function ($query) {
-                    $query->select('id', 'partner_name', 'proctoring_required');
+                    $query->select('id', 'partner_name', 'proctoring_required', 'proctoring_mode');
                 },
                 'student.category' => function ($query) {
                     $query->select('id', 'name');

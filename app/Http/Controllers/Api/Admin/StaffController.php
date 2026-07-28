@@ -52,6 +52,7 @@ class StaffController extends Controller
             'website' => 'nullable|string|max:255',
             'note' => 'nullable|string',
             'proctoring_required' => 'sometimes|boolean',
+            'proctoring_mode' => 'sometimes|string|in:none,full,identity_only',
         ]);
 
         $staff = User::create([
@@ -67,12 +68,14 @@ class StaffController extends Controller
         ]);
 
         if ($staff->role === 'partner') {
+            $mode = $validated['proctoring_mode'] ?? ($validated['proctoring_required'] ?? false ? 'full' : 'none');
             Partner::create([
                 'user_id' => $staff->id,
                 'partner_name' => $validated['partner_name'] ?? ($validated['first_name'] . ' ' . $validated['last_name']),
                 'website' => $validated['website'] ?? null,
                 'note' => $validated['note'] ?? null,
-                'proctoring_required' => $validated['proctoring_required'] ?? false,
+                'proctoring_mode' => $mode,
+                'proctoring_required' => in_array($mode, ['full', 'identity_only'], true),
                 'r_date' => now(),
             ]);
         }
@@ -107,6 +110,7 @@ class StaffController extends Controller
             'website' => 'sometimes|nullable|string|max:255',
             'note' => 'sometimes|nullable|string',
             'proctoring_required' => 'sometimes|boolean',
+            'proctoring_mode' => 'sometimes|string|in:none,full,identity_only',
         ]);
 
         if (isset($validated['first_name'])) $user->first_name = $validated['first_name'];
@@ -125,13 +129,16 @@ class StaffController extends Controller
         $user->save();
 
         if ($user->role === 'partner') {
+            $existingPartner = Partner::where('user_id', $user->id)->first();
+            $mode = $validated['proctoring_mode'] ?? ($existingPartner?->proctoring_mode ?? ($validated['proctoring_required'] ?? false ? 'full' : 'none'));
             Partner::updateOrCreate(
                 ['user_id' => $user->id],
                 [
                     'partner_name' => $validated['partner_name'] ?? ($user->first_name . ' ' . $user->last_name),
                     'website' => $validated['website'] ?? null,
                     'note' => $validated['note'] ?? null,
-                    'proctoring_required' => $validated['proctoring_required'] ?? false,
+                    'proctoring_mode' => $mode,
+                    'proctoring_required' => in_array($mode, ['full', 'identity_only'], true),
                 ]
             );
         }

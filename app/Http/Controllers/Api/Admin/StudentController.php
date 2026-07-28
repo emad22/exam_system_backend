@@ -62,6 +62,7 @@ class StudentController extends Controller
             'year_of_arabic' => 'nullable|integer',
             'is_demo' => 'sometimes|boolean',
             'is_demo_proctored' => 'sometimes|boolean',
+            'bypass_identity_verification' => 'sometimes|boolean',
             'exam_id' => 'nullable|exists:exams,id',
             'exam_category_id' => 'nullable|exists:exam_categories,id',
             'assigned_skills' => 'nullable|array',
@@ -130,6 +131,7 @@ class StudentController extends Controller
             'allows_retry' => $validated['allows_retry'] ?? false,
             'is_demo' => $validated['is_demo'] ?? false,
             'is_demo_proctored' => $validated['is_demo_proctored'] ?? false,
+            'bypass_identity_verification' => $validated['bypass_identity_verification'] ?? false,
             'package_id' => $validated['package_id'] ?? null,
             'exam_category_id' => $examCategoryId,
             'assigned_skills' => $assignedSkills,
@@ -177,6 +179,7 @@ class StudentController extends Controller
             'is_active' => 'sometimes|boolean',
             'is_demo' => 'sometimes|boolean',
             'is_demo_proctored' => 'sometimes|boolean',
+            'bypass_identity_verification' => 'sometimes|boolean',
             'package_id' => 'sometimes|nullable|exists:packages,id',
             'exam_category_id' => 'sometimes|required|exists:exam_categories,id',
             'assigned_skills' => 'sometimes|array',
@@ -207,6 +210,7 @@ class StudentController extends Controller
             'allows_retry',
             'is_demo',
             'is_demo_proctored',
+            'bypass_identity_verification',
             'partner_id'
         ]);
 
@@ -364,6 +368,7 @@ class StudentController extends Controller
             'package',
             'category',
             'attempts.exam',
+            'attempts.certificate',
             'attempts.attemptSkills.skill',
             'attempts.lastSeenQuestion.skill',
             'attempts.lastSeenQuestion.options',

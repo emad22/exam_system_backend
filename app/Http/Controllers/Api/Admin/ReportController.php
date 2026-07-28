@@ -67,6 +67,7 @@ class ReportController extends Controller
             'student.user',
             'user',
             'exam',
+            'certificate',
             'attemptSkills.skill' => function ($q) {
                 $q->withCount('levels');
             },

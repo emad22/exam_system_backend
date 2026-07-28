@@ -133,8 +133,12 @@ class CertificateTemplateController extends Controller
             '{number}' => 'CERT-SAMPLE-001',
             '{verification_url}' => url("/verify-certificate/sample-code"),
             '{skills_table}' => '
-                <tr><td>Section: Composition</td><td>810/900</td><td>90.0%</td><td>C2</td><td>Superior</td><td>25 Aug. 2022</td></tr>
-                <tr><td>Section: Speaking</td><td>680/900</td><td>75.6%</td><td>C1.1</td><td>Advanced Mid +</td><td>25 Aug. 2022</td></tr>
+                <tr><td style="border:1px solid #cbd5e1; padding:6px; text-align:left;">Section: Composition</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">810/900</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">90.0%</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">C2</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">Superior</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">25 Aug. 2022</td></tr>
+                <tr><td style="border:1px solid #cbd5e1; padding:6px; text-align:left;">Section: Speaking</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">680/900</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">75.6%</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">C1.1</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">Advanced Mid +</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">25 Aug. 2022</td></tr>
+            ',
+            '{skills_table_without_cefr}' => '
+                <tr><td style="border:1px solid #cbd5e1; padding:6px; text-align:left;">Section: Composition</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">810/900</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">90.0%</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">Superior</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">25 Aug. 2022</td></tr>
+                <tr><td style="border:1px solid #cbd5e1; padding:6px; text-align:left;">Section: Speaking</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">680/900</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">75.6%</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">Advanced Mid +</td><td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">25 Aug. 2022</td></tr>
             '
         ];
 

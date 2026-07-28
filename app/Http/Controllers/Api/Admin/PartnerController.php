@@ -94,11 +94,15 @@ class PartnerController extends Controller
     public function update(Request $request, $id)
     {
         $partner = Partner::findOrFail($id);
-        $partner->update($request->all());
+        $data = $request->all();
+        if (isset($data['proctoring_mode'])) {
+            $data['proctoring_required'] = in_array($data['proctoring_mode'], ['full', 'identity_only'], true);
+        }
+        $partner->update($data);
         return response()->json([
-                'message' => 'Partner updated successfully',
-                'partner' => $partner
-            ]);
+            'message' => 'Partner updated successfully',
+            'partner' => $partner
+        ]);
     }
 
 // DELETE

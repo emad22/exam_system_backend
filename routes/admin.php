@@ -165,6 +165,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
 
     // Certificates & Templates
     Route::get('/certificates', [CertificateController::class, 'adminIndex'])->name('certificates.index');
+    Route::post('/certificates/bulk-download', [CertificateController::class, 'bulkDownload'])->name('certificates.bulk-download');
     Route::patch('/certificates/{certificate}/toggle-visibility', [CertificateController::class, 'toggleVisibility'])->name('certificates.toggle-visibility');
     Route::post('/certificates/create-for-attempt/{attempt}', [CertificateController::class, 'createForAttempt'])->name('certificates.create-for-attempt');
     Route::delete('/certificates/{certificate}', [CertificateController::class, 'destroy'])->name('certificates.destroy');

@@ -30,6 +30,7 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\PartnerRole::class])
 
         // Certificates
         Route::get('/certificates', [CertificateController::class, 'partnerIndex'])->name('certificates.index');
+        Route::post('/certificates/bulk-download', [CertificateController::class, 'bulkDownload'])->name('certificates.bulk-download');
         Route::post('/certificates/create-for-attempt/{attempt}', [CertificateController::class, 'createForAttempt'])->name('certificates.create-for-attempt');
 
     });

@@ -86,7 +86,7 @@ class CertificateService
         $qrImage = null;
         try {
             if (class_exists(\SimpleSoftwareIO\QrCode\Facades\QrCode::class)) {
-                $qrPng = \SimpleSoftwareIO\QrCode\Facades\QrCode::format('png')->size(300)->margin(1)->generate($verificationUrl);
+                $qrPng = QrCode::format('png')->size(300)->margin(1)->generate($verificationUrl);
                 $qrImage = base64_encode($qrPng);
             } else {
                 $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($verificationUrl);
@@ -171,6 +171,47 @@ class CertificateService
                 </table>";
             }
 
+            // 1b. Build skills table without CEFR (ACTFL only) HTML to replace {skills_table_without_cefr}
+            $skillsNoCefrHtml = '';
+            foreach ($skillsData as $s) {
+                $skillsNoCefrHtml .= "<tr>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/900</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($s['score'] ?? 0.0), 1) . "%</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['actfl']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['date']}</td>
+                </tr>";
+            }
+            // Add overall row
+            $skillsNoCefrHtml .= "<tr style='font-weight:bold; background:#f1f5f9;'>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Overall Score</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$totalPoints}/900</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($overallScore ?? 0.0), 1) . "%</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$this->mapToActfl($overallScore)}</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$issueDate}</td>
+            </tr>";
+
+            $hasTableWrapperNoCefr = str_contains($template->content_html, '<tbody>{skills_table_without_cefr}')
+                || str_contains($template->content_html, '<table>{skills_table_without_cefr}')
+                || str_contains($template->content_html, '<thead>');
+
+            if (!$hasTableWrapperNoCefr) {
+                $skillsNoCefrHtml = "<table style='width:100%; border-collapse:collapse; font-size:12px;'>
+                    <thead>
+                        <tr style='background:#f8fafc;'>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>TEST</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>SCORE</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>SCORE%</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>LEVEL (ACTFL)</th>
+                            <th style='border:1px solid #cbd5e1; padding:6px;'>DATE</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {$skillsNoCefrHtml}
+                    </tbody>
+                </table>";
+            }
+
             // 2. Build QR image HTML if present
             $qrHtml = '';
             if ($qrImage) {
@@ -190,6 +231,7 @@ class CertificateService
                 '{verification_url}' => $verificationUrl,
                 '{qr_code}' => $qrHtml,
                 '{skills_table}' => $skillsHtml,
+                '{skills_table_without_cefr}' => $skillsNoCefrHtml,
                 // Legacy seeder fallbacks
                 '{certificate_number}' => $certificate->certificate_number,
                 '{issue_date}' => $issueDate,
