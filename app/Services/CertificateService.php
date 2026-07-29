@@ -109,44 +109,82 @@ class CertificateService
 
         // Build skills data array
         $skillsData = [];
-        $skillRecords = $attempt->attemptSkills()->with('skill')->get();
+        $skillRecords = $attempt->attemptSkills()->with(['skill.levels'])->get();
         foreach ($skillRecords as $s) {
+            $maxPoints  = $this->getSkillMaxPoints($s->skill, $s);
+            $isCore     = $this->isCoreSkill($s);
+            $skillType  = $this->getSkillType($s->skill->name ?? '');
             $skillsData[] = [
-                'name' => $s->skill->name ?? '',
-                'points' => round(($s->score / 100) * 900),
-                'score' => $s->score,
-                'cefr' => $this->mapToCefr($s->score),
-                'actfl' => $this->mapToActfl($s->score),
-                'date' => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y'),
+                'name'       => $this->normalizeSkillName($s->skill->name ?? ''),
+                'max_points' => $maxPoints,
+                'points'     => round(($s->score / 100) * $maxPoints),
+                'score'      => $s->score,
+                'cefr'       => $this->mapToCefr($s->score, $skillType),
+                'actfl'      => $this->mapToActfl($s->score, $skillType),
+                'date'       => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y'),
+                'is_core'    => $isCore,
             ];
         }
 
+        // Sort: core skills first (in display order), then extra skills
+        $skillOrder = ['listening', 'reading', 'structure', 'writing', 'speaking'];
+        usort($skillsData, function ($a, $b) use ($skillOrder) {
+            // Core before non-core
+            if ($a['is_core'] !== $b['is_core']) {
+                return $a['is_core'] ? -1 : 1;
+            }
+            $aIndex = array_search(strtolower($a['name']), $skillOrder);
+            $bIndex = array_search(strtolower($b['name']), $skillOrder);
+            $aIndex = $aIndex === false ? 999 : $aIndex;
+            $bIndex = $bIndex === false ? 999 : $bIndex;
+            return $aIndex - $bIndex;
+        });
+
         $overallScore = $attempt->overall_score ?? 0;
-        $totalPoints = round(($overallScore / 100) * 900);
+        // Overall points/max are computed from core skills only
+        $coreSkills     = array_filter($skillsData, fn($s) => $s['is_core']);
+        $totalPoints    = array_sum(array_column($coreSkills, 'points'));
+        $totalMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
+        // Normalize to /900 scale: e.g. 1600/2700 → 533.33/900
+        $overallNormalized900 = $totalMaxPoints > 0 ? round(($totalPoints / $totalMaxPoints) * 900, 2) : 0;
         $issueDate = $certificate->issue_date->format('M d, Y');
 
         if ($template && !empty($template->content_html)) {
             // 1. Build skills table rows HTML to replace {skills_table}
             $skillsHtml = '';
+            // Core skills first
             foreach ($skillsData as $s) {
+                if (!$s['is_core']) continue;
                 $skillsHtml .= "<tr>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
-                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/900</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/{$s['max_points']}</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($s['score'] ?? 0.0), 1) . "%</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['cefr']}</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['actfl']}</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['date']}</td>
                 </tr>";
             }
-            // Add overall row
+            // Overall row (core only)
             $skillsHtml .= "<tr style='font-weight:bold; background:#f1f5f9;'>
-                <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Overall Score</td>
-                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$totalPoints}/900</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Overall Score (Sections Listening, Reading &amp; Structure)</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$overallNormalized900}/900</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($overallScore ?? 0.0), 1) . "%</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$this->mapToCefr($overallScore)}</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$this->mapToActfl($overallScore)}</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$issueDate}</td>
             </tr>";
+            // Extra skills (Writing, Speaking, etc.) after overall
+            foreach ($skillsData as $s) {
+                if ($s['is_core']) continue;
+                $skillsHtml .= "<tr>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($s['score'] ?? 0.0), 1) . "%</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['cefr']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['actfl']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['date']}</td>
+                </tr>";
+            }
 
             // If {skills_table} is not wrapped inside a <table>/<tbody> in the template content, wrap it
             $hasTableWrapper = str_contains($template->content_html, '<tbody>{skills_table}')
@@ -173,23 +211,36 @@ class CertificateService
 
             // 1b. Build skills table without CEFR (ACTFL only) HTML to replace {skills_table_without_cefr}
             $skillsNoCefrHtml = '';
+            // Core skills first
             foreach ($skillsData as $s) {
+                if (!$s['is_core']) continue;
                 $skillsNoCefrHtml .= "<tr>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
-                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/900</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/{$s['max_points']}</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($s['score'] ?? 0.0), 1) . "%</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['actfl']}</td>
                     <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['date']}</td>
                 </tr>";
             }
-            // Add overall row
+            // Overall row (core only)
             $skillsNoCefrHtml .= "<tr style='font-weight:bold; background:#f1f5f9;'>
-                <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Overall Score</td>
-                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$totalPoints}/900</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Overall Score (Sections Listening, Reading &amp; Structure)</td>
+                <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$overallNormalized900}/900</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($overallScore ?? 0.0), 1) . "%</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$this->mapToActfl($overallScore)}</td>
                 <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$issueDate}</td>
             </tr>";
+            // Extra skills after overall
+            foreach ($skillsData as $s) {
+                if ($s['is_core']) continue;
+                $skillsNoCefrHtml .= "<tr>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>" . number_format((float) ($s['score'] ?? 0.0), 1) . "%</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['actfl']}</td>
+                    <td style='border:1px solid #cbd5e1; padding:6px; text-align:center;'>{$s['date']}</td>
+                </tr>";
+            }
 
             $hasTableWrapperNoCefr = str_contains($template->content_html, '<tbody>{skills_table_without_cefr}')
                 || str_contains($template->content_html, '<table>{skills_table_without_cefr}')
@@ -223,7 +274,7 @@ class CertificateService
                 '{name}' => htmlspecialchars($user->first_name . ' ' . $user->last_name),
                 '{exam}' => htmlspecialchars($exam->title ?? $exam->name ?? ''),
                 '{score}' => number_format((float) ($overallScore ?? 0.0), 1),
-                '{total_points}' => $totalPoints,
+                '{total_points}' => $overallNormalized900 . '/900',
                 '{cefr}' => $this->mapToCefr($overallScore),
                 '{actfl}' => $this->mapToActfl($overallScore),
                 '{date}' => $issueDate,
@@ -291,6 +342,283 @@ class CertificateService
         Storage::disk('public')->put($fileName, $pdf->output());
 
         return $fileName;
+    }
+
+    /**
+     * Render the certificate template HTML for the public verify page.
+     * Returns the filled content_html (with background image inlined as base64)
+     * wrapped in a basic HTML document, or null if no visual template is available.
+     */
+    public function renderForVerifyPage(Certificate $certificate): ?string
+    {
+        $attempt = $certificate->attempt;
+
+        $template = null;
+        if ($certificate->template_id) {
+            $template = CertificateTemplate::find($certificate->template_id);
+        }
+        if (!$template) {
+            $template = CertificateTemplate::where('is_default', true)->first()
+                ?? CertificateTemplate::first();
+        }
+
+        if (!$template || empty($template->content_html)) {
+            return null;
+        }
+
+        $student = $attempt->student;
+        $user    = $student->user;
+        $exam    = $attempt->exam;
+
+        $frontendBase    = env('FRONTEND_URL', config('app.url'));
+        $verificationUrl = rtrim($frontendBase, '/') . "/verify-certificate/{$certificate->verification_code}";
+
+        // QR code (base64)
+        $qrImage = null;
+        try {
+            if (class_exists(\SimpleSoftwareIO\QrCode\Facades\QrCode::class)) {
+                $qrPng   = QrCode::format('png')->size(300)->margin(1)->generate($verificationUrl);
+                $qrImage = base64_encode($qrPng);
+            } else {
+                $qrUrl   = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($verificationUrl);
+                $qrPng   = @file_get_contents($qrUrl);
+                if ($qrPng !== false) {
+                    $qrImage = base64_encode($qrPng);
+                }
+            }
+        } catch (\Throwable $e) {
+            $qrImage = null;
+        }
+
+        // Skills data
+        $skillsData   = [];
+        $skillRecords = $attempt->attemptSkills()->with(['skill.levels'])->get();
+        foreach ($skillRecords as $s) {
+            $maxPoints = $this->getSkillMaxPoints($s->skill, $s);
+            $isCore     = $this->isCoreSkill($s);
+            $skillType  = $this->getSkillType($s->skill->name ?? '');
+            $skillsData[] = [
+                'name'       => $this->normalizeSkillName($s->skill->name ?? ''),
+                'max_points' => $maxPoints,
+                'points'     => round(($s->score / 100) * $maxPoints),
+                'score'      => $s->score,
+                'cefr'       => $this->mapToCefr($s->score, $skillType),
+                'actfl'      => $this->mapToActfl($s->score, $skillType),
+                'date'       => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y'),
+                'is_core'    => $isCore,
+            ];
+        }
+
+        // Sort: core skills first, then extra
+        $skillOrder = ['listening', 'reading', 'structure', 'writing', 'speaking'];
+        usort($skillsData, function ($a, $b) use ($skillOrder) {
+            if ($a['is_core'] !== $b['is_core']) {
+                return $a['is_core'] ? -1 : 1;
+            }
+            $aIndex = array_search(strtolower($a['name']), $skillOrder);
+            $bIndex = array_search(strtolower($b['name']), $skillOrder);
+            $aIndex = $aIndex === false ? 999 : $aIndex;
+            $bIndex = $bIndex === false ? 999 : $bIndex;
+            return $aIndex - $bIndex;
+        });
+
+        $overallScore = $attempt->overall_score ?? 0;
+        // Overall computed from core skills only
+        $coreSkills     = array_filter($skillsData, fn($s) => $s['is_core']);
+        $totalPoints    = array_sum(array_column($coreSkills, 'points'));
+        $totalMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
+        // Normalize to /900 scale: e.g. 1600/2700 → 533.33/900
+        $overallNormalized900 = $totalMaxPoints > 0 ? round(($totalPoints / $totalMaxPoints) * 900, 2) : 0;
+        $issueDate    = $certificate->issue_date->format('M d, Y');
+
+        // Skills table HTML: core → overall → extra
+        $skillsHtml = '';
+        foreach ($skillsData as $s) {
+            if (!$s['is_core']) continue;
+            $skillsHtml .= "<tr>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>" . number_format((float)($s['score'] ?? 0), 1) . "%</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['cefr']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['actfl']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['date']}</td>
+            </tr>";
+        }
+        // Overall row (core skills only)
+        $skillsHtml .= "<tr style='font-weight:bold;background:#f1f5f9;'>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:left;'>Overall Score (Sections Listening, Reading &amp; Structure)</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$overallNormalized900}/900</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>" . number_format((float)($overallScore ?? 0), 1) . "%</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$this->mapToCefr($overallScore)}</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$this->mapToActfl($overallScore)}</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$issueDate}</td>
+        </tr>";
+        // Extra skills (Writing, Speaking…) after overall
+        foreach ($skillsData as $s) {
+            if ($s['is_core']) continue;
+            $skillsHtml .= "<tr>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>" . number_format((float)($s['score'] ?? 0), 1) . "%</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['cefr']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['actfl']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['date']}</td>
+            </tr>";
+        }
+
+        // Only wrap with <table><thead> if the template doesn't already contain a header for skills_table
+        $hasTableWrapper = str_contains($template->content_html, '<tbody>{skills_table}')
+            || str_contains($template->content_html, '<table>{skills_table}')
+            || str_contains($template->content_html, '<thead>');
+
+        if (!$hasTableWrapper) {
+            $skillsHtml = "<table style='width:100%;border-collapse:collapse;font-size:12px;'>
+                <thead><tr style='background:#f8fafc;'>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>TEST</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>SCORE</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>SCORE%</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>LEVEL (CEFR)</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>LEVEL (ACTFL)</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>DATE</th>
+                </tr></thead>
+                <tbody>{$skillsHtml}</tbody>
+            </table>";
+        } else {
+            // Template already has its own <thead>, just wrap rows in tbody
+            $skillsHtml = "<tbody>{$skillsHtml}</tbody>";
+        }
+
+        // Skills table without CEFR: core → overall → extra
+        $skillsNoCefrHtml = '';
+        foreach ($skillsData as $s) {
+            if (!$s['is_core']) continue;
+            $skillsNoCefrHtml .= "<tr>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>" . number_format((float)($s['score'] ?? 0), 1) . "%</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['actfl']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['date']}</td>
+            </tr>";
+        }
+        // Overall row (core only)
+        $skillsNoCefrHtml .= "<tr style='font-weight:bold;background:#f1f5f9;'>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:left;'>Overall Score (Sections Listening, Reading &amp; Structure)</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$overallNormalized900}/900</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>" . number_format((float)($overallScore ?? 0), 1) . "%</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$this->mapToActfl($overallScore)}</td>
+            <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$issueDate}</td>
+        </tr>";
+        // Extra skills after overall
+        foreach ($skillsData as $s) {
+            if ($s['is_core']) continue;
+            $skillsNoCefrHtml .= "<tr>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:left;'>Section: " . htmlspecialchars(ucfirst($s['name'])) . "</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>" . number_format((float)($s['score'] ?? 0), 1) . "%</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['actfl']}</td>
+                <td style='border:1px solid #cbd5e1;padding:6px;text-align:center;'>{$s['date']}</td>
+            </tr>";
+        }
+
+        $hasTableWrapperNoCefr = str_contains($template->content_html, '<tbody>{skills_table_without_cefr}')
+            || str_contains($template->content_html, '<table>{skills_table_without_cefr}')
+            || str_contains($template->content_html, '<thead>');
+
+        if (!$hasTableWrapperNoCefr) {
+            $skillsNoCefrHtml = "<table style='width:100%;border-collapse:collapse;font-size:12px;'>
+                <thead><tr style='background:#f8fafc;'>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>TEST</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>SCORE</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>SCORE%</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>LEVEL (ACTFL)</th>
+                    <th style='border:1px solid #cbd5e1;padding:6px;'>DATE</th>
+                </tr></thead>
+                <tbody>{$skillsNoCefrHtml}</tbody>
+            </table>";
+        } else {
+            // Template already has its own <thead>, just wrap rows in tbody
+            $skillsNoCefrHtml = "<tbody>{$skillsNoCefrHtml}</tbody>";
+        }
+
+        $qrHtml = $qrImage
+            ? "<img src=\"data:image/png;base64,{$qrImage}\" style=\"width:100%;height:100%;object-fit:contain;\" />"
+            : '';
+
+        $placeholders = [
+            '{name}'                   => htmlspecialchars($user->first_name . ' ' . $user->last_name),
+            '{exam}'                   => htmlspecialchars($exam->title ?? $exam->name ?? ''),
+            '{score}'                  => number_format((float)($overallScore ?? 0), 1),
+            '{total_points}'           => $overallNormalized900 . '/900',
+            '{cefr}'                   => $this->mapToCefr($overallScore),
+            '{actfl}'                  => $this->mapToActfl($overallScore),
+            '{date}'                   => $issueDate,
+            '{number}'                 => $certificate->certificate_number,
+            '{verification_url}'       => $verificationUrl,
+            '{qr_code}'                => $qrHtml,
+            '{skills_table}'           => $skillsHtml,
+            '{skills_table_without_cefr}' => $skillsNoCefrHtml,
+            '{certificate_number}'     => $certificate->certificate_number,
+            '{issue_date}'             => $issueDate,
+            '{signer_left_name}'       => 'Sayed Ramadan',
+            '{signer_left_title}'      => 'Program Director',
+            '{org_address_line1}'      => '3 alif Al-Nabataat Street,',
+            '{org_address_line2}'      => 'Garden City, Cairo, Egypt',
+            '{signer_right_name}'      => 'Hanan Dawah',
+            '{signer_right_title}'     => 'Registrar',
+        ];
+
+        $filledHtml = strtr($template->content_html, $placeholders);
+
+        // Build background CSS for the browser (use a URL instead of base64 to keep response size manageable)
+        $bgCss = '';
+        if ($template->background_image) {
+            $backendBase = env('APP_URL', '');
+            $bgUrl = rtrim($backendBase, '/') . '/storage/' . ltrim($template->background_image, '/');
+
+            $settings  = [];
+            if (!empty($template->background_settings)) {
+                $settings = is_array($template->background_settings)
+                    ? $template->background_settings
+                    : (json_decode($template->background_settings, true) ?: []);
+            }
+            $opacity  = isset($settings['opacity'])  ? floatval($settings['opacity'])            : 1.0;
+            $size     = isset($settings['size'])     ? htmlspecialchars($settings['size'])        : 'cover';
+            $position = isset($settings['position']) ? htmlspecialchars($settings['position'])    : 'center';
+
+            $bgCss = "
+                .cert-bg-layer {
+                    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+                    z-index: 0; pointer-events: none;
+                    background-image: url('{$bgUrl}');
+                    background-size: {$size};
+                    background-position: {$position};
+                    background-repeat: no-repeat;
+                    opacity: {$opacity};
+                }
+            ";
+        }
+
+        return "<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'/>
+<style>
+    html, body { margin:0; padding:0; background:transparent; font-family: Arial, sans-serif; }
+    .cert-bg-layer { display: none; }
+    {$bgCss}
+    .cert-bg-layer { display: block; }
+    * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+    <div style='position:relative; width:1123px; height:794px; overflow:hidden;'>
+        <div class='cert-bg-layer'></div>
+        <div style='position:relative; z-index:1; width:1123px; height:794px;'>
+            {$filledHtml}
+        </div>
+    </div>
+</body>
+</html>";
     }
 
     public function wrapVisualTemplateHtml($content, $template)
@@ -456,37 +784,88 @@ class CertificateService
         if (!$attempt)
             return '';
 
-        $rows = '';
-        $skills = $attempt->attemptSkills()->with('skill')->get();
+        $skillRecords = $attempt->attemptSkills()->with(['skill.levels'])->get();
 
+        // Build a plain array with all computed values
+        $skillOrder = ['listening', 'reading', 'structure', 'writing', 'speaking'];
+        $skills = [];
+        foreach ($skillRecords as $s) {
+            $maxPoints   = $this->getSkillMaxPoints($s->skill, $s);
+            $isCore      = $this->isCoreSkill($s);
+            $name        = strtolower($this->normalizeSkillName($s->skill->name ?? ''));
+            $skillType   = $this->getSkillType($s->skill->name ?? '');
+            $skills[] = [
+                'name'       => $this->normalizeSkillName($s->skill->name ?? ''),
+                'name_lower' => $name,
+                'max_points' => $maxPoints,
+                'points'     => round(($s->score / 100) * $maxPoints),
+                'score'      => $s->score,
+                'cefr'       => $this->mapToCefr($s->score, $skillType),
+                'actfl'      => $this->mapToActfl($s->score, $skillType),
+                'date'       => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y'),
+                'is_core'    => $isCore,
+            ];
+        }
+
+        // Sort: core first, then extra; within each group follow $skillOrder
+        usort($skills, function ($a, $b) use ($skillOrder) {
+            if ($a['is_core'] !== $b['is_core']) {
+                return $a['is_core'] ? -1 : 1;
+            }
+            $aIndex = array_search($a['name_lower'], $skillOrder);
+            $bIndex = array_search($b['name_lower'], $skillOrder);
+            $aIndex = $aIndex === false ? 999 : $aIndex;
+            $bIndex = $bIndex === false ? 999 : $bIndex;
+            return $aIndex - $bIndex;
+        });
+
+        $overallScore   = $attempt->overall_score ?? 0;
+        $coreSkills     = array_filter($skills, fn($s) => $s['is_core']);
+        $overallPoints    = array_sum(array_column($coreSkills, 'points'));
+        $overallMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
+        // Normalize to /900 scale: e.g. 1600/2700 → 533.33/900
+        $overallNormalized900 = $overallMaxPoints > 0 ? round(($overallPoints / $overallMaxPoints) * 900, 2) : 0;
+        $issueDate = now()->format('M d, Y');
+
+        $rows = '';
+
+        // Core skill rows
         foreach ($skills as $s) {
-            $points = round(($s->score / 100) * 900);
-            $date = $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y');
+            if (!$s['is_core']) continue;
             $rows .= "<tr>
-                <td style='padding:8px;border:1px solid #444;text-align:left;'>Section: " . htmlspecialchars(ucfirst($s->skill->name)) . "</td>
-                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$points}/900</td>
-                <td style='padding:8px;border:1px solid #444;text-align:center;'>" . number_format($s->score, 1) . "%</td>
-                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToCefr($s->score)}</td>
-                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToActfl($s->score)}</td>
-                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$date}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:left;'>Section: " . htmlspecialchars($s['name']) . "</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>" . number_format($s['score'], 1) . "%</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['cefr']}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['actfl']}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['date']}</td>
             </tr>";
         }
 
-        // Overall row
-        $overallScore = $attempt->overall_score ?? 0;
-        $overallPoints = round(($overallScore / 100) * 900);
-        $issueDate = $attempt->issue_date_formatted ?? now()->format('M d, Y');
+        // Overall row (core skills only)
         $rows .= "<tr style='font-weight:bold; background:#f1f5f9;'>
-            <td style='padding:8px;border:1px solid #444;text-align:left;'>Overall Score</td>
-            <td style='padding:8px;border:1px solid #444;text-align:center;'>{$overallPoints}/900</td>
+            <td style='padding:8px;border:1px solid #444;text-align:left;'>Overall Score (Sections Listening, Reading &amp; Structure)</td>
+            <td style='padding:8px;border:1px solid #444;text-align:center;'>{$overallNormalized900}/900</td>
             <td style='padding:8px;border:1px solid #444;text-align:center;'>" . number_format($overallScore, 1) . "%</td>
             <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToCefr($overallScore)}</td>
             <td style='padding:8px;border:1px solid #444;text-align:center;'>{$this->mapToActfl($overallScore)}</td>
             <td style='padding:8px;border:1px solid #444;text-align:center;'>{$issueDate}</td>
         </tr>";
 
-        // Wrap rows in a complete table so injected HTML is valid
-        $table = "<table class='scores-table' style='width:100%;margin-top:25px;border-collapse:collapse;font-size:11px;'>
+        // Extra skill rows (Writing, Speaking…) after overall
+        foreach ($skills as $s) {
+            if ($s['is_core']) continue;
+            $rows .= "<tr>
+                <td style='padding:8px;border:1px solid #444;text-align:left;'>Section: " . htmlspecialchars($s['name']) . "</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['points']}/{$s['max_points']}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>" . number_format($s['score'], 1) . "%</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['cefr']}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['actfl']}</td>
+                <td style='padding:8px;border:1px solid #444;text-align:center;'>{$s['date']}</td>
+            </tr>";
+        }
+
+        return "<table class='scores-table' style='width:100%;margin-top:25px;border-collapse:collapse;font-size:11px;'>
             <thead>
                 <tr>
                     <th style='padding:8px;border:1px solid #444;background:#f8fafc;font-weight:900;text-transform:uppercase;'>Test</th>
@@ -501,59 +880,172 @@ class CertificateService
                 {$rows}
             </tbody>
         </table>";
-
-        return $table;
     }
 
-    public function mapToCefr($score)
+    /**
+     * Check if a skill is core (participates in overall score).
+     * Core skills are those WITHOUT a custom max_points in exam_skill pivot,
+     * meaning they follow level-based scoring (9 levels × 100 = 900).
+     */
+    protected function isCoreSkill($attemptSkill): bool
     {
-        $points = round(($score / 100) * 900);
+        if (!$attemptSkill) {
+            return true; // fallback
+        }
 
-        if ($points >= 801)
-            return 'C1.2';
-        if ($points >= 701)
-            return 'C1.1';
-        if ($points >= 668)
-            return 'B2.2';
-        if ($points >= 634)
-            return 'B2.1';
-        if ($points >= 601)
-            return 'B1.2';
-        if ($points >= 501)
-            return 'B1.1';
-        if ($points >= 401)
-            return 'A2.2';
-        if ($points >= 301)
-            return 'A2.1';
-        if ($points >= 201)
-            return 'A1.2';
-        return 'A1.1';
+        try {
+            $examSkillRow = \App\Models\ExamSkill::where('exam_id', $attemptSkill->attempt->exam_id)
+                ->where('skill_id', $attemptSkill->skill_id)
+                ->first();
+
+            // If max_points is set and > 0 → extra skill (not core)
+            return !($examSkillRow && $examSkillRow->max_points > 0);
+        } catch (\Throwable $e) {
+            return true;
+        }
     }
 
-    public function mapToActfl($score)
+    /**
+     * Calculate the maximum points for a skill.
+     *
+     * Priority:
+     *  1. exam_skill.max_points  – a custom value set per exam (e.g. Speaking = 900 even if it has 1 level)
+     *  2. level count × 100      – dynamic: 9 levels → 900, 6 levels → 600, etc.
+     *  3. Hard fallback           – 900
+     *
+     * @param  \App\Models\Skill|null          $skill
+     * @param  \App\Models\ExamAttemptSkill|null $attemptSkill  pass the pivot record to read exam_skill.max_points
+     */
+    protected function getSkillMaxPoints($skill, $attemptSkill = null): int
     {
-        $points = round(($score / 100) * 900);
+        // 1. Check exam_skill pivot max_points via the attempt's exam
+        if ($attemptSkill) {
+            try {
+                $examSkillRow = \App\Models\ExamSkill::where('exam_id', $attemptSkill->attempt->exam_id)
+                    ->where('skill_id', $attemptSkill->skill_id)
+                    ->first();
 
-        if ($points >= 801)
-            return 'Superior';
-        if ($points >= 701)
-            return 'Advanced High';
-        if ($points >= 668)
-            return 'Advanced Mid+';
-        if ($points >= 634)
-            return 'Advanced Mid';
-        if ($points >= 601)
-            return 'Advanced Low';
-        if ($points >= 501)
-            return 'Intermediate High';
-        if ($points >= 401)
-            return 'Intermediate Mid';
-        if ($points >= 301)
-            return 'Intermediate Low';
-        if ($points >= 201)
-            return 'Novice High';
-        if ($points >= 101)
-            return 'Novice Mid';
-        return 'Novice Low';
+                if ($examSkillRow && $examSkillRow->max_points > 0) {
+                    return (int) $examSkillRow->max_points;
+                }
+            } catch (\Throwable $e) {
+                // fall through to level-count logic
+            }
+        }
+
+        if (!$skill) {
+            return 900;
+        }
+
+        // 2. Level count × 100
+        $levelCount = $skill->relationLoaded('levels')
+            ? $skill->levels->count()
+            : $skill->levels()->count();
+
+        return $levelCount > 0 ? $levelCount * 100 : 900;
+    }
+
+    /**
+     * Normalize skill name for display and sorting.
+     * "live speaking", "Live Speaking", "speaking" → "Speaking"
+     */
+    protected function normalizeSkillName(string $name): string
+    {
+        $lower = strtolower(trim($name));
+        if (str_contains($lower, 'speaking')) return 'Speaking';
+        if (str_contains($lower, 'listening')) return 'Listening';
+        if (str_contains($lower, 'reading'))   return 'Reading';
+        if (str_contains($lower, 'writing') || str_contains($lower, 'writting')) return 'Writing';
+        if (str_contains($lower, 'structure') || str_contains($lower, 'grammar')) return 'Structure';
+        return ucfirst($name);
+    }
+
+    /**
+     * Map a score percentage to a CEFR level.
+     *
+     * @param  float   $score  0–100 percentage
+     * @param  string  $type   'core' (Listening/Reading/Structure) | 'productive' (Writing/Speaking)
+     */
+    public function mapToCefr(float $score, string $type = 'core'): string
+    {
+        return $this->mapLevel($score, $type, 'cefr');
+    }
+
+    /**
+     * Map a score percentage to an ACTFL level.
+     *
+     * @param  float   $score  0–100 percentage
+     * @param  string  $type   'core' | 'productive'
+     */
+    public function mapToActfl(float $score, string $type = 'core'): string
+    {
+        return $this->mapLevel($score, $type, 'actfl');
+    }
+
+    /**
+     * Resolve the skill group type from a skill name.
+     */
+    protected function getSkillType(string $skillName): string
+    {
+        $lower = strtolower(trim($skillName));
+        if (str_contains($lower, 'writing') || str_contains($lower, 'writting') || str_contains($lower, 'speaking')) {
+            return 'productive';
+        }
+        return 'core';
+    }
+
+    /**
+     * Core mapping logic.
+     *
+     * Lookup order:
+     *   1. DB table `cefr_actfl_thresholds` (cached, admin-editable)
+     *   2. Fallback to config/cefr_actfl.php (static defaults)
+     *
+     * - core:       converts score% → /900 points before comparison
+     * - productive: uses score% directly
+     */
+    protected function mapLevel(float $score, string $type, string $framework): string
+    {
+        // 1. Try DB (cached for 60 min)
+        $thresholds = \Illuminate\Support\Facades\Cache::remember(
+            'cefr_actfl_thresholds',
+            3600,
+            fn () => \App\Models\CefrActflThreshold::active()
+                ->orderBy('skill_group')
+                ->orderBy('framework')
+                ->orderBy('sort_order')
+                ->get()
+                ->groupBy(['skill_group', 'framework'])
+        );
+
+        $rows = $thresholds[$type][$framework] ?? null;
+
+        if ($rows && $rows->isNotEmpty()) {
+            $value = ($type === 'core') ? round(($score / 100) * 900) : round($score);
+            foreach ($rows as $row) {
+                if ($value >= $row->min_score) {
+                    return $row->level_label;
+                }
+            }
+            return $rows->last()->level_label;
+        }
+
+        // 2. Fallback to config file
+        $configThresholds = config("cefr_actfl.{$type}.{$framework}", []);
+
+        if (empty($configThresholds)) {
+            return 'N/A';
+        }
+
+        // $value = ($type === 'core') ? round(($score / 100) * 900) : round($score);
+        $value = round(  ($score / 100 ) * 900  );
+
+        foreach ($configThresholds as $minPoints => $label) {
+            if ($value >= $minPoints) {
+                return $label;
+            }
+        }
+
+        return end($configThresholds) ?: 'N/A';
     }
 }

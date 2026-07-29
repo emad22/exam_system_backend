@@ -102,6 +102,14 @@ class CertificateController extends Controller
 
         $service = app(\App\Services\CertificateService::class);
 
+        // Build rendered template HTML for the verify page (same as PDF but without DomPDF wrapper)
+        $renderedHtml = null;
+        try {
+            $renderedHtml = $service->renderForVerifyPage($certificate);
+        } catch (\Throwable $e) {
+            // non-fatal — frontend will fall back to legacy layout
+        }
+
         return response()->json([
             'valid' => true,
             'student_name' => $certificate->student->user->first_name . ' ' . $certificate->student->user->last_name,
@@ -112,6 +120,7 @@ class CertificateController extends Controller
             'actfl' => $service->mapToActfl($certificate->score),
             'issue_date' => $certificate->issue_date->format('M d, Y'),
             'certificate_number' => $certificate->certificate_number,
+            'rendered_html' => $renderedHtml,
             'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function ($s) use ($service) {
                 return [
                     'name' => $s->skill->name,

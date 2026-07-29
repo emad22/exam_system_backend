@@ -60,6 +60,8 @@ class StudentController extends Controller
             'come_from' => 'nullable|string|max:255',
             'student_type' => 'nullable|string|max:50',
             'year_of_arabic' => 'nullable|integer',
+            'is_continue' => 'sometimes|boolean',
+            'allows_retry' => 'sometimes|boolean',
             'is_demo' => 'sometimes|boolean',
             'is_demo_proctored' => 'sometimes|boolean',
             'bypass_identity_verification' => 'sometimes|boolean',

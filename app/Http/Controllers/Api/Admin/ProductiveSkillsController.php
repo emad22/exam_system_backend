@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExamAttempt;
+use App\Models\ExamAttemptLevel;
 use App\Models\ExamAttemptSkill;
+use App\Models\Level;
 use App\Models\StudentAnswer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -50,7 +52,11 @@ class ProductiveSkillsController extends Controller
     }
 
     /**
-     * Get all writing/speaking answers for a specific attempt, grouped by skill.
+     * Get all writing/speaking answers for a specific attempt, grouped by skill+type.
+     *
+     * Each group is a unique (skill_id, question_type_category) pair so that
+     * Writing and Speaking/Speaking-Live answers that share the same skill are
+     * never mixed together. This prevents scores from being summed across types.
      */
     public function showAttempt(ExamAttempt $attempt)
     {
@@ -61,20 +67,36 @@ class ProductiveSkillsController extends Controller
             ->orderBy('question_id')
             ->get();
 
-        // Group by skill and attach max_points from exam_skill pivot
-        $grouped = $answers->groupBy('skill_id')->map(function ($skillAnswers, $skillId) use ($attempt) {
+        // Map each question type to a canonical category label
+        $typeCategory = fn(string $type): string => match (true) {
+            in_array($type, ['speaking', 'speaking_live']) => 'speaking',
+            $type === 'writing'                            => 'writing',
+            default                                        => $type,
+        };
+
+        // Group by "skill_id|category" so writing and speaking are always separate
+        $grouped = $answers->groupBy(function ($ans) use ($typeCategory) {
+            $category = $typeCategory($ans->question->type ?? 'writing');
+            return "{$ans->skill_id}|{$category}";
+        })->map(function ($skillAnswers, $groupKey) use ($attempt, $typeCategory) {
+            [$skillId, $category] = explode('|', $groupKey, 2);
             $skill = $skillAnswers->first()->question->skill;
 
             $maxPoints = DB::table('exam_skill')
                 ->where('exam_id', $attempt->exam_id)
-                ->where('skill_id', $skillId)
+                ->where('skill_id', (int) $skillId)
                 ->value('max_points') ?? 0;
 
+            // For mixed skills, split max_points proportionally by question points
+            $totalPossible = $skillAnswers->sum(fn($a) => $a->question->points ?? 0);
+
             return [
-                'skill_id'   => (int) $skillId,
-                'skill_name' => $skill->name ?? 'Unknown',
-                'max_points' => (int) $maxPoints,
-                'answers'    => $skillAnswers->values(),
+                'skill_id'       => (int) $skillId,
+                'question_type'  => $category,           // 'writing' | 'speaking' | …
+                'skill_name'     => $skill->name ?? 'Unknown',
+                'max_points'     => (int) $maxPoints,
+                'total_possible' => (int) $totalPossible,
+                'answers'        => $skillAnswers->values(),
             ];
         })->values();
 
@@ -237,20 +259,100 @@ class ProductiveSkillsController extends Controller
     }
 
     /**
-     * Recalculate the skill score in ExamAttemptSkill after grading.
+     * Recalculate the skill score in ExamAttemptSkill after manual grading,
+     * then sync the status in exam_attempt_skills and exam_attempt_levels,
+     * and finally refresh the overall_score on the attempt.
+     *
+     * Writing / Speaking skills have exactly ONE level (the productive level).
+     * We calculate the score as a percentage of total possible points for that
+     * level and compare it against the level's pass_threshold to decide
+     * passed / failed status — keeping everything consistent with how
+     * AttemptService handles auto-graded skills.
      */
     private function recalculateSkillScore(ExamAttempt $attempt, int $skillId): void
     {
+        // ── 1. Sum all points awarded for this skill ───────────────────────
         $totalEarned = StudentAnswer::where('exam_attempt_id', $attempt->id)
             ->where('skill_id', $skillId)
             ->sum('points_awarded');
 
+        // Apply the exam_skill max_points cap if one exists
+        $maxPoints = DB::table('exam_skill')
+            ->where('exam_id', $attempt->exam_id)
+            ->where('skill_id', $skillId)
+            ->value('max_points');
+
+        if ($maxPoints !== null && $maxPoints > 0) {
+            $totalEarned = min($totalEarned, $maxPoints);
+        }
+
+        // ── 2. Convert to a percentage score (0-100) ───────────────────────
+        // Total possible raw points for this skill in the exam
+        $totalPossible = DB::table('questions')
+            ->where('exam_id', $attempt->exam_id)
+            ->where('skill_id', $skillId)
+            ->sum('points');
+
+        $scorePercent = $totalPossible > 0
+            ? round(($totalEarned / $totalPossible) * 100, 2)
+            : 0;
+
+        // ── 3. Determine pass/fail using the level's pass_threshold ────────
+        // Productive skills live in a single level — grab it (or default to 70)
+        $level = Level::where('skill_id', $skillId)
+            ->where('is_active', true)
+            ->whereHas('questions', fn($q) => $q->where('exam_id', $attempt->exam_id))
+            ->orderBy('level_number')
+            ->first();
+
+        $passThreshold = $level->pass_threshold ?? 70;
+        $skillStatus   = $scorePercent >= $passThreshold ? 'completed' : 'failed';
+
+        // ── 4. Update exam_attempt_skills ──────────────────────────────────
         $attemptSkill = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
             ->where('skill_id', $skillId)
             ->first();
 
         if ($attemptSkill) {
-            $attemptSkill->update(['score' => $totalEarned]);
+            $attemptSkill->update([
+                'score'  => $scorePercent,
+                'status' => $skillStatus,
+            ]);
+        }
+
+        // ── 5. Update exam_attempt_levels for this skill's level ───────────
+        if ($level) {
+            ExamAttemptLevel::updateOrCreate(
+                [
+                    'exam_attempt_id' => $attempt->id,
+                    'skill_id'        => $skillId,
+                    'level_number'    => $level->level_number,
+                ],
+                [
+                    'score'  => $scorePercent,
+                    'status' => $scorePercent >= $passThreshold ? 'passed' : 'failed',
+                ]
+            );
+        }
+
+        // ── 6. Refresh the attempt's overall_score ─────────────────────────
+        // Average all skill scores that belong to the exam's skill list
+        $skillIds = DB::table('exam_skill')
+            ->where('exam_id', $attempt->exam_id)
+            ->pluck('skill_id')
+            ->toArray();
+
+        if (!empty($skillIds)) {
+            $skillScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+                ->whereIn('skill_id', $skillIds)
+                ->pluck('score')
+                ->toArray();
+
+            $overall = count($skillScores) > 0
+                ? round(array_sum($skillScores) / count($skillIds), 2)
+                : 0;
+
+            $attempt->update(['overall_score' => $overall]);
         }
     }
 }

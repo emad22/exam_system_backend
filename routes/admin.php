@@ -203,4 +203,15 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
 
     // Utilities
     Route::get('/languages', [Admin\LanguageController::class, 'index'])->name('languages.index');
+
+    // CEFR & ACTFL Threshold Management
+    Route::prefix('cefr-actfl-thresholds')->as('cefr-actfl.')->group(function () {
+        Route::get('/',              [Admin\CefrActflThresholdController::class, 'index'])->name('index');
+        Route::get('/flat',          [Admin\CefrActflThresholdController::class, 'flat'])->name('flat');
+        Route::post('/',             [Admin\CefrActflThresholdController::class, 'store'])->name('store');
+        Route::get('/{cefrActflThreshold}',    [Admin\CefrActflThresholdController::class, 'show'])->name('show');
+        Route::patch('/{cefrActflThreshold}',  [Admin\CefrActflThresholdController::class, 'update'])->name('update');
+        Route::delete('/{cefrActflThreshold}', [Admin\CefrActflThresholdController::class, 'destroy'])->name('destroy');
+        Route::put('/bulk-update',   [Admin\CefrActflThresholdController::class, 'bulkUpdate'])->name('bulk-update');
+    });
 });
