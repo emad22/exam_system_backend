@@ -21,18 +21,11 @@ class CertificateService
         // 1. Check if certificate already exists
         $certificate = $attempt->certificate;
 
-        // Determine template preference:
-        // - If a certificate exists and already has a template_id, use that template.
-        // - Otherwise use the default template (is_default) or the first available.
-        $template = null;
-        if ($certificate && $certificate->template_id) {
-            $template = CertificateTemplate::find($certificate->template_id);
-        }
-
-        if (!$template) {
-            $template = CertificateTemplate::where('is_default', true)->first()
-                ?? CertificateTemplate::first();
-        }
+        // Always use the current default template (or first available).
+        // This ensures that if the admin changes the default template, all
+        // regenerated PDFs will reflect the new template immediately.
+        $template = CertificateTemplate::where('is_default', true)->first()
+            ?? CertificateTemplate::first();
 
         if (!$template) {
             throw new \Exception("No certificate template found. Please create one in Admin panel.");
@@ -55,6 +48,9 @@ class CertificateService
                 'issue_date' => now(),
                 'verification_code' => $verificationCode,
             ]);
+        } else {
+            // Update the template_id on the existing certificate to match what we used
+            $certificate->update(['template_id' => $template->id]);
         }
 
         // 5. Generate PDF
