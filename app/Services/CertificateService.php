@@ -1007,16 +1007,20 @@ class CertificateService
     protected function mapLevel(float $score, string $type, string $framework): string
     {
         // 1. Try DB (cached for 60 min)
-        $thresholds = \Illuminate\Support\Facades\Cache::remember(
-            'cefr_actfl_thresholds',
-            3600,
-            fn () => \App\Models\CefrActflThreshold::active()
-                ->orderBy('skill_group')
-                ->orderBy('framework')
-                ->orderBy('sort_order')
-                ->get()
-                ->groupBy(['skill_group', 'framework'])
-        );
+        try {
+            $thresholds = \Illuminate\Support\Facades\Cache::remember(
+                'cefr_actfl_thresholds',
+                3600,
+                fn () => \App\Models\CefrActflThreshold::active()
+                    ->orderBy('skill_group')
+                    ->orderBy('framework')
+                    ->orderBy('sort_order')
+                    ->get()
+                    ->groupBy(['skill_group', 'framework'])
+            );
+        } catch (\Throwable $e) {
+            $thresholds = [];
+        }
 
         $rows = $thresholds[$type][$framework] ?? null;
 

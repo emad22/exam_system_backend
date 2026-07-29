@@ -50,6 +50,13 @@ class ReportController extends Controller
                 ->get()
                 ->sum('levels_count');
 
+            $cefr = app(\App\Services\CertificateService::class)->mapToCefr($attempt->overall_score ?? 0, 'core');
+            $actfl = app(\App\Services\CertificateService::class)->mapToActfl($attempt->overall_score ?? 0, 'core');
+            $attempt->efficiency_level = $cefr;
+            $attempt->cefr_level = $cefr;
+            $attempt->actfl_level = $actfl;
+            $attempt->cefr_actfl_level = "{$cefr} / {$actfl}";
+
             return $attempt;
         });
         return response()->json($attempts);
@@ -100,6 +107,12 @@ class ReportController extends Controller
             ->get()
             ->sum('levels_count');
 
+        $cefr = app(\App\Services\CertificateService::class)->mapToCefr($attempt->overall_score ?? 0, 'core');
+        $actfl = app(\App\Services\CertificateService::class)->mapToActfl($attempt->overall_score ?? 0, 'core');
+        $attempt->efficiency_level = $cefr;
+        $attempt->cefr_level = $cefr;
+        $attempt->actfl_level = $actfl;
+        $attempt->cefr_actfl_level = "{$cefr} / {$actfl}";
 
         return response()->json($attempt);
     }
