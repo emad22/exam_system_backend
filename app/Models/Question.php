@@ -2,14 +2,14 @@
 
 namespace App\Models;
 
-use App\Traits\LogsActivity;
+//use App\Traits\LogsActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Question extends Model
 {
-    use LogsActivity;
+   // use LogsActivity;
 
     protected $appends = ['media_url', 'audio_url', 'image_url', 'pdf_url'];
 
