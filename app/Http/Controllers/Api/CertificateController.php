@@ -192,6 +192,14 @@ class CertificateController extends Controller
             });
         }
 
+        if ($request->date_from) {
+            $query->whereDate('issue_date', '>=', $request->date_from);
+        }
+
+        if ($request->date_to) {
+            $query->whereDate('issue_date', '<=', $request->date_to);
+        }
+
         return response()->json($query->latest()->paginate(20));
     }
 
