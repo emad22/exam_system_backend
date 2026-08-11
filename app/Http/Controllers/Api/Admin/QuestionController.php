@@ -308,6 +308,7 @@ class QuestionController extends Controller
                             'dir' => $opt['dir'] ?? 'ltr',
                             'image_path' => $optImagePath,
                             'sound_path' => $optAudioPath,
+                            'font_size' => isset($opt['font_size']) && $opt['font_size'] !== '' ? (int) $opt['font_size'] : null,
                         ]);
                     }
                 }
@@ -682,7 +683,7 @@ class QuestionController extends Controller
                                 'dir' => $opt['dir'] ?? 'ltr',
                                 'image_path' => $optImagePath,
                                 'sound_path' => $optAudioPath,
-
+                                'font_size' => isset($opt['font_size']) && $opt['font_size'] !== '' ? (int) $opt['font_size'] : null,
                             ]);
                         } else {
                             $qInstance->options()->create([
@@ -692,6 +693,7 @@ class QuestionController extends Controller
                                 'dir' => $opt['dir'] ?? 'ltr',
                                 'image_path' => $optImagePath,
                                 'sound_path' => $optAudioPath,
+                                'font_size' => isset($opt['font_size']) && $opt['font_size'] !== '' ? (int) $opt['font_size'] : null,
                             ]);
                         }
                     }

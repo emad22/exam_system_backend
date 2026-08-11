@@ -15,6 +15,7 @@ class QuestionOption extends Model
         'image_path',
         'sound_path',
         'dir',
+        'font_size',
     ];
 
     protected $casts = [

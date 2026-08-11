@@ -103,6 +103,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             $student = Student::create([
                 'user_id' => $user->id,
                 'student_code' => $studentCode,
+                'institution_code' => isset($data['institution_code']) ? (trim((string)$data['institution_code']) ?: null) : null,
                 'partner_id' => $this->partnerId,
                 'come_from' => $data['come_from'] ?? null,
                 'student_type' => $data['student_type'] ?? null,
@@ -129,6 +130,7 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             'first_name' => 'required|string',
             'last_name' => 'required|string',
             'exam_category_id' => 'nullable|exists:exam_categories,id',
+            'institution_code' => 'nullable|string|max:100',
         ];
     }
 

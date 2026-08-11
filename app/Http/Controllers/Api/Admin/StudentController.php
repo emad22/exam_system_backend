@@ -41,6 +41,9 @@ class StudentController extends Controller
         if ($request->has('student_code') && trim((string) $request->input('student_code')) === '') {
             $request->merge(['student_code' => null]);
         }
+        if ($request->has('institution_code') && trim((string) $request->input('institution_code')) === '') {
+            $request->merge(['institution_code' => null]);
+        }
 
         // dd($request->all());
         $validated = $request->validate([
@@ -56,7 +59,8 @@ class StudentController extends Controller
             'religion' => 'nullable|string|max:255',
             'occupation' => 'nullable|string|max:255',
 
-            'student_code' => 'nullable|string|max:50|unique:students',
+            'student_code' => 'nullable|string|max:50',
+            'institution_code' => 'nullable|string|max:100',
             'come_from' => 'nullable|string|max:255',
             'student_type' => 'nullable|string|max:50',
             'year_of_arabic' => 'nullable|integer',
@@ -126,6 +130,7 @@ class StudentController extends Controller
         $student = Student::create([
             'user_id' => $user->id,
             'student_code' => $validated['student_code'] ?? null,
+            'institution_code' => $validated['institution_code'] ?? null,
             'come_from' => $validated['come_from'] ?? null,
             'student_type' => $validated['student_type'] ?? null,
             'year_of_arabic' => $validated['year_of_arabic'] ?? null,
@@ -159,6 +164,9 @@ class StudentController extends Controller
         if ($request->has('student_code') && trim((string) $request->input('student_code')) === '') {
             $request->merge(['student_code' => null]);
         }
+        if ($request->has('institution_code') && trim((string) $request->input('institution_code')) === '') {
+            $request->merge(['institution_code' => null]);
+        }
 
         $validated = $request->validate([
             'first_name' => 'sometimes|required|string|max:255',
@@ -172,7 +180,8 @@ class StudentController extends Controller
             'country' => 'sometimes|nullable|string|max:255',
             'religion' => 'sometimes|nullable|string|max:255',
             'occupation' => 'sometimes|nullable|string|max:255',
-            'student_code' => 'sometimes|nullable|string|max:50|unique:students,student_code,' . $student->id,
+            'student_code' => 'sometimes|nullable|string|max:50',
+            'institution_code' => 'sometimes|nullable|string|max:100',
             'come_from' => 'sometimes|nullable|string|max:255',
             'student_type' => 'sometimes|nullable|string|max:50',
             'year_of_arabic' => 'sometimes|nullable|integer',
@@ -206,6 +215,7 @@ class StudentController extends Controller
             'exam_category_id',
             'student_type',
             'student_code',
+            'institution_code',
             'come_from',
             'year_of_arabic',
             'is_continue',
@@ -655,6 +665,7 @@ class StudentController extends Controller
             'religion',
             'occupation',
             'student_code',
+            'institution_code',
             'come_from',
             'student_type',
             'year_of_arabic',
@@ -688,6 +699,7 @@ class StudentController extends Controller
                 'None',
                 'Student',
                 'STU-101',
+                'INST-456',
                 'Direct',
                 'Standard',
                 '2024',
