@@ -110,6 +110,12 @@ class CertificateController extends Controller
             // non-fatal — frontend will fall back to legacy layout
         }
 
+        $template = $certificate->template ?: null;
+        $dateFormat = $service->getCertificateDateFormat($template);
+        $latestFinishedAt = $certificate->attempt->attemptSkills()->whereNotNull('finished_at')->max('finished_at');
+        $overallDateCarbon = $latestFinishedAt ? \Carbon\Carbon::parse($latestFinishedAt) : ($certificate->issue_date ?: now());
+        $overallDate = $service->formatCertificateDate($overallDateCarbon, $dateFormat);
+
         return response()->json([
             'valid' => true,
             'student_name' => $certificate->student->user->first_name . ' ' . $certificate->student->user->last_name,
@@ -118,17 +124,17 @@ class CertificateController extends Controller
             'total_points' => round(($certificate->score / 100) * 900),
             'cefr' => $service->mapToCefr($certificate->score),
             'actfl' => $service->mapToActfl($certificate->score),
-            'issue_date' => $certificate->issue_date->format('M d, Y'),
+            'issue_date' => $overallDate,
             'certificate_number' => $certificate->certificate_number,
             'rendered_html' => $renderedHtml,
-            'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function ($s) use ($service) {
+            'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function ($s) use ($service, $dateFormat, $overallDateCarbon, $overallDate) {
                 return [
                     'name' => $s->skill->name,
                     'score' => $s->score,
                     'points' => round(($s->score / 100) * 900),
                     'cefr' => $service->mapToCefr($s->score),
                     'actfl' => $service->mapToActfl($s->score),
-                    'date' => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y')
+                    'date' => $service->formatCertificateDate($s->finished_at ?: $overallDateCarbon, $dateFormat)
                 ];
             })
         ]);

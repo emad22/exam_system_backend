@@ -28,14 +28,14 @@ class ReportController extends Controller
         $attempts = ExamAttempt::with(['student.user', 'user', 'exam', 'attemptSkills.skill' => function ($query) {
             $query->withCount('levels');
         }])
-            ->whereIn('status', ['completed', 'ongoing'])
+            ->whereIn('status', ['completed', 'ongoing', 'paused'])
             ->whereHas('student', function ($q) use ($partnerId) {
                 $q->where('partner_id', $partnerId)
                       ->where('role', 'student');
             })
 
             ->orderBy('updated_at', 'desc')
-            ->paginate(30);
+            ->paginate($request->input('per_page', 500));
 
         //to get avialable skills for each ExamAttemp
 

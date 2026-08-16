@@ -335,24 +335,24 @@ class ProductiveSkillsController extends Controller
             );
         }
 
-        // ── 6. Refresh the attempt's overall_score ─────────────────────────
-        // Average all skill scores that belong to the exam's skill list
-        $skillIds = DB::table('exam_skill')
-            ->where('exam_id', $attempt->exam_id)
-            ->pluck('skill_id')
+        // ── 6. Refresh the attempt's overall_score (Core Skills Only) ───────
+        $coreKeywords = ['listen', 'read', 'struct', 'grammar'];
+        $coreSkillIds = \App\Models\Skill::where(function ($query) use ($coreKeywords) {
+            foreach ($coreKeywords as $word) {
+                $query->orWhereRaw('LOWER(name) LIKE ?', ['%' . strtolower($word) . '%']);
+            }
+        })->pluck('id')->toArray();
+
+        $coreScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+            ->whereIn('skill_id', $coreSkillIds)
+            ->pluck('score')
+            ->map(fn ($s) => (float) $s)
             ->toArray();
 
-        if (!empty($skillIds)) {
-            $skillScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-                ->whereIn('skill_id', $skillIds)
-                ->pluck('score')
-                ->toArray();
+        $overall = count($coreScores) > 0
+            ? round(array_sum($coreScores) / count($coreScores), 2)
+            : 0;
 
-            $overall = count($skillScores) > 0
-                ? round(array_sum($skillScores) / count($skillIds), 2)
-                : 0;
-
-            $attempt->update(['overall_score' => $overall]);
-        }
+        $attempt->update(['overall_score' => $overall]);
     }
 }

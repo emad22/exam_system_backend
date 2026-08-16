@@ -89,36 +89,12 @@ class CertificateService
             throw new \Exception("No certificate template found. Please create one in Admin panel.");
         }
 
-        // Calculate core overall score strictly from the 3 core skills (Listening, Reading, Structure)
-        $coreKeywords = ['listen', 'read', 'struct', 'grammar'];
-        $coreSkillIds = \App\Models\Skill::where(function ($query) use ($coreKeywords) {
-            foreach ($coreKeywords as $word) {
-                $query->orWhereRaw('LOWER(name) LIKE ?', ['%' . strtolower($word) . '%']);
-            }
-        })->pluck('id')->toArray();
-
-        $coreScores = $attempt->attemptSkills()
-            ->whereIn('skill_id', $coreSkillIds)
-            ->pluck('score')
-            ->filter(fn ($s) => !is_null($s))
-            ->map(fn ($s) => (float) $s)
-            ->values()
-            ->toArray();
-
-        $coreOverallScore = count($coreScores) > 0
-            ? round(array_sum($coreScores) / count($coreScores), 2)
-            : round((float) ($attempt->overall_score ?? 0), 2);
-
-        // Ensure attempt->overall_score is updated to the core overall score
-        if (abs(($attempt->overall_score ?? 0) - $coreOverallScore) > 0.001) {
-            $attempt->update(['overall_score' => $coreOverallScore]);
-        }
-
         if (!$certificate) {
             // 3. Prepare Data
             $certificateNumber = $this->generateCertificateNumber();
             $verificationCode = Str::random(12);
             $student = $attempt->student;
+            $score = $attempt->overall_score;
 
             // 4. Create the Record
             $certificate = Certificate::create([
@@ -126,25 +102,19 @@ class CertificateService
                 'exam_attempt_id' => $attempt->id,
                 'template_id' => $template->id,
                 'certificate_number' => $certificateNumber,
-                'score' => $coreOverallScore,
+                'score' => $score,
                 'issue_date' => now(),
                 'verification_code' => $verificationCode,
             ]);
         } else {
-            // Update the template_id and score on the existing certificate
-            $certificate->update([
-                'template_id' => $template->id,
-                'score' => $coreOverallScore,
-            ]);
+            // Update the template_id on the existing certificate to match what we used
+            $certificate->update(['template_id' => $template->id]);
         }
 
         // 5. Generate PDF
         $pdfPath = $this->renderAndSavePdf($certificate, $template, $attempt);
 
-        $certificate->update([
-            'file_path' => $pdfPath,
-            'score' => $coreOverallScore,
-        ]);
+        $certificate->update(['file_path' => $pdfPath]);
 
         return $certificate;
     }
@@ -179,36 +149,6 @@ class CertificateService
         }
 
         return round(array_sum($values) / count($values), 2);
-    }
-
-    /**
-     * Compute the overall percentage score AND the /900-normalized points from
-     * the SAME weighted source (sum of core points / sum of core max points),
-     * so the two numbers shown on certificates are always mathematically consistent.
-     *
-     * @return array{score: float, normalized900: float, totalPoints: int, totalMaxPoints: int}
-     */
-    protected function computeOverallFromCoreSkills(array $skillsData, ?float $fallbackScore = null): array
-    {
-        $coreSkills     = array_filter($skillsData, fn($s) => $s['is_core'] ?? false);
-        $totalPoints    = array_sum(array_column($coreSkills, 'points'));
-        $totalMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
-
-        if ($totalMaxPoints > 0) {
-            $overallScore = round(($totalPoints / $totalMaxPoints) * 100, 1);
-            $overallNormalized900 = round(($totalPoints / $totalMaxPoints) * 900, 2);
-        } else {
-            // No core skills with points — fall back to the attempt's stored score
-            $overallScore = round((float) ($fallbackScore ?? 0), 1);
-            $overallNormalized900 = round(($overallScore / 100) * 900, 2);
-        }
-
-        return [
-            'score' => $overallScore,
-            'normalized900' => $overallNormalized900,
-            'totalPoints' => $totalPoints,
-            'totalMaxPoints' => $totalMaxPoints,
-        ];
     }
 
     protected function generateCertificateNumber()
@@ -293,13 +233,17 @@ class CertificateService
             return $aIndex - $bIndex;
         });
 
-        // Overall score % and /900 points are now derived from the SAME weighted
-        // source (sum of core points / sum of core max points) so they never disagree.
-        $overallCalc = $this->computeOverallFromCoreSkills($skillsData, $attempt->overall_score ?? null);
-        $overallScore = $overallCalc['score'];
-        $overallNormalized900 = $overallCalc['normalized900'];
-        $totalPoints    = $overallCalc['totalPoints'];
-        $totalMaxPoints = $overallCalc['totalMaxPoints'];
+        $coreSkillScores = array_values(array_filter(array_map(fn($s) => ($s['is_core'] ?? false) ? ((float) ($s['score'] ?? 0)) : null, $skillsData)));
+        $overallScore = $this->calculateCoreOverallScoreFromSkillScores($coreSkillScores);
+        if ($overallScore === 0.0 && isset($attempt->overall_score)) {
+            $overallScore = (float) $attempt->overall_score;
+        }
+        // Overall points/max are computed from core skills only
+        $coreSkills     = array_filter($skillsData, fn($s) => $s['is_core']);
+        $totalPoints    = array_sum(array_column($coreSkills, 'points'));
+        $totalMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
+        // Normalize to /900 scale: e.g. 1600/2700 → 533.33/900
+        $overallNormalized900 = $totalMaxPoints > 0 ? round(($totalPoints / $totalMaxPoints) * 900, 2) : 0;
         $issueDate = $tableDate;  // For skills table
         $issueDatePlaceholder = $placeholderDate;  // For {date} placeholder
 
@@ -583,10 +527,13 @@ class CertificateService
             return $aIndex - $bIndex;
         });
 
-        // Overall score % and /900 points derived from the SAME weighted source.
-        $overallCalc = $this->computeOverallFromCoreSkills($skillsData, $attempt->overall_score ?? null);
-        $overallScore = $overallCalc['score'];
-        $overallNormalized900 = $overallCalc['normalized900'];
+        $overallScore = $attempt->overall_score ?? 0;
+        // Overall computed from core skills only
+        $coreSkills     = array_filter($skillsData, fn($s) => $s['is_core']);
+        $totalPoints    = array_sum(array_column($coreSkills, 'points'));
+        $totalMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
+        // Normalize to /900 scale: e.g. 1600/2700 → 533.33/900
+        $overallNormalized900 = $totalMaxPoints > 0 ? round(($totalPoints / $totalMaxPoints) * 900, 2) : 0;
         $issueDate    = $overallDate;  // For skills table
 
         // Skills table HTML: core → overall → extra
@@ -982,10 +929,16 @@ class CertificateService
             return $aIndex - $bIndex;
         });
 
-        // Overall score % and /900 points derived from the SAME weighted source.
-        $overallCalc = $this->computeOverallFromCoreSkills($skills, $attempt->overall_score ?? null);
-        $overallScore = $overallCalc['score'];
-        $overallNormalized900 = $overallCalc['normalized900'];
+        $coreSkillScores = array_values(array_filter(array_map(fn($s) => ($s['is_core'] ?? false) ? ((float) ($s['score'] ?? 0)) : null, $skills)));
+        $overallScore = $this->calculateCoreOverallScoreFromSkillScores($coreSkillScores);
+        if ($overallScore === 0.0 && isset($attempt->overall_score)) {
+            $overallScore = (float) $attempt->overall_score;
+        }
+        $coreSkills     = array_filter($skills, fn($s) => $s['is_core']);
+        $overallPoints    = array_sum(array_column($coreSkills, 'points'));
+        $overallMaxPoints = array_sum(array_column($coreSkills, 'max_points'));
+        // Normalize to /900 scale: e.g. 1600/2700 → 533.33/900
+        $overallNormalized900 = $overallMaxPoints > 0 ? round(($overallPoints / $overallMaxPoints) * 900, 2) : 0;
         $issueDate = $overallDate;
 
         $rows = '';
@@ -1045,47 +998,25 @@ class CertificateService
 
     /**
      * Check if a skill is core (participates in overall score).
-     * The 3 core skills are: Listening, Reading, Structure (Grammar).
+     * Core skills are those WITHOUT a custom max_points in exam_skill pivot,
+     * meaning they follow level-based scoring (9 levels × 100 = 900).
      */
-    public function isCoreSkill($attemptSkill): bool
+    protected function isCoreSkill($attemptSkill): bool
     {
         if (!$attemptSkill) {
-            return false;
-        }
-
-        $skillName = $attemptSkill->skill->name ?? '';
-        if (empty($skillName) && !empty($attemptSkill->skill_id)) {
-            try {
-                $skill = \App\Models\Skill::find($attemptSkill->skill_id);
-                $skillName = $skill->name ?? '';
-            } catch (\Throwable $e) {
-            }
-        }
-
-        // A core skill must match one of the 3 primary skills: Listening, Reading, Structure (Grammar)
-        if (empty($skillName) || !preg_match('/(listen|read|struct|grammar)/i', $skillName)) {
-            return false;
+            return true; // fallback
         }
 
         try {
-            $examId = $attemptSkill->attempt->exam_id ?? null;
-            $skillId = $attemptSkill->skill_id ?? null;
+            $examSkillRow = \App\Models\ExamSkill::where('exam_id', $attemptSkill->attempt->exam_id)
+                ->where('skill_id', $attemptSkill->skill_id)
+                ->first();
 
-            if ($examId && $skillId) {
-                $examSkillRow = \App\Models\ExamSkill::where('exam_id', $examId)
-                    ->where('skill_id', $skillId)
-                    ->first();
-
-                // If max_points is set and > 0 → extra skill (not core)
-                if ($examSkillRow && $examSkillRow->max_points > 0) {
-                    return false;
-                }
-            }
+            // If max_points is set and > 0 → extra skill (not core)
+            return !($examSkillRow && $examSkillRow->max_points > 0);
         } catch (\Throwable $e) {
-            // If DB query fails or in mock context, trust the verified core skill name
+            return true;
         }
-
-        return true;
     }
 
     /**
@@ -1189,18 +1120,15 @@ class CertificateService
      */
     protected function mapLevel(float $score, string $type, string $framework): string
     {
-        // Scale score percentage (0-100) to /900 points if needed
-        $value = ($score <= 100) ? round(($score / 100) * 900) : round($score);
-
         // 1. Try DB (cached for 60 min)
         try {
             $thresholds = \Illuminate\Support\Facades\Cache::remember(
-                'cefr_actfl_thresholds_v2',
+                'cefr_actfl_thresholds',
                 3600,
                 fn () => \App\Models\CefrActflThreshold::active()
                     ->orderBy('skill_group')
                     ->orderBy('framework')
-                    ->orderBy('min_score', 'desc')
+                    ->orderBy('sort_order')
                     ->get()
                     ->groupBy(['skill_group', 'framework'])
             );
@@ -1211,13 +1139,13 @@ class CertificateService
         $rows = $thresholds[$type][$framework] ?? null;
 
         if ($rows && $rows->isNotEmpty()) {
-            $sortedRows = $rows->sortByDesc('min_score');
-            foreach ($sortedRows as $row) {
+            $value = ($type === 'core') ? round(($score / 100) * 900) : round($score);
+            foreach ($rows as $row) {
                 if ($value >= $row->min_score) {
                     return $row->level_label;
                 }
             }
-            return $sortedRows->last()->level_label;
+            return $rows->last()->level_label;
         }
 
         // 2. Fallback to config file
@@ -1226,6 +1154,9 @@ class CertificateService
         if (empty($configThresholds)) {
             return 'N/A';
         }
+
+        // $value = ($type === 'core') ? round(($score / 100) * 900) : round($score);
+        $value = round(  ($score / 100 ) * 900  );
 
         foreach ($configThresholds as $minPoints => $label) {
             if ($value >= $minPoints) {

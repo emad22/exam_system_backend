@@ -50,15 +50,27 @@ class ScoringService
     }
 
     /**
-     * Store an uploaded audio file for speaking questions and return the path.
+     * Store uploaded media file(s) for speaking/writing questions and return the path (or JSON array of paths).
      */
     public function storeAudioFile(Request $request, string $attemptId, int $answerIndex): ?string
     {
+        // Speaking: single audio file
         if ($request->hasFile("answers.{$answerIndex}.audio_file")) {
             return $request
                 ->file("answers.{$answerIndex}.audio_file")
                 ->store("attempts/{$attemptId}/answers", 'public');
         }
+
+        // Writing: multiple PDF files — store as JSON array
+        if ($request->hasFile("answers.{$answerIndex}.pdf_files")) {
+            $paths = [];
+            foreach ($request->file("answers.{$answerIndex}.pdf_files") as $file) {
+                $paths[] = $file->store("attempts/{$attemptId}/answers", 'public');
+            }
+            return json_encode($paths, JSON_UNESCAPED_SLASHES);
+        }
+
+        // Legacy: single PDF file fallback
         if ($request->hasFile("answers.{$answerIndex}.pdf_file")) {
             return $request
                 ->file("answers.{$answerIndex}.pdf_file")

@@ -424,8 +424,17 @@ class ExamProgressController extends Controller
 
         $mediaAnswer = null;
         if ($request->hasFile('audio_file')) {
+            // Speaking: single audio file
             $mediaAnswer = $request->file('audio_file')->store("attempts/{$attempt->id}/answers", 'public');
+        } elseif ($request->hasFile('pdf_files')) {
+            // Writing: multiple PDF files — store paths as JSON array
+            $paths = [];
+            foreach ($request->file('pdf_files') as $file) {
+                $paths[] = $file->store("attempts/{$attempt->id}/answers", 'public');
+            }
+            $mediaAnswer = json_encode($paths, JSON_UNESCAPED_SLASHES);
         } elseif ($request->hasFile('pdf_file')) {
+            // Legacy / single PDF fallback
             $mediaAnswer = $request->file('pdf_file')->store("attempts/{$attempt->id}/answers", 'public');
         }
 

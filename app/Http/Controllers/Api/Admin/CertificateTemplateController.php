@@ -122,9 +122,10 @@ class CertificateTemplateController extends Controller
         $this->authorize('view', $certificate_template);
 
         // Dummy data for preview
+        $dateFormat = app(\App\Services\CertificateService::class)->getCertificateDateFormat($certificate_template);
         $placeholders = [
             '{name}' => 'Sample Student Name',
-            '{date}' => now()->format('M d, Y'),
+            '{date}' => app(\App\Services\CertificateService::class)->formatCertificateDate(now(), $dateFormat),
             '{score}' => '82.7',
             '{total_points}' => '745',
             '{cefr}' => 'C1.2',

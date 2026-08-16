@@ -7,6 +7,7 @@ use App\Models\ExamAttempt;
 use App\Models\Skill;
 use Illuminate\Http\Request;
 use App\Models\Student;
+use App\Models\ExamSkill;
 
 class PartnerReportController extends Controller
 {
@@ -27,9 +28,9 @@ class PartnerReportController extends Controller
             $query->withCount('levels');
         }])
             ->whereIn('student_id', $studentIds)
-            ->whereIn('status', ['completed', 'ongoing'])
+            ->whereIn('status', ['completed', 'ongoing', 'paused'])
             ->orderBy('updated_at', 'desc')
-            ->paginate(30);
+            ->paginate($request->input('per_page', 500));
 
         // to get available skills for each ExamAttempt
         $attempts->getCollection()->transform(function ($attempt) {
@@ -44,6 +45,15 @@ class PartnerReportController extends Controller
                 ->withCount('levels')
                 ->get()
                 ->sum('levels_count');
+
+            $examSkills = ExamSkill::where('exam_id', $attempt->exam_id)
+                ->get()
+                ->keyBy('skill_id');
+
+            foreach ($attempt->attemptSkills as $attemptSkill) {
+                $examSkill = $examSkills->get($attemptSkill->skill_id);
+                $attemptSkill->max_points = $examSkill?->max_points;
+            }
 
             $cefr = app(\App\Services\CertificateService::class)->mapToCefr($attempt->overall_score ?? 0, 'core');
             $actfl = app(\App\Services\CertificateService::class)->mapToActfl($attempt->overall_score ?? 0, 'core');
@@ -102,6 +112,15 @@ class PartnerReportController extends Controller
             ->withCount('levels')
             ->get()
             ->sum('levels_count');
+
+        $examSkills = ExamSkill::where('exam_id', $attempt->exam_id)
+            ->get()
+            ->keyBy('skill_id');
+
+        foreach ($attempt->attemptSkills as $attemptSkill) {
+            $examSkill = $examSkills->get($attemptSkill->skill_id);
+            $attemptSkill->max_points = $examSkill?->max_points;
+        }
 
         $cefr = app(\App\Services\CertificateService::class)->mapToCefr($attempt->overall_score ?? 0, 'core');
         $actfl = app(\App\Services\CertificateService::class)->mapToActfl($attempt->overall_score ?? 0, 'core');

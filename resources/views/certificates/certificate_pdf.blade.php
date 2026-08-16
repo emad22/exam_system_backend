@@ -300,7 +300,7 @@
                     </tr>
                 @endforeach
                 <tr class="overall-row">
-                    <td>Overall Score</td>
+                    <td>Overall Score (Sections Listening, Reading &amp; Structure)</td>
                     <td>{{ $totalPoints }}/900</td>
                     <td>{{ number_format($score, 1) }}%</td>
                     <td>{{ $cefr }}</td>

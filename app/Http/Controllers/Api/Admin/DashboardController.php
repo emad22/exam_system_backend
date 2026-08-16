@@ -52,4 +52,67 @@ class DashboardController extends Controller
 
         return \App\Http\Resources\DashboardResource::make($stats);
     }
+
+    /**
+     * Get list of students currently taking exams live
+     */
+    public function liveStudents(Request $request)
+    {
+        try {
+            $liveStudents = ExamAttempt::where('status', 'ongoing')
+                ->where('updated_at', '>=', now()->subMinutes(10))
+                ->select(['id', 'student_id', 'exam_id', 'status', 'created_at', 'updated_at'])
+                ->with([
+                    'student' => function($query) {
+                        $query->select(['id', 'user_id']);
+                    },
+                    'student.user' => function($query) {
+                        $query->select(['id', 'first_name', 'last_name', 'email']);
+                    },
+                    'exam' => function($query) {
+                        $query->select(['id', 'title']);
+                    }
+                ])
+                ->orderBy('updated_at', 'desc')
+                ->get();
+
+            $formattedStudents = $liveStudents->map(function($attempt) {
+                $firstName = $attempt->student?->user?->first_name ?? '';
+                $lastName = $attempt->student?->user?->last_name ?? '';
+                $studentName = trim($firstName . ' ' . $lastName) ?: 'Unknown Student';
+                $studentEmail = $attempt->student?->user?->email ?? 'N/A';
+                $examTitle = $attempt->exam?->title ?? 'Unknown Exam';
+                $createdAt = $attempt->created_at;
+                $now = now();
+                $durationMinutes = $createdAt ? $createdAt->diffInMinutes($now) : 0;
+
+                return [
+                    'id' => $attempt->id,
+                    'student_id' => $attempt->student_id,
+                    'student_name' => $studentName,
+                    'student_email' => $studentEmail,
+                    'exam_title' => $examTitle,
+                    'exam_level' => 'N/A',
+                    'started_at' => $createdAt,
+                    'last_activity' => $attempt->updated_at,
+                    'duration_minutes' => $durationMinutes,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $formattedStudents,
+                'total' => $formattedStudents->count(),
+                'timestamp' => now()
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error fetching live students: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'data' => [],
+                'total' => 0
+            ], 500);
+        }
+    }
 }
