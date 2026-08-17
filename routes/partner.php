@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Partner\PartnerDashboardController;
 use App\Http\Controllers\Api\Partner\PartnerReportController;
+use App\Http\Controllers\Api\Partner\PartnerStudentController;
 use App\Http\Controllers\Api\CertificateController;
 
 /*
@@ -23,6 +24,9 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\PartnerRole::class])
 
         // Dashboard Stats
         Route::get('/stats', [PartnerDashboardController::class, 'index'])->name('stats');
+
+        // Students
+        Route::get('/students', [PartnerStudentController::class, 'index'])->name('students.index');
 
         // Reports
         Route::get('/reports', [PartnerReportController::class, 'index'])->name('reports.index');
