@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Partner;
 use App\Http\Controllers\Controller;
 use App\Models\Student;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class PartnerStudentController extends Controller
 {
@@ -41,18 +42,43 @@ class PartnerStudentController extends Controller
         if ($request->filled('search')) {
             $search = trim($request->search);
             $query->where(function ($q) use ($search) {
-                $q->where('student_code', 'like', "%{$search}%")
+                $q->where('id', $search)
+                  ->orWhere('student_code', 'like', "%{$search}%")
                   ->orWhere('institution_code', 'like', "%{$search}%")
                   ->orWhereHas('user', function ($uq) use ($search) {
-                      $uq->where('first_name', 'like', "%{$search}%")
+                      $uq->where('id', $search)
+                         ->orWhere('first_name', 'like', "%{$search}%")
                          ->orWhere('last_name', 'like', "%{$search}%")
+                         ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'like', "%{$search}%")
                          ->orWhere('username', 'like', "%{$search}%")
                          ->orWhere('email', 'like', "%{$search}%");
                   });
             });
         }
 
-        $perPage = (int) $request->input('per_page', 20);
+        if ($request->filled('from_date')) {
+            $fromDate = $request->from_date;
+            $query->where(function ($q) use ($fromDate) {
+                $q->whereDate('registration_date', '>=', $fromDate)
+                  ->orWhere(function ($sub) use ($fromDate) {
+                      $sub->whereNull('registration_date')
+                          ->whereDate('created_at', '>=', $fromDate);
+                  });
+            });
+        }
+
+        if ($request->filled('to_date')) {
+            $toDate = $request->to_date;
+            $query->where(function ($q) use ($toDate) {
+                $q->whereDate('registration_date', '<=', $toDate)
+                  ->orWhere(function ($sub) use ($toDate) {
+                      $sub->whereNull('registration_date')
+                          ->whereDate('created_at', '<=', $toDate);
+                  });
+            });
+        }
+
+        $perPage = (int) $request->input('per_page', 50);
         $students = $query->paginate($perPage);
 
         return response()->json($students);
