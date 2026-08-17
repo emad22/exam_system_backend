@@ -29,7 +29,20 @@ class QuestionController extends Controller
         }
 
         if ($request->has('level_id') && $request->level_id !== 'null' && $request->level_id !== null) {
-            $query->where('level_id', $request->level_id);
+            $levelVal = $request->level_id;
+            $query->where(function($q) use ($levelVal) {
+                $q->where('level_id', $levelVal)
+                  ->orWhereHas('level', function($lq) use ($levelVal) {
+                      $lq->where('level_number', $levelVal);
+                  });
+            });
+        }
+
+        if ($request->has('level_number') && $request->level_number !== 'null' && $request->level_number !== null) {
+            $levelNum = $request->level_number;
+            $query->whereHas('level', function($lq) use ($levelNum) {
+                $lq->where('level_number', $levelNum);
+            });
         }
 
         if ($request->boolean('unassigned')) {

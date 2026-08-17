@@ -29,7 +29,7 @@ class StudentController extends Controller
      */
     public function index(Request $request)
     {
-        $students = Student::with(['user', 'package', 'attempts'])->withCount('attempts')->paginate(30);
+        $students = Student::with(['user', 'package', 'attempts'])->withCount('attempts')->orderBy('id', 'desc')->paginate(30);
         return response()->json($students);
     }
 
