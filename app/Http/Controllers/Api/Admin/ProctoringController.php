@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Proctoring\ReviewViolationRequest;
+use App\Http\Requests\Admin\Proctoring\UpdateStatusRequest;
+use App\Http\Requests\Admin\Proctoring\BulkDestroyRequest;
 use App\Models\ExamAttemptLevel;
 use App\Models\ProctoringSession;
 use App\Models\ExamViolation;
 use App\Models\ProctoringReport;
 use App\Models\ExamAttempt;
-use App\Http\Controllers\Controller;
 use App\Services\AttemptService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -256,15 +259,11 @@ class ProctoringController extends Controller
     /**
      * مراجعة انتهاك
      */
-    public function reviewViolation($violationId, Request $request)
+    public function reviewViolation($violationId, ReviewViolationRequest $request)
     {
         $violation = ExamViolation::findOrFail($violationId);
 
-        $validated = $request->validate([
-            'status' => 'required|in:confirmed,dismissed,suspicious',
-            'proctor_notes' => 'nullable|string|max:1000',
-            'action_taken' => 'nullable|in:warning,pause_exam,terminate_exam,report_to_instructor'
-        ]);
+        $validated = $request->validated();
 
         $violation->update([
             'status' => $validated['status'],
@@ -334,14 +333,11 @@ class ProctoringController extends Controller
     /**
      * تحديث حالة الجلسة
      */
-    public function updateStatus($sessionId, Request $request)
+    public function updateStatus($sessionId, UpdateStatusRequest $request)
     {
         $session = ProctoringSession::with('examAttempt')->findOrFail($sessionId);
 
-        $validated = $request->validate([
-            'status' => 'required|in:active,paused,ended,cancelled',
-            'final_verdict' => 'nullable|in:pass,fail,review_required'
-        ]);
+        $validated = $request->validated();
 
         $newStatus = $validated['status'];
 
@@ -689,12 +685,9 @@ class ProctoringController extends Controller
     /**
      * Bulk delete proctoring sessions
      */
-    public function bulkDestroy(Request $request)
+    public function bulkDestroy(BulkDestroyRequest $request)
     {
-        $validated = $request->validate([
-            'ids' => 'required|array',
-            'ids.*' => 'required|integer|exists:proctoring_sessions,id',
-        ]);
+        $validated = $request->validated();
 
         // حذف البيانات المرتبطة بالجلسات أولاً
         ExamViolation::whereIn('proctoring_session_id', $validated['ids'])->delete();

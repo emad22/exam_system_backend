@@ -132,6 +132,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
         Route::get('/', [Admin\ReportController::class, 'index'])->name('index');
         Route::get('/{attempt}', [Admin\ReportController::class, 'show'])->name('show');
         Route::post('/{attempt}/reset', [Admin\ReportController::class, 'resetAttempt'])->name('reset');
+        Route::post('/{attempt}/force-complete', [Admin\ReportController::class, 'forceComplete'])->name('force-complete');
         Route::post('/{attempt}/skills/{skill}/reset', [Admin\ReportController::class, 'resetAttemptSkill'])->name('reset-skill');
         Route::post('/{attempt}/skills/{skill}/reset-last-level', [Admin\ReportController::class, 'resetAttemptLastLevel'])->name('reset-last-level');
     });
@@ -163,6 +164,11 @@ Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admi
     Route::apiResource('packages', Admin\PackageController::class)->names('packages');
     Route::apiResource('exam-categories', Admin\ExamCategoryController::class)->names('exam-categories');
     Route::apiResource('system-requirements', Admin\SystemRequirementController::class)->names('system-requirements');
+
+    // Rubrics Management (Writing & Speaking Evaluation Criteria)
+    Route::get('/rubrics/active', [Admin\RubricCriterionController::class, 'active'])->name('rubrics.active');
+    Route::post('/rubrics/reset-default', [Admin\RubricCriterionController::class, 'resetDefault'])->name('rubrics.reset-default');
+    Route::apiResource('rubrics', Admin\RubricCriterionController::class)->names('rubrics');
 
     // Certificates & Templates
     Route::get('/certificates', [CertificateController::class, 'adminIndex'])->name('certificates.index');

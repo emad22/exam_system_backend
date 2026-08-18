@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\Proctoring\ProctoringController;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\RegisterRequest;
 use App\Models\ProctoringSession;
 use App\Models\Student;
 use App\Models\User;
@@ -14,19 +15,9 @@ use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
-    public function register(Request $request)
+    public function register(RegisterRequest $request)
     {
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'username' => 'required|string|max:255|unique:users,username',
-            'email' => 'nullable|email|unique:users,email',
-            'phone' => 'nullable|string|max:20',
-            'birth_date' => 'nullable|date',
-            'gender' => 'nullable|in:male,female,other',
-            'exam_category_id' => 'required|exists:exam_categories,id',
-            'password' => 'required|min:6|confirmed',
-        ]);
+        $validated = $request->validated();
 
         $user = User::create([
             'name' => $validated['first_name'] . ' ' . $validated['last_name'],

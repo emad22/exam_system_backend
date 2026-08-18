@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ExamProgress\SubmitAnswersRequest;
 use App\Models\ExamAttempt;
 use App\Models\ExamAttemptLevel;
 use App\Models\ExamAttemptSkill;
@@ -179,14 +180,11 @@ class ExamProgressController extends Controller
 
 
 
-    public function submitBatch(Request $request, ExamAttempt $attempt)
+    public function submitBatch(SubmitAnswersRequest $request, ExamAttempt $attempt)
     {
         $this->authorize('update', $attempt);
 
-        $request->validate([
-            'answers' => 'required|array',
-            'answers.*.question_id' => 'required|exists:questions,id',
-        ]);
+        $validated = $request->validated();
 
         try {
             return DB::transaction(function () use ($request, $attempt) {

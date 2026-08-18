@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Partner;
+use App\Http\Requests\Admin\Staff\StoreStaffRequest;
+use App\Http\Requests\Admin\Staff\UpdateStaffRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
@@ -35,25 +37,9 @@ class StaffController extends Controller
     /**
      * Provision a new staff identity
      */
-    public function store(Request $request)
+    public function store(StoreStaffRequest $request)
     {
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'username' => 'required|string|max:255|unique:users',
-            'email' => 'nullable|string|email|max:255',
-            'password' => 'required|string|min:6',
-            'role' => 'required|in:admin,teacher,supervisor,demo,partner',
-            'is_active' => 'sometimes|boolean',
-            'phone' => 'nullable|string|max:255',
-            'country' => 'nullable|string|max:255',
-            // Partner specific
-            'partner_name' => 'nullable|string|max:255',
-            'website' => 'nullable|string|max:255',
-            'note' => 'nullable|string',
-            'proctoring_required' => 'sometimes|boolean',
-            'proctoring_mode' => 'sometimes|string|in:none,full,identity_only',
-        ]);
+        $validated = $request->validated();
 
         $staff = User::create([
             'first_name' => $validated['first_name'],
@@ -89,29 +75,13 @@ class StaffController extends Controller
     /**
      * Update an existing staff role or identity
      */
-    public function update(Request $request, User $user)
+    public function update(UpdateStaffRequest $request, User $user)
     {
         if ($user->role === 'student') {
             return response()->json(['error' => 'Use student identity management for this account.'], 422);
         }
 
-        $validated = $request->validate([
-            'first_name' => 'sometimes|required|string|max:255',
-            'last_name' => 'sometimes|required|string|max:255',
-            'username' => 'sometimes|required|string|max:255|unique:users,username,' . $user->id,
-            'email' => 'sometimes|nullable|email',
-            'role' => 'sometimes|required|in:admin,teacher,supervisor,demo,partner',
-            'password' => 'sometimes|nullable|string|min:6',
-            'is_active' => 'sometimes|boolean',
-            'phone' => 'sometimes|nullable|string|max:255',
-            'country' => 'sometimes|nullable|string|max:255',
-            // Partner specific
-            'partner_name' => 'sometimes|nullable|string|max:255',
-            'website' => 'sometimes|nullable|string|max:255',
-            'note' => 'sometimes|nullable|string',
-            'proctoring_required' => 'sometimes|boolean',
-            'proctoring_mode' => 'sometimes|string|in:none,full,identity_only',
-        ]);
+        $validated = $request->validated();
 
         if (isset($validated['first_name'])) $user->first_name = $validated['first_name'];
         if (isset($validated['last_name'])) $user->last_name = $validated['last_name'];

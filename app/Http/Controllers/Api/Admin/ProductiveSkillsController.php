@@ -8,6 +8,9 @@ use App\Models\ExamAttemptLevel;
 use App\Models\ExamAttemptSkill;
 use App\Models\Level;
 use App\Models\StudentAnswer;
+use App\Http\Requests\Admin\ProductiveSkills\GradeAttemptRequest;
+use App\Http\Requests\Admin\ProductiveSkills\UpdateAnswerRequest;
+use App\Services\AttemptService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -62,7 +65,7 @@ class ProductiveSkillsController extends Controller
     {
         $answers = StudentAnswer::where('exam_attempt_id', $attempt->id)
             ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation']))
-            ->select('id', 'exam_attempt_id', 'question_id', 'skill_id', 'text_answer', 'media_answer', 'word_count', 'points_awarded', 'teacher_feedback', 'is_manual_graded', 'created_at', 'updated_at')
+            ->select('id', 'exam_attempt_id', 'question_id', 'skill_id', 'text_answer', 'media_answer', 'word_count', 'points_awarded', 'teacher_feedback', 'grading_details', 'is_manual_graded', 'created_at', 'updated_at')
             ->with(['question.skill'])
             ->orderBy('question_id')
             ->get();
@@ -109,21 +112,16 @@ class ProductiveSkillsController extends Controller
     /**
      * Bulk-grade all writing/speaking answers for an attempt.
      */
-    public function gradeAttempt(Request $request, ExamAttempt $attempt)
+    public function gradeAttempt(GradeAttemptRequest $request, ExamAttempt $attempt)
     {
-        $request->validate([
-            'grades'                    => 'required|array|min:1',
-            'grades.*.answer_id'        => 'required|integer|exists:student_answers,id',
-            'grades.*.points_awarded'   => 'required|numeric|min:0',
-            'grades.*.teacher_feedback' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         try {
             DB::beginTransaction();
 
             $affectedSkillIds = [];
 
-            foreach ($request->grades as $grade) {
+            foreach ($validated['grades'] as $grade) {
                 $answer = StudentAnswer::where('id', $grade['answer_id'])
                     ->where('exam_attempt_id', $attempt->id)
                     ->firstOrFail();
@@ -131,12 +129,18 @@ class ProductiveSkillsController extends Controller
                 $maxAllowed    = $answer->question->points ?? 0;
                 $pointsAwarded = min((float) $grade['points_awarded'], $maxAllowed);
 
-                $answer->update([
+                $updateData = [
                     'points_awarded'   => $pointsAwarded,
                     'teacher_feedback' => $grade['teacher_feedback'] ?? null,
                     'is_manual_graded' => true,
                     'is_correct'       => $pointsAwarded > 0,
-                ]);
+                ];
+
+                if (array_key_exists('grading_details', $grade)) {
+                    $updateData['grading_details'] = $grade['grading_details'];
+                }
+
+                $answer->update($updateData);
 
                 $affectedSkillIds[] = $answer->skill_id;
             }
@@ -160,11 +164,47 @@ class ProductiveSkillsController extends Controller
             ]);
 
             DB::commit();
-            return response()->json(['message' => 'All grades saved successfully.']);
+
+            // ── Auto-complete the attempt if ALL manual answers are now graded ──
+            // Check outside the transaction so we see the committed state
+            $this->maybeCompleteAttempt($attempt);
+
+            return response()->json([
+                'message'          => 'All grades saved successfully.',
+                'attempt_status'   => $attempt->fresh()->status,
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => 'Failed to save grades: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * If every writing/speaking answer for this attempt has been manually graded,
+     * mark the attempt as completed so the report page unlocks the certificate button.
+     */
+    private function maybeCompleteAttempt(ExamAttempt $attempt): void
+    {
+        // Only act on non-completed attempts
+        if ($attempt->status === 'completed') {
+            return;
+        }
+
+        $manualTypes = ['writing', 'speaking', 'speaking_live', 'pdf_annotation'];
+
+        // Count answers that still need manual grading
+        $pendingCount = StudentAnswer::where('exam_attempt_id', $attempt->id)
+            ->whereHas('question', fn($q) => $q->whereIn('type', $manualTypes))
+            ->where('is_manual_graded', false)
+            ->count();
+
+        if ($pendingCount > 0) {
+            // Still ungraded answers — do nothing
+            return;
+        }
+
+        // All manual answers are graded — finalize the attempt
+        app(AttemptService::class)->completeAttempt($attempt);
     }
 
     /**
@@ -178,23 +218,19 @@ class ProductiveSkillsController extends Controller
     /**
      * [Legacy] Grade a single answer.
      */
-    public function update(Request $request, StudentAnswer $answer)
+    public function update(UpdateAnswerRequest $request, StudentAnswer $answer)
     {
-        $request->validate([
-            'points_awarded'   => 'required|numeric|min:0',
-            'teacher_feedback' => 'nullable|string',
-            'grading_details'  => 'nullable|array',
-        ]);
+        $validated = $request->validated();
 
         try {
             DB::beginTransaction();
 
             $answer->update([
-                'points_awarded'   => $request->points_awarded,
-                'teacher_feedback' => $request->teacher_feedback,
-                'grading_details'  => $request->grading_details,
+                'points_awarded'   => $validated['points_awarded'],
+                'teacher_feedback' => $validated['teacher_feedback'],
+                'grading_details'  => $validated['grading_details'],
                 'is_manual_graded' => true,
-                'is_correct'       => $request->points_awarded > 0,
+                'is_correct'       => $validated['points_awarded'] > 0,
             ]);
 
             $this->recalculateSkillScore($answer->attempt, $answer->skill_id);

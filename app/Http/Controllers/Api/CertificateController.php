@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Certificate\BulkDownloadRequest;
 use App\Models\Certificate;
 use App\Models\ExamAttempt;
 use Illuminate\Http\Request;
@@ -142,6 +143,10 @@ class CertificateController extends Controller
 
     /**
      * Admin or Partner: Manually create (or regenerate) a certificate for an attempt.
+     *
+     * If the attempt is not yet completed (e.g. still "ongoing" after productive-skill
+     * grading was done without the auto-complete firing), we mark it completed first so
+     * the report page reflects the correct status.
      */
     public function createForAttempt(Request $request, ExamAttempt $attempt)
     {
@@ -160,6 +165,18 @@ class CertificateController extends Controller
         }
 
         try {
+            // Auto-complete the attempt if it was never marked as completed.
+            // This covers edge cases where the student finished all skills but the
+            // status was never updated (e.g. productive skills graded without the
+            // auto-complete firing, or old attempts created before this logic existed).
+            if ($attempt->status !== 'completed') {
+                $attempt->update([
+                    'status'      => 'completed',
+                    'finished_at' => $attempt->finished_at ?? now(),
+                ]);
+                $attempt->refresh();
+            }
+
             $service = app(\App\Services\CertificateService::class);
             $certificate = $service->generate($attempt);
 
@@ -167,8 +184,9 @@ class CertificateController extends Controller
             $certificate->load(['student.user', 'attempt.exam']);
 
             return response()->json([
-                'message' => 'Certificate created successfully.',
-                'certificate' => $certificate,
+                'message'         => 'Certificate created successfully.',
+                'certificate'     => $certificate,
+                'attempt_status'  => $attempt->status,
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -212,15 +230,11 @@ class CertificateController extends Controller
     /**
      * Admin/Partner: Bulk download certificates as ZIP archive.
      */
-    public function bulkDownload(Request $request)
+    public function bulkDownload(BulkDownloadRequest $request)
     {
         $user = $request->user();
 
-        $request->validate([
-            'certificate_ids' => 'nullable|array',
-            'certificate_ids.*' => 'integer|exists:certificates,id',
-            'partner_id' => 'nullable|integer|exists:partners,id',
-        ]);
+        $validated = $request->validated();
 
         $query = Certificate::with(['student.user', 'attempt.exam']);
 

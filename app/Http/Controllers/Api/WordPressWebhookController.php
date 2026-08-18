@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Student;
 use App\Models\User;
 use App\Models\Package;
-use Illuminate\Http\Request;
+use App\Http\Requests\WordPressWebhook\SyncUserRequest;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -17,31 +17,17 @@ class WordPressWebhookController extends Controller
     /**
      * Handle student registration from WordPress (Refactored for Unified Identity)
      */
-    public function register(Request $request)
+    public function register(SyncUserRequest $request)
     {
+        $validated = $request->validated();
+
         // Simple security check (Shared Secret)
-      //  print "in register fun........";
         $secret = config('services.wordpress.webhook_secret');
         if ($request->header('X-WP-Webhook-Secret') !== $secret) {
             return response()->json(['message' => 'Unauthorized source'], 401);
         }
 
-        $validated = $request->validate([
-            'username' => 'nullable|string|unique:users,username',
-            'email' => 'nullable|email',
-            'first_name' => 'required|string',
-            'last_name' => 'required|string',
-            'package_id' => 'required|exists:packages,wp_package_id',
-            'wp_user_id' => 'required|string',
-            'phone' => 'required|string',
-            'address' => 'nullable|string',
-            'country' => 'nullable|string',
-            'exam_category_id' => 'nullable|exists:exam_categories,id',
-            'exam_type' => 'nullable|string', // Support legacy WP slug (adult/children)
-        ]);
-
-           
-             
+            
         return DB::transaction(function () use ($validated) {
             // 1. Fetch Package for auto-skill assignment (Try WP ID first, then internal ID)
             $package = Package::where('wp_package_id', $validated['package_id'])->first();

@@ -388,4 +388,67 @@ class ReportController extends Controller
         }
     }
 
+    /**
+     * Force-complete an ongoing attempt, provided the student has opened (or finished)
+     * every skill assigned to them in this exam.
+     *
+     * "Opened" means the skill exists in exam_attempt_skills (the student started it).
+     * This is the safety check so admins can't accidentally end attempts mid-exam.
+     */
+    public function forceComplete(Request $request, ExamAttempt $attempt)
+    {
+        if ($attempt->status === 'completed') {
+            return response()->json(['message' => 'Attempt is already completed.']);
+        }
+
+        // ── Validate: every assigned skill must have been started ──────────────
+        $pos              = $attempt->current_position ?? [];
+        $assignedSkillIds = $pos['skill_ids'] ?? [];
+
+        if (empty($assignedSkillIds)) {
+            return response()->json(['error' => 'Cannot determine assigned skills for this attempt.'], 422);
+        }
+
+        $startedSkillIds = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+            ->pluck('skill_id')
+            ->map(fn($id) => (int) $id)
+            ->toArray();
+
+        $notStarted = array_diff(array_map('intval', $assignedSkillIds), $startedSkillIds);
+
+        if (!empty($notStarted)) {
+            $notStartedNames = Skill::whereIn('id', $notStarted)->pluck('name')->implode(', ');
+            return response()->json([
+                'error' => "Cannot end attempt: the following skills were never started — {$notStartedNames}.",
+            ], 422);
+        }
+
+        // ── Mark every in-progress skill as completed ───────────────────────────
+        ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
+            ->whereNotIn('status', ['completed', 'failed', 'skipped'])
+            ->update(['status' => 'completed', 'finished_at' => now()]);
+
+        // ── Complete the attempt (sets status + generates certificate if eligible) ─
+        app(\App\Services\AttemptService::class)->completeAttempt($attempt);
+
+        $attempt->refresh();
+
+        ActivityLog::create([
+            'user_id'     => Auth::id(),
+            'action'      => 'updated',
+            'model_type'  => ExamAttempt::class,
+            'model_id'    => $attempt->id,
+            'description' => 'Admin force-completed attempt for candidate: '
+                             . (optional(optional($attempt->student)->user)->first_name . ' '
+                             . optional(optional($attempt->student)->user)->last_name),
+            'ip_address'  => request()->ip(),
+            'user_agent'  => request()->userAgent(),
+        ]);
+
+        return response()->json([
+            'message'        => 'Attempt has been marked as completed successfully.',
+            'attempt_status' => $attempt->status,
+        ]);
+    }
+
 }

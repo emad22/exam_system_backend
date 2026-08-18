@@ -2,12 +2,11 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
-
-use App\Models\Partner;
-use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
-use App\Models\Student;
+use App\Http\Requests\Admin\Partner\StorePartnerRequest;
+use App\Models\Partner;
 use App\Models\User;
+use Illuminate\Http\Request;
 
 class PartnerController extends Controller
 {
@@ -30,78 +29,71 @@ class PartnerController extends Controller
    
 
 // STORE
-    public function store(Request $request)
+    public function store(StorePartnerRequest $request)
     {
-        // dd($request->all());
-      //  $partner = Partner::create($request->all());  // shaimaa commented this
+        $validated = $request->validated();
 
-        $validated = $request->validate([
-                'first_name' => 'sometimes|required|string|max:255',
-                'last_name' => 'sometimes|required|string|max:255',
-                'email' => 'sometimes|nullable|email',
-                'phone' => 'sometimes|nullable|string|max:20',
-                'password' => 'required|min:6',
-                'partner_name' => 'required|string',
-                'website' => 'sometimes|nullable|string',
-                'country' => 'nullable|string|max:255',
-                'note' => 'nullable|string',
-                'r_date' => 'nullable|string',
-            ]);
+        $user = User::create([
+            'first_name' => $validated['first_name'],
+            'last_name' => $validated['last_name'],
+            'email' => $validated['email'],
+            'role' => 'partner', 
+            'country' => $validated['country'],
+        ]);
 
-            dd($validated);
-         //   return DB::transaction(function () use ($validated) {
-
-                // 1) Create User
-                $user = User::create([
-                    'first_name' => $validated['first_name'],
-                    'last_name' => $validated['last_name'],
-                    'email' => $validated['email'],
-                    'role' => 'partner', 
-                    'country' => $validated['country'],
-                ]);
-
-                // 2) Create Partner
-                $partner = Partner::create([
-                    'user_id' => $user->id,
-                    'partner_name' => $validated['partner_name'],
-                    'website' => $validated['website'],
-                    'note' => $validated['note'],
-                    'r_date' => $validated['r_date'],                   
-                ]);
-
-                return response()->json([
-                    'message' => 'Partner created successfully',
-                    'user' => $user,
-                    'partner' => $partner
-                ], 201);
-           // });
-
+        // 2) Create Partner
+        $partner = Partner::create([
+            'user_id' => $user->id,
+            'partner_name' => $validated['partner_name'],
+            'website' => $validated['website'],
+            'note' => $validated['note'],
+            'r_date' => $validated['r_date'],                   
+        ]);
 
         return response()->json([
             'message' => 'Partner created successfully',
+            'user' => $user,
             'partner' => $partner
         ], 201);
-            
     }
 
 // SHOW
     public function show($id)
     {
-        return Partner::findOrFail($id);
+        return Partner::with('user')->findOrFail($id);
     }
 
 // UPDATE
     public function update(Request $request, $id)
     {
-        $partner = Partner::findOrFail($id);
+        $partner = Partner::with('user')->findOrFail($id);
         $data = $request->all();
+
         if (isset($data['proctoring_mode'])) {
             $data['proctoring_required'] = in_array($data['proctoring_mode'], ['full', 'identity_only'], true);
         }
+
+        // Update partner fields
         $partner->update($data);
+
+        // Sync user fields if a linked user exists
+        if ($partner->user) {
+            $userFields = [];
+            if (isset($data['fName_contact'])) $userFields['first_name'] = $data['fName_contact'];
+            if (isset($data['lName_contact'])) $userFields['last_name']  = $data['lName_contact'];
+            if (isset($data['email']))          $userFields['email']      = $data['email'];
+            if (isset($data['phone']))          $userFields['phone']      = $data['phone'];
+            if (isset($data['country']))        $userFields['country']    = $data['country'];
+            if (isset($data['is_active']))      $userFields['is_active']  = (bool) $data['is_active'];
+
+            if (!empty($userFields)) {
+                $partner->user->update($userFields);
+            }
+        }
+
         return response()->json([
             'message' => 'Partner updated successfully',
-            'partner' => $partner
+            'partner' => $partner->fresh('user'),
         ]);
     }
 

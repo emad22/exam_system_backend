@@ -5,7 +5,8 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Exam;
 use App\Models\Skill;
-use Illuminate\Http\Request;
+use App\Http\Requests\Admin\Exam\StoreExamRequest;
+use App\Http\Requests\Admin\Exam\UpdateExamRequest;
 use Illuminate\Support\Facades\DB;
 
 class ExamController extends Controller
@@ -42,32 +43,9 @@ class ExamController extends Controller
     /**
      * Store new Exam
      */
-    public function store(Request $request)
+    public function store(StoreExamRequest $request)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'exam_category_id' => 'required|exists:exam_categories,id',
-            'language_id' => 'nullable|exists:languages,id',
-            'passing_score' => 'required|numeric|min:0|max:100',
-            'timer_type' => 'nullable|string',
-            'time_limit' => 'nullable|integer',
-
-            'skills' => 'required|array|min:1',
-            'skills.*.skill_id' => 'required|exists:skills,id',
-            'skills.*.duration' => 'required|integer|min:1',
-            'skills.*.is_optional' => 'boolean',
-            'skills.*.max_points' => 'nullable|integer|min:0',
-            'skills.*.rules' => 'nullable|array',
-            'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
-            'skills.*.rules.*.quantity' => 'required|integer|min:0',
-            'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.randomize' => 'boolean',
-
-            'question_ids' => 'nullable|array', // List of questions assigned directly
-            'question_ids.*' => 'exists:questions,id'
-        ]);
+        $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request) {
             $exam = Exam::create([
@@ -124,32 +102,9 @@ class ExamController extends Controller
     /**
      * Update an existing exam
      */
-    public function update(Request $request, Exam $exam)
+    public function update(UpdateExamRequest $request, Exam $exam)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'exam_category_id' => 'required|exists:exam_categories,id',
-            'language_id' => 'nullable|exists:languages,id',
-            'passing_score' => 'required|numeric|min:0|max:100',
-            'timer_type' => 'nullable|string',
-            'time_limit' => 'nullable|integer',
-
-            'skills' => 'required|array|min:1',
-            'skills.*.skill_id' => 'required|exists:skills,id',
-            'skills.*.duration' => 'required|integer|min:1',
-            'skills.*.is_optional' => 'boolean',
-            'skills.*.max_points' => 'nullable|integer|min:0',
-            'skills.*.rules' => 'nullable|array',
-            'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
-            'skills.*.rules.*.quantity' => 'required|integer|min:0',
-            'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.randomize' => 'boolean',
-
-            'question_ids' => 'nullable|array',
-            'question_ids.*' => 'exists:questions,id'
-        ]);
+        $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request, $exam) {
             $exam->update([

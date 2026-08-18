@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Level\StoreLevelRequest;
+use App\Http\Requests\Admin\Level\UpdateLevelRequest;
 use App\Models\Level;
 use Illuminate\Http\Request;
 
@@ -25,23 +27,9 @@ class LevelController extends Controller
     /**
      * Store a new level for a skill
      */
-    public function store(Request $request)
+    public function store(StoreLevelRequest $request)
     {
-        $validated = $request->validate([
-            'skill_id' => 'required|exists:skills,id',
-            'level_number' => 'required|integer',
-            'min_score' => 'required|integer',
-            'max_score' => 'required|integer',
-            'pass_threshold' => 'required|integer|min:0|max:100',
-            'default_question_count' => 'nullable|integer|min:0',
-            'instructions' => 'nullable|string',
-            'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120',
-            'is_active' => 'sometimes|boolean',
-            'is_random' => 'sometimes|boolean',
-            'allows_retry' => 'sometimes|boolean',
-            'default_standalone_quantity' => 'nullable|integer|min:0',
-            'default_passage_quantity' => 'nullable|integer|min:0'
-        ]);
+        $validated = $request->validated();
 
         if ($request->hasFile('instructions_audio')) {
             $path = $request->file('instructions_audio')->store('levels/audio', 'public');
@@ -67,24 +55,9 @@ class LevelController extends Controller
     /**
      * Update an existing level
      */
-    public function update(Request $request, Level $level)
+    public function update(UpdateLevelRequest $request, Level $level)
     {
-        $validated = $request->validate([
-            'skill_id' => 'sometimes|required|exists:skills,id',
-            'name' => 'sometimes|required|string|max:255',
-            'level_number' => 'sometimes|required|integer',
-            'min_score' => 'sometimes|required|integer',
-            'max_score' => 'sometimes|required|integer',
-            'pass_threshold' => 'sometimes|required|integer|min:0|max:100',
-            'default_question_count' => 'nullable|integer|min:0',
-            'instructions' => 'nullable|string',
-            'instructions_audio' => 'nullable|file|mimes:mp3,wav|max:5120',
-            'is_active' => 'sometimes|boolean',
-            'is_random' => 'sometimes|boolean',
-            'allows_retry' => 'sometimes|boolean',
-            'default_standalone_quantity' => 'nullable|integer|min:0',
-            'default_passage_quantity' => 'nullable|integer|min:0'
-        ]);
+        $validated = $request->validated();
 
         if ($request->hasFile('instructions_audio')) {
             // Delete old audio if exists
