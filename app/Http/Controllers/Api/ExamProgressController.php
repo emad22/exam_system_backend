@@ -81,6 +81,37 @@ class ExamProgressController extends Controller
             return $q;
         });
 
+        // ── Speaking-live / writing resume fix ───────────────────────────────
+        // These question types require a media file upload (audio/PDF).
+        // If the student submitted the batch but the media_answer column is
+        // still NULL (e.g. upload failed, or they refreshed before uploading),
+        // the answer row exists → `fetchBatchForLevel` returns empty.
+        // We detect that case here and re-surface the unanswered media question
+        // so the student can re-record / re-upload instead of getting stuck.
+        if ($questions->isEmpty()) {
+            $mediaTypes = ['speaking', 'speaking_live', 'writing', 'pdf_annotation'];
+
+            $incompleteMediaAnswers = StudentAnswer::where('exam_attempt_id', $attempt->id)
+                ->whereNull('media_answer')
+                ->whereHas('question', fn($q) => $q
+                    ->where('exam_id', $attempt->exam_id)
+                    ->where('skill_id', $skillId)
+                    ->where('level_id', $level->id)
+                    ->whereIn('type', $mediaTypes))
+                ->with(['question.options'])
+                ->get();
+
+            if ($incompleteMediaAnswers->isNotEmpty()) {
+                // Re-surface questions whose media has not been uploaded yet.
+                $questions = $incompleteMediaAnswers
+                    ->map(fn($answer) => $answer->question)
+                    ->filter()
+                    ->unique('id')
+                    ->values();
+            }
+        }
+        // ── End speaking-live / writing resume fix ────────────────────────────
+
         if ($questions->isEmpty()) {
             return $this->handleEmptyBatch(
                 $request,
@@ -491,7 +522,90 @@ class ExamProgressController extends Controller
                 return $this->getNextBatch($request, $attempt, $retryCount + 1);
             }
         }
-        //  return response()->json(['level' => $pos['current_level']] , 200);
+
+        // ─── Resume guard ────────────────────────────────────────────────────
+        // After a refresh / logo-tap the student lands back in getNextBatch.
+        // If ALL questions at this level are already answered we need to recover
+        // the progression (advance level / finalise skill) instead of showing an
+        // error.  But ONLY do this when the student has genuinely answered every
+        // question — never when they simply haven't answered yet (e.g. a
+        // speaking_live question they are still recording).
+        $totalQuestionsAtLevel = Question::where('exam_id', $attempt->exam_id)
+            ->where('skill_id', $skillId)
+            ->where('level_id', $level->id)
+            ->count();
+
+        $answeredAtLevel = StudentAnswer::where('exam_attempt_id', $attempt->id)
+            ->whereHas('question', fn($q) => $q
+                ->where('skill_id', $skillId)
+                ->where('level_id', $level->id))
+            ->count();
+
+        // Only auto-advance when every question has a saved answer row.
+        // If none are answered yet (e.g. student refreshed before submitting),
+        // fall through to the is_empty error so the frontend can handle it.
+        if ($totalQuestionsAtLevel > 0 && $answeredAtLevel >= $totalQuestionsAtLevel) {
+
+            $levelScore    = $this->attemptService->computeLevelScore($attempt, $skillId, $level);
+            $passThreshold = $level->pass_threshold ?? 70;
+            $passed        = $levelScore >= $passThreshold;
+
+            // Log level result (idempotent — uses updateOrCreate internally).
+            $this->attemptService->logLevelResult($attempt, $skillId, $level, $levelScore, $passThreshold);
+
+            $nextLevelExists = $this->attemptService->nextLevelExists($attempt->exam_id, $skillId, $levelNum);
+
+            if ($nextLevelExists) {
+                // Advance to the next level and fetch its questions.
+                $pos[(string) $skillId]['current_level'] = $levelNum + 1;
+                $attempt->update(['current_position' => $pos]);
+                return $this->getNextBatch($request, $attempt, $retryCount + 1);
+            }
+
+            // No more levels in this skill → finalise and move on.
+            $skillScore = $this->attemptService->computeSkillScore($attempt, $skillId);
+            $maxLevel   = ExamAttemptLevel::where('exam_attempt_id', $attempt->id)
+                ->where('skill_id', $skillId)
+                ->max('level_number') ?? $levelNum;
+
+            $this->attemptService->finalizeSkill(
+                $attempt,
+                $skillId,
+                $skillScore,
+                $maxLevel,
+                $passed ? 'completed' : 'failed',
+                $maxLevel
+            );
+
+            $this->attemptService->updateOverallScore($attempt, $skillId, $skillScore);
+
+            $advanced     = $this->attemptService->advanceToNextSkillOrFinish($attempt, $pos, $skillId);
+            $nextPos      = $advanced['next_pos'];
+            $finishedExam = $advanced['finished_exam'] ?? false;
+
+            $completedSkills = $nextPos['completed_skills'] ?? [];
+            if (count($completedSkills) >= count($pos['skill_ids'])) {
+                $finishedExam = true;
+            }
+
+            $attempt->update(['current_position' => $nextPos]);
+
+            if ($finishedExam) {
+                $this->attemptService->completeAttempt($attempt);
+                return response()->json([
+                    'skill_ended'     => true,
+                    'finished_exam'   => true,
+                    'next_step'       => 'results',
+                    'placement_level' => $maxLevel,
+                    'placement_score' => $skillScore,
+                ]);
+            }
+
+            // More skills remain — transparently fetch the next batch.
+            return $this->getNextBatch($request, $attempt, $retryCount + 1);
+        }
+        // ─── End resume guard ─────────────────────────────────────────────────
+
         return response()->json(['error' => "Empty Question Set", 'is_empty' => true], 404);
     }
 

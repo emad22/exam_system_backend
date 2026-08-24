@@ -23,6 +23,7 @@ class SkillController extends Controller
      */
     public function index()
     {
+        $this->authorize('viewAny', Skill::class);
         return response()->json(Skill::withCount(['questions', 'levels'])->orderBy('name')->get());
     }
 
@@ -31,6 +32,7 @@ class SkillController extends Controller
      */
     public function store(StoreSkillRequest $request)
     {
+        $this->authorize('create', Skill::class);
         $validated = $request->validated();
 
         $skill = Skill::create($validated);
@@ -65,6 +67,7 @@ class SkillController extends Controller
      */
     public function update(UpdateSkillRequest $request, Skill $skill)
     {
+        $this->authorize('update', $skill);
         $validated = $request->validated();
 
         if (array_key_exists('levels_count', $validated)) {
@@ -123,6 +126,7 @@ class SkillController extends Controller
      */
     public function destroy(Request $request, Skill $skill)
     {
+        $this->authorize('delete', $skill);
         DB::beginTransaction();
         try {
             // Delete related questions and rules
@@ -158,6 +162,7 @@ class SkillController extends Controller
      */
     public function getSkillsWithLevels()
     {
+        $this->authorize('viewAny', Skill::class);
         return response()->json(Skill::with('levels')->get());
     }
 
@@ -166,6 +171,7 @@ class SkillController extends Controller
      */
     public function getSkillWithLevels(Skill $skill)
     {
+        $this->authorize('view', $skill);
         return response()->json($skill->load('levels'));
     }
 
@@ -174,6 +180,7 @@ class SkillController extends Controller
      */
     public function bulkUpdateLevels(BulkUpdateLevelsRequest $request, Skill $skill)
     {
+        $this->authorize('bulkUpdateLevels', Skill::class);
         $validated = $request->validated();
 
         DB::beginTransaction();

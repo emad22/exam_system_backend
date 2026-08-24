@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Proctoring\ProctoringController;
 
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['auth:sanctum', 'single.session'])->group(function () {
     Route::post('/proctoring/session/initiate', [ProctoringController::class, 'initiateSession'])
         ->name('proctoring.session.initiate');
 

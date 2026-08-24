@@ -14,10 +14,11 @@ class BatchImportStudentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file'            => 'required|file|max:10240',
-            'partner_id'      => 'nullable',
-            'package_id'      => 'nullable|exists:packages,id',
-            'assigned_skills' => 'nullable',
+            'file'              => 'required|file|max:10240',
+            'partner_id'        => 'nullable',
+            'package_id'        => 'nullable|exists:packages,id',
+            'exam_category_id'  => 'nullable|exists:exam_categories,id',
+            'assigned_skills'   => 'nullable',
         ];
     }
 }

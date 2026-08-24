@@ -16,6 +16,7 @@ class PassageController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Passage::class);
         $query = Passage::query();
 
         if ($request->has('search')) {
@@ -43,6 +44,7 @@ class PassageController extends Controller
      */
     public function store(StorePassageRequest $request)
     {
+        $this->authorize('create', Passage::class);
         $validated = $request->validated();
 
         $passage = Passage::create($validated);
@@ -58,6 +60,7 @@ class PassageController extends Controller
      */
     public function show(Passage $passage)
     {
+        $this->authorize('view', $passage);
         return response()->json($passage->load('questions'));
     }
 
@@ -66,6 +69,7 @@ class PassageController extends Controller
      */
     public function update(UpdatePassageRequest $request, Passage $passage)
     {
+        $this->authorize('update', $passage);
         $validated = $request->validated();
 
         $passage->update($validated);
@@ -81,6 +85,7 @@ class PassageController extends Controller
      */
     public function destroy(Passage $passage)
     {
+        $this->authorize('delete', $passage);
         $passage->delete();
         return response()->json(['message' => 'Passage deleted successfully']);
     }

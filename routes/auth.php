@@ -6,8 +6,12 @@ use App\Http\Controllers\Api\ProfileController;
 
 // Public Auth Routes
 Route::as('auth.')->group(function () {
-    Route::post('/login', [AuthController::class, 'login'])->name('login');
-    Route::post('/register', [AuthController::class, 'register'])->name('register');
+    Route::post('/login', [AuthController::class, 'login'])
+        ->middleware('throttle:5,1')
+        ->name('login');
+    Route::post('/register', [AuthController::class, 'register'])
+        ->middleware('throttle:3,1')
+        ->name('register');
 });
 
 // Authenticated Profile Routes

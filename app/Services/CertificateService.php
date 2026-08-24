@@ -270,10 +270,10 @@ class CertificateService
             $skillsData[] = [
                 'name'       => $this->normalizeSkillName($s->skill->name ?? ''),
                 'max_points' => $maxPoints,
-                'points'     => round(($s->score / 100) * $maxPoints),
+                'points'     => round((($s->score ?? 0) / 100) * $maxPoints),
                 'score'      => $s->score,
-                'cefr'       => $this->mapToCefr($s->score, $skillType),
-                'actfl'      => $this->mapToActfl($s->score, $skillType),
+                'cefr'       => $this->mapToCefr((float) ($s->score ?? 0), $skillType),
+                'actfl'      => $this->mapToActfl((float) ($s->score ?? 0), $skillType),
                 'date'       => $this->formatCertificateDate($s->finished_at ?: $overallDateCarbon, $dateFormatTable),
                 'is_core'    => $isCore,
             ];
@@ -561,10 +561,10 @@ class CertificateService
             $skillsData[] = [
                 'name'       => $this->normalizeSkillName($s->skill->name ?? ''),
                 'max_points' => $maxPoints,
-                'points'     => round(($s->score / 100) * $maxPoints),
+                'points'     => round((($s->score ?? 0) / 100) * $maxPoints),
                 'score'      => $s->score,
-                'cefr'       => $this->mapToCefr($s->score, $skillType),
-                'actfl'      => $this->mapToActfl($s->score, $skillType),
+                'cefr'       => $this->mapToCefr((float) ($s->score ?? 0), $skillType),
+                'actfl'      => $this->mapToActfl((float) ($s->score ?? 0), $skillType),
                 'date'       => $this->formatCertificateDate($s->finished_at ?: $overallDateCarbon, $dateFormat),
                 'is_core'    => $isCore,
             ];
@@ -961,10 +961,10 @@ class CertificateService
                 'name'       => $this->normalizeSkillName($s->skill->name ?? ''),
                 'name_lower' => $name,
                 'max_points' => $maxPoints,
-                'points'     => round(($s->score / 100) * $maxPoints),
+                'points'     => round((($s->score ?? 0) / 100) * $maxPoints),
                 'score'      => $s->score,
-                'cefr'       => $this->mapToCefr($s->score, $skillType),
-                'actfl'      => $this->mapToActfl($s->score, $skillType),
+                'cefr'       => $this->mapToCefr((float) ($s->score ?? 0), $skillType),
+                'actfl'      => $this->mapToActfl((float) ($s->score ?? 0), $skillType),
                 'date'       => $this->formatCertificateDate($s->finished_at ?: $overallDateCarbon, $dateFormat),
                 'is_core'    => $isCore,
             ];
@@ -1149,9 +1149,9 @@ class CertificateService
      * @param  float   $score  0–100 percentage
      * @param  string  $type   'core' (Listening/Reading/Structure) | 'productive' (Writing/Speaking)
      */
-    public function mapToCefr(float $score, string $type = 'core'): string
+    public function mapToCefr(?float $score, string $type = 'core'): string
     {
-        return $this->mapLevel($score, $type, 'cefr');
+        return $this->mapLevel((float) ($score ?? 0), $type, 'cefr');
     }
 
     /**
@@ -1160,9 +1160,9 @@ class CertificateService
      * @param  float   $score  0–100 percentage
      * @param  string  $type   'core' | 'productive'
      */
-    public function mapToActfl(float $score, string $type = 'core'): string
+    public function mapToActfl(?float $score, string $type = 'core'): string
     {
-        return $this->mapLevel($score, $type, 'actfl');
+        return $this->mapLevel((float) ($score ?? 0), $type, 'actfl');
     }
 
     /**
@@ -1187,8 +1187,9 @@ class CertificateService
      * - core:       converts score% → /900 points before comparison
      * - productive: uses score% directly
      */
-    protected function mapLevel(float $score, string $type, string $framework): string
+    protected function mapLevel(?float $score, string $type, string $framework): string
     {
+        $score = (float) ($score ?? 0);
         // Scale score percentage (0-100) to /900 points if needed
         $value = ($score <= 100) ? round(($score / 100) * 900) : round($score);
 

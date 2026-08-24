@@ -27,7 +27,7 @@ class StoreExamRequest extends FormRequest
             'skills.*.is_optional' => 'boolean',
             'skills.*.max_points' => 'nullable|integer|min:0',
             'skills.*.rules' => 'nullable|array',
-            'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
+            'skills.*.rules.*.level_id' => 'required|integer|min:1',
             'skills.*.rules.*.quantity' => 'required|integer|min:0',
             'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
             'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',

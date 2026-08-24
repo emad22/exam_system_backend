@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\PartnerResource;
 use App\Http\Requests\Admin\Partner\StorePartnerRequest;
 use App\Models\Partner;
 use App\Models\User;
+use App\Models\Student;
 use Illuminate\Http\Request;
 
 class PartnerController extends Controller
@@ -13,17 +15,20 @@ class PartnerController extends Controller
     //
     public function index()
     {
-        return response()->json(Partner::with('user')->orderBy('partner_name')->get());
+        $this->authorize('viewAny', Partner::class);
+        return PartnerResource::collection(
+            Partner::with('user')->orderBy('partner_name')->get()
+        );
     }
 
     public function getActivePartners()
     {
-        return response()->json(
-            Partner::whereHas('user', function($q) {
-                $q->where('is_active', true);
-            })
-            ->orderBy('partner_name')
-            ->get()
+        $this->authorize('viewAny', Partner::class);
+        return PartnerResource::collection(
+            Partner::whereHas('user', fn($q) => $q->where('is_active', true))
+                ->with('user')
+                ->orderBy('partner_name')
+                ->get()
         );
     }
    
@@ -31,6 +36,7 @@ class PartnerController extends Controller
 // STORE
     public function store(StorePartnerRequest $request)
     {
+        $this->authorize('create', Partner::class);
         $validated = $request->validated();
 
         $user = User::create([
@@ -52,21 +58,24 @@ class PartnerController extends Controller
 
         return response()->json([
             'message' => 'Partner created successfully',
-            'user' => $user,
-            'partner' => $partner
+            'user'    => new \App\Http\Resources\UserResource($user),
+            'partner' => new PartnerResource($partner->load('user')),
         ], 201);
     }
 
 // SHOW
     public function show($id)
     {
-        return Partner::with('user')->findOrFail($id);
+        $partner = Partner::with('user')->findOrFail($id);
+        $this->authorize('view', $partner);
+        return new PartnerResource($partner);
     }
 
 // UPDATE
     public function update(Request $request, $id)
     {
         $partner = Partner::with('user')->findOrFail($id);
+        $this->authorize('update', $partner);
         $data = $request->all();
 
         if (isset($data['proctoring_mode'])) {
@@ -93,13 +102,15 @@ class PartnerController extends Controller
 
         return response()->json([
             'message' => 'Partner updated successfully',
-            'partner' => $partner->fresh('user'),
+            'partner' => new PartnerResource($partner->fresh('user')),
         ]);
     }
 
 // DELETE
     public function destroy($id)
     {
+        $partner = Partner::findOrFail($id);
+        $this->authorize('delete', $partner);
         Partner::destroy($id);
         return response()->json(['message' => 'Partner and all related content deleted successfully.']);
 
@@ -110,12 +121,11 @@ class PartnerController extends Controller
 
     public function deactivatePartnerStudents($partnerId)
     {
-        // تحقق أن الـ partner موجود
         $partner = Partner::find($partnerId);
-    
         if (!$partner) {
             return response()->json(['message' => 'Partner not found'], 404);
         }
+        $this->authorize('hold', $partner);
 
         // User::whereIn('id', Student::where('partner_id', $partnerId)->pluck('user_id'))->update(['is_active' => false]);
         User::whereIn('id', Student::where('partner_id', $partnerId)->pluck('user_id'))->update(['is_active' => false]);
@@ -135,6 +145,7 @@ class PartnerController extends Controller
     {
         $partner = Partner::find($partnerId);
         if (!$partner) return response()->json(['message' => 'Partner not found'], 404);
+        $this->authorize('hold', $partner);
 
         $user = $partner->user;
         if ($user) {

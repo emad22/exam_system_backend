@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\StaffResource;
 use App\Models\User;
 use App\Models\Partner;
 use App\Http\Requests\Admin\Staff\StoreStaffRequest;
@@ -17,21 +18,20 @@ class StaffController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', User::class);
         $staff = User::with('partner')->where('role', '!=', 'student')
             ->orderBy('role')
             ->paginate(50);
-        return response()->json($staff);
+        return StaffResource::collection($staff);
     }
 
-    /**
-     * Get a specific staff member with partner details if applicable
-     */
     public function show(User $user)
     {
+        $this->authorize('view', $user);
         if ($user->role === 'student') {
             return response()->json(['error' => 'Not a staff member.'], 422);
         }
-        return response()->json($user->load('partner'));
+        return new StaffResource($user->load('partner'));
     }
 
     /**
@@ -39,6 +39,7 @@ class StaffController extends Controller
      */
     public function store(StoreStaffRequest $request)
     {
+        $this->authorize('create', User::class);
         $validated = $request->validated();
 
         $staff = User::create([
@@ -68,7 +69,7 @@ class StaffController extends Controller
 
         return response()->json([
             'message' => 'Staff identity provisioned successfully.',
-            'staff' => $staff->load('partner')
+            'staff' => new StaffResource($staff->load('partner')),
         ], 201);
     }
 
@@ -77,6 +78,7 @@ class StaffController extends Controller
      */
     public function update(UpdateStaffRequest $request, User $user)
     {
+        $this->authorize('update', $user);
         if ($user->role === 'student') {
             return response()->json(['error' => 'Use student identity management for this account.'], 422);
         }
@@ -115,7 +117,7 @@ class StaffController extends Controller
 
         return response()->json([
             'message' => 'Staff identity updated successfully.',
-            'staff' => $user->load('partner')
+            'staff' => new StaffResource($user->load('partner')),
         ]);
     }
 
@@ -124,6 +126,7 @@ class StaffController extends Controller
      */
     public function destroy(Request $request, User $user)
     {
+        $this->authorize('delete', $user);
         if ($user->id === $request->user()->id) {
             return response()->json(['error' => 'Cannot revoke own access.'], 422);
         }

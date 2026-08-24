@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\Question\StoreQuestionRequest;
 use App\Http\Requests\Admin\Question\UpdateQuestionRequest;
 use App\Http\Requests\Admin\Question\BulkUpdateQuestionLevelRequest;
 use App\Http\Requests\Admin\Question\UploadQuestionMediaRequest;
+use App\Http\Resources\QuestionResource;
 use App\Models\Question;
 use App\Models\Passage;
 use App\Models\Skill;
@@ -25,6 +26,8 @@ class QuestionController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Question::class);
+
         $query = Question::with([
             'skill', 'options', 'passage', 'level',
             'exam:id,title',
@@ -57,7 +60,9 @@ class QuestionController extends Controller
             $query->whereNull('exam_id');
         }
 
-        return response()->json($query->get());
+        $query->orderBy('id', 'asc');
+
+        return QuestionResource::collection($query->get());
     }
 
     /**
@@ -65,6 +70,7 @@ class QuestionController extends Controller
      */
     public function store(StoreQuestionRequest $request)
     {
+        $this->authorize('create', Question::class);
         // \Log::info('Question store request', [
         //     'exam_id'  => $request->exam_id,
         //     'skill_id' => $request->skill_id,
@@ -105,7 +111,8 @@ class QuestionController extends Controller
      */
     public function show(Question $question)
     {
-        return response()->json(
+        $this->authorize('view', $question);
+        return new QuestionResource(
             $question->load(['options', 'skill', 'passage.questions.options', 'level', 'creator:id,first_name,last_name', 'updater:id,first_name,last_name'])
         );
     }
@@ -115,6 +122,7 @@ class QuestionController extends Controller
      */
     public function update(UpdateQuestionRequest $request, Question $question)
     {
+        $this->authorize('update', $question);
         // 1. Merge JSON-encoded questions with uploaded files
         $mergedData = $this->adminService->mergeJsonWithFiles($request);
         $request->merge(['questions' => $mergedData['questions']]);
@@ -138,7 +146,7 @@ class QuestionController extends Controller
 
             return response()->json([
                 'message'  => 'Batch updated successfully.',
-                'question' => $lastInstance,
+                'question' => new QuestionResource($lastInstance->load(['options', 'skill', 'level'])),
             ]);
         });
     }
@@ -148,6 +156,7 @@ class QuestionController extends Controller
      */
     public function destroy(Question $question)
     {
+        $this->authorize('delete', $question);
         return DB::transaction(function () use ($question) {
             if ($question->passage_id) {
                 $passageId        = $question->passage_id;
@@ -174,9 +183,11 @@ class QuestionController extends Controller
      */
     public function indexBySkill(Skill $skill)
     {
-        return response()->json(
+        $this->authorize('viewAny', Question::class);
+        return QuestionResource::collection(
             Question::where('skill_id', $skill->id)
                 ->withCount('options')
+                ->with(['options', 'level'])
                 ->latest()
                 ->get()
         );
@@ -187,6 +198,7 @@ class QuestionController extends Controller
      */
     public function bulkUpdateLevel(BulkUpdateQuestionLevelRequest $request)
     {
+        $this->authorize('bulkUpdateLevel', Question::class);
         $validated = $request->validated();
 
         $firstQuestion = Question::find($validated['question_ids'][0]);
@@ -207,6 +219,7 @@ class QuestionController extends Controller
      */
     public function getTagsBySkill(Skill $skill)
     {
+        $this->authorize('viewAny', Question::class);
         $tags = Question::where('skill_id', $skill->id)
             ->whereNotNull('group_tag')
             ->where('group_tag', '!=', '')
@@ -221,6 +234,7 @@ class QuestionController extends Controller
      */
     public function duplicate(Question $question)
     {
+        $this->authorize('create', Question::class);
         $newQuestion = $this->adminService->duplicateQuestion($question);
 
         $message = $question->passage_id
@@ -229,7 +243,7 @@ class QuestionController extends Controller
 
         return response()->json([
             'message'  => $message,
-            'question' => $newQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name']),
+            'question' => new QuestionResource($newQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name'])),
         ], 201);
     }
 
@@ -238,7 +252,8 @@ class QuestionController extends Controller
      */
     public function preview(Question $question)
     {
-        return response()->json(
+        $this->authorize('view', $question);
+        return new QuestionResource(
             $question->load(['options', 'skill', 'passage.questions.options', 'level', 'exam:id,title', 'creator:id,first_name,last_name'])
         );
     }
@@ -248,6 +263,7 @@ class QuestionController extends Controller
      */
     public function uploadMedia(UploadQuestionMediaRequest $request)
     {
+        $this->authorize('uploadMedia', Question::class);
         $validated = $request->validated();
 
         $path = $request->file('file')->store('questions', 'public');

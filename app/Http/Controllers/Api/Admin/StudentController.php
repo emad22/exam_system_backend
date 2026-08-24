@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\Student\BulkDestroyStudentRequest;
 use App\Http\Requests\Admin\Student\StoreStudentRequest;
 use App\Http\Requests\Admin\Student\UpdateStudentRequest;
 use App\Http\Requests\Admin\Student\ImportSkillsExcelRequest;
+use App\Http\Resources\StudentResource;
 use App\Models\ExamAttempt;
 use App\Models\Level;
 use App\Models\Question;
@@ -33,8 +34,31 @@ class StudentController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Student::with(['user', 'package', 'attempts'])
-            ->withCount('attempts')
+        $this->authorize('viewAny', Student::class);
+
+        $query = Student::with([
+            'user',
+            'package',
+            'attempts' => function ($q) {
+                $q->select('id', 'student_id', 'exam_id', 'status', 'overall_score', 'started_at', 'finished_at', 'created_at')
+                  ->with([
+                      'attemptSkills' => function ($sq) {
+                          $sq->select('id', 'exam_attempt_id', 'skill_id', 'status', 'score', 'started_at', 'finished_at')
+                             ->with('skill:id,name,short_code');
+                      }
+                  ])
+                  ->latest();
+            }
+        ])
+            ->withCount([
+                'attempts',
+                'attempts as completed_attempts_count' => function ($q) {
+                    $q->where('status', 'completed');
+                },
+                'attempts as in_progress_attempts_count' => function ($q) {
+                    $q->whereIn('status', ['in_progress', 'active', 'paused']);
+                }
+            ])
             ->orderBy('id', 'desc');
 
         if ($request->filled('partner_id')) {
@@ -83,7 +107,7 @@ class StudentController extends Controller
         $perPage  = (int) $request->input('per_page', 500);
         $students = $query->paginate($perPage);
 
-        return response()->json($students);
+        return StudentResource::collection($students);
     }
 
     /**
@@ -91,11 +115,12 @@ class StudentController extends Controller
      */
     public function store(StoreStudentRequest $request)
     {
+        $this->authorize('create', Student::class);
         $student = $this->studentService->createStudent($request->validated());
 
         return response()->json([
             'message' => 'Student account created and Exam assigned successfully.',
-            'student' => $student,
+            'student' => new StudentResource($student),
         ], 201);
     }
 
@@ -104,6 +129,7 @@ class StudentController extends Controller
      */
     public function show(Student $student)
     {
+        $this->authorize('view', $student);
         $student->load([
             'user',
             'package',
@@ -231,7 +257,7 @@ class StudentController extends Controller
             ]);
         });
 
-        return response()->json($student);
+        return new StudentResource($student);
     }
 
     /**
@@ -239,6 +265,7 @@ class StudentController extends Controller
      */
     public function update(UpdateStudentRequest $request, Student $student)
     {
+        $this->authorize('update', $student);
         $updated = $this->studentService->updateStudent(
             $student,
             $request->validated(),
@@ -247,7 +274,7 @@ class StudentController extends Controller
 
         return response()->json([
             'message' => 'Student and User profile updated successfully.',
-            'student' => $updated,
+            'student' => new StudentResource($updated),
         ]);
     }
 
@@ -256,6 +283,7 @@ class StudentController extends Controller
      */
     public function destroy(Student $student)
     {
+        $this->authorize('delete', $student);
         $this->studentService->deleteStudent($student);
 
         return response()->json(['message' => 'Student record deleted successfully.']);
@@ -266,6 +294,7 @@ class StudentController extends Controller
      */
     public function bulkDestroy(BulkDestroyStudentRequest $request)
     {
+        $this->authorize('bulkDelete', Student::class);
         $this->studentService->bulkDeleteStudents($request->validated('ids'));
 
         return response()->json(['message' => 'Selected student records deleted successfully.']);
@@ -276,6 +305,7 @@ class StudentController extends Controller
      */
     public function batchImport(BatchImportStudentRequest $request)
     {
+        $this->authorize('import', Student::class);
         $validated = $request->validated();
 
         try {
@@ -288,7 +318,8 @@ class StudentController extends Controller
                 new StudentsImport(
                     $validated['partner_id'] ?? null,
                     $validated['package_id'] ?? null,
-                    $assignedSkills
+                    $assignedSkills,
+                    $validated['exam_category_id'] ?? null
                 ),
                 $request->file('file')
             );
@@ -310,6 +341,7 @@ class StudentController extends Controller
      */
     public function bulkUpdateSkills(BulkUpdateStudentSkillsRequest $request)
     {
+        $this->authorize('bulkUpdateSkills', Student::class);
         $validated = $request->validated();
 
         $validShortCodes = $this->studentService->resolveSkillCodes($validated['skills']);
@@ -346,23 +378,25 @@ class StudentController extends Controller
      */
     public function downloadTemplate()
     {
+        $this->authorize('viewAny', Student::class);
+
+        // Columns handled by the form UI (not needed in Excel):
+        // package_id, exam_category_id, want_*, assigned_skills
         $headers = [
-            'first_name', 'last_name', 'username', 'email', 'phone', 'gender',
-            'birth_date', 'address', 'city', 'country', 'religion', 'occupation',
-            'student_code', 'institution_code', 'come_from', 'student_type',
-            'year_of_arabic', 'is_continue', 'package_id', 'exam_category_id',
-            'password', 'want_listening', 'want_reading', 'want_grammar',
-            'want_writing', 'want_speaking',
+            'first_name', 'last_name', 'username','password', 'email', 'phone', 'gender',
+             'address', 'city', 'country', 
+            'id_number', 'institution_code', 
+            
         ];
 
         $callback = function () use ($headers) {
             $file = fopen('php://output', 'w');
             fputcsv($file, $headers);
+            // Example row
             fputcsv($file, [
-                'John', 'Doe', 'johndoe123', 'john.doe@example.com', '123456789',
-                'male', '2005-05-15', '123 Street', 'Cairo', 'Egypt', 'None', 'Student',
-                'STU-101', 'INST-456', 'Direct', 'Standard', '2024', '0', '1', '1',
-                'pass123', '1', '1', '1', '0', '0',
+                'John', 'Doe', 'johndoe123', 'pass123', 'john.doe@example.com', '0123456789',
+                'male',  '123 Street', 'Cairo', 'Egypt', 
+                '11223344', 'INST-456' 
             ]);
             fclose($file);
         };
@@ -381,6 +415,7 @@ class StudentController extends Controller
      */
     public function exportSkillsExcel()
     {
+        $this->authorize('viewAny', Student::class);
         return Excel::download(new StudentSkillsExport, 'students_skills_template.xlsx');
     }
 
@@ -389,6 +424,7 @@ class StudentController extends Controller
      */
     public function importSkillsExcel(ImportSkillsExcelRequest $request)
     {
+        $this->authorize('import', Student::class);
         $validated = $request->validated();
 
         try {
@@ -408,6 +444,7 @@ class StudentController extends Controller
      */
     public function resetExamAttempts(Request $request, Student $student)
     {
+        $this->authorize('resetAttempts', $student);
         try {
             $this->studentService->resetExamAttempts($student);
 
@@ -422,6 +459,7 @@ class StudentController extends Controller
      */
     public function toggleBypassIdentityVerification(Request $request, Student $student)
     {
+        $this->authorize('toggleBypass', $student);
         try {
             $student->update([
                 'bypass_identity_verification' => !$student->bypass_identity_verification,

@@ -7,6 +7,7 @@ use App\Models\Exam;
 use App\Models\Skill;
 use App\Http\Requests\Admin\Exam\StoreExamRequest;
 use App\Http\Requests\Admin\Exam\UpdateExamRequest;
+use App\Http\Resources\ExamResource;
 use Illuminate\Support\Facades\DB;
 
 class ExamController extends Controller
@@ -16,6 +17,7 @@ class ExamController extends Controller
      */
     public function index()
     {
+        $this->authorize('viewAny', Exam::class);
         $exams = Exam::with(['language', 'category', 'skills'])
             ->withCount(['attempts', 'questions', 'skills'])
             ->latest()
@@ -34,17 +36,15 @@ class ExamController extends Controller
             $exam->breakdown = $breakdowns->get($exam->id, collect());
         });
 
-        return response()->json($exams);
+        return ExamResource::collection($exams);
     }
 
-    /**
-     * Store new Exam (Phase 5)
-     */
     /**
      * Store new Exam
      */
     public function store(StoreExamRequest $request)
     {
+        $this->authorize('create', Exam::class);
         $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request) {
@@ -86,7 +86,7 @@ class ExamController extends Controller
 
             return response()->json([
                 'message' => 'Exam created successfully.',
-                'exam' => $exam->load(['skills', 'questions'])
+                'exam'    => new ExamResource($exam->load(['skills', 'questions']))
             ], 201);
         });
     }
@@ -96,7 +96,8 @@ class ExamController extends Controller
      */
     public function show(Exam $exam)
     {
-        return response()->json($exam->load(['skills', 'questionRules', 'language', 'category', 'questions.options', 'questions.level', 'questions.passage']));
+        $this->authorize('view', $exam);
+        return new ExamResource($exam->load(['skills', 'questionRules', 'language', 'category', 'questions.options', 'questions.level', 'questions.passage']));
     }
 
     /**
@@ -104,6 +105,7 @@ class ExamController extends Controller
      */
     public function update(UpdateExamRequest $request, Exam $exam)
     {
+        $this->authorize('update', $exam);
         $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request, $exam) {
@@ -164,7 +166,7 @@ class ExamController extends Controller
 
             return response()->json([
                 'message' => 'Exam updated successfully.',
-                'exam' => $exam->load(['skills', 'questions'])
+                'exam'    => new ExamResource($exam->load(['skills', 'questions']))
             ]);
         });
     }
@@ -174,6 +176,7 @@ class ExamController extends Controller
      */
     public function destroy(Exam $exam)
     {
+        $this->authorize('delete', $exam);
         return DB::transaction(function () use ($exam) {
             // Unassign questions and detach skills
             $exam->questions()->update(['exam_id' => null]);
@@ -195,6 +198,7 @@ class ExamController extends Controller
      */
     public function setDefault(Exam $exam)
     {
+        $this->authorize('setDefault', $exam);
         // 1. Capture the ID of the old default for this same category
         $oldDefaultId = Exam::where('exam_category_id', $exam->exam_category_id)
             ->where('is_default', true)

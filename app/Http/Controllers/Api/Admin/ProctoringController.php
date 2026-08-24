@@ -20,15 +20,15 @@ use App\Models\User;
 
 class ProctoringController extends Controller
 {
-    public function __construct(
-        private readonly AttemptService $attemptService
-    ) {
+    public function __construct( private readonly AttemptService $attemptService ) {
     }
     /**
      * عرض قائمة جلسات المراقبة
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', ProctoringSession::class);
+
         if ($request->get('group_by') === 'student') {
             $query = \App\Models\Student::whereHas('proctoringSessions')
                 ->with('user');
@@ -150,6 +150,7 @@ class ProctoringController extends Controller
      */
     public function studentSessions($studentId)
     {
+        $this->authorize('viewAny', ProctoringSession::class);
         $student = \App\Models\Student::with('user')->findOrFail($studentId);
 
         $sessions = ProctoringSession::where('student_id', $studentId)
@@ -180,6 +181,8 @@ class ProctoringController extends Controller
             },
             'report',
         ])->findOrFail($sessionId);
+
+        $this->authorize('view', $session);
 
         $faceDetectionLogs = DB::table('face_detection_logs')
             ->where('proctoring_session_id', $sessionId)
@@ -224,6 +227,9 @@ class ProctoringController extends Controller
      */
     public function violations($sessionId, Request $request)
     {
+        $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorize('view', $session);
+
         $query = ExamViolation::where('proctoring_session_id', $sessionId)
             ->with(['student', 'reviewedBy']);
 
@@ -263,6 +269,9 @@ class ProctoringController extends Controller
     {
         $violation = ExamViolation::findOrFail($violationId);
 
+        $session = ProctoringSession::findOrFail($violation->proctoring_session_id);
+        $this->authorize('reviewViolation', $session);
+
         $validated = $request->validated();
 
         $violation->update([
@@ -291,6 +300,8 @@ class ProctoringController extends Controller
             'student',
             'report'
         ])->findOrFail($sessionId);
+
+        $this->authorize('view', $session);
 
         $report = $session->report ?? ProctoringReport::create([
             'proctoring_session_id' => $sessionId,
@@ -324,6 +335,8 @@ class ProctoringController extends Controller
             'violations'
         ])->findOrFail($sessionId);
 
+        $this->authorize('exportReport', $session);
+
         // هنا يمكن إضافة logic لتصدير PDF
         return response()->json([
             'message' => 'Report export feature coming soon'
@@ -336,6 +349,7 @@ class ProctoringController extends Controller
     public function updateStatus($sessionId, UpdateStatusRequest $request)
     {
         $session = ProctoringSession::with('examAttempt')->findOrFail($sessionId);
+        $this->authorize('update', $session);
 
         $validated = $request->validated();
 
@@ -408,6 +422,7 @@ class ProctoringController extends Controller
     public function endSkillExam($sessionId, Request $request)
     {
         $session = ProctoringSession::with('examAttempt')->findOrFail($sessionId);
+        $this->authorize('update', $session);
 
         $attempt = $session->examAttempt;
 
@@ -638,6 +653,7 @@ class ProctoringController extends Controller
     public function destroy($sessionId)
     {
         $session = ProctoringSession::findOrFail($sessionId);
+        $this->authorize('delete', $session);
 
         // حذف البيانات المرتبطة بالجلسة أولاً
         ExamViolation::where('proctoring_session_id', $sessionId)->delete();
@@ -657,6 +673,8 @@ class ProctoringController extends Controller
      */
     public function deleteAllStudentSessions($studentId)
     {
+        $this->authorize('bulkDelete', ProctoringSession::class);
+
         $sessionIds = ProctoringSession::where('student_id', $studentId)->pluck('id');
 
         if ($sessionIds->isEmpty()) {
@@ -687,6 +705,7 @@ class ProctoringController extends Controller
      */
     public function bulkDestroy(BulkDestroyRequest $request)
     {
+        $this->authorize('bulkDelete', ProctoringSession::class);
         $validated = $request->validated();
 
         // حذف البيانات المرتبطة بالجلسات أولاً

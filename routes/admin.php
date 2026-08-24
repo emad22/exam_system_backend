@@ -45,7 +45,7 @@ Route::get('/dev/certificate-templates/{id}/preview-debug', function ($id) {
 })->withoutMiddleware(['auth:sanctum', StaffRole::class]);
 
 
-Route::prefix('admin')->middleware(['auth:sanctum', StaffRole::class])->as('admin.')->group(function () {
+Route::prefix('admin')->middleware(['auth:sanctum', 'single.session', StaffRole::class])->as('admin.')->group(function () {
     Route::get('/stats', [Admin\DashboardController::class, 'stats'])->name('stats');
     Route::get('/live-students', [Admin\DashboardController::class, 'liveStudents'])->name('live-students');
 

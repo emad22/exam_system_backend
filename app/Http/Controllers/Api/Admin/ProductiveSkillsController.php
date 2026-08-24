@@ -345,16 +345,23 @@ class ProductiveSkillsController extends Controller
         $skillStatus   = $scorePercent >= $passThreshold ? 'completed' : 'failed';
 
         // ── 4. Update exam_attempt_skills ──────────────────────────────────
-        $attemptSkill = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-            ->where('skill_id', $skillId)
-            ->first();
+        $attemptSkill = ExamAttemptSkill::firstOrCreate(
+            [
+                'exam_attempt_id' => $attempt->id,
+                'skill_id'        => $skillId,
+            ],
+            [
+                'started_at' => now(),
+                'status'     => 'in_progress',
+            ]
+        );
 
-        if ($attemptSkill) {
-            $attemptSkill->update([
-                'score'  => $scorePercent,
-                'status' => $skillStatus,
-            ]);
-        }
+        $attemptSkill->update([
+            'score'       => $scorePercent,
+            'status'      => $skillStatus,
+            'finished_at' => now(),
+            'started_at'  => $attemptSkill->started_at ?? now(),
+        ]);
 
         // ── 5. Update exam_attempt_levels for this skill's level ───────────
         if ($level) {

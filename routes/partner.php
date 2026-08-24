@@ -17,7 +17,7 @@ use App\Http\Controllers\Api\CertificateController;
 |
 */
 
-Route::middleware(['auth:sanctum', \App\Http\Middleware\PartnerRole::class])
+Route::middleware(['auth:sanctum', 'single.session', \App\Http\Middleware\PartnerRole::class])
     ->prefix('partner')
     ->name('partner.')
     ->group(function () {

@@ -8,7 +8,7 @@ use App\Http\Controllers\Api\ExamResultController;
 use App\Http\Controllers\Api\CertificateController;
 use App\Http\Middleware\StudentOrDemoRole;
 
-Route::middleware(['auth:sanctum', StudentOrDemoRole::class])->as('student.')->group(function () {
+Route::middleware(['auth:sanctum', 'single.session', StudentOrDemoRole::class])->as('student.')->group(function () {
     // Exam Session Routes
     Route::get('/exams', [ExamSessionController::class, 'index'])->name('exams.index');
     Route::get('/exams/{exam}', [ExamSessionController::class, 'show'])->name('exams.show');
@@ -40,6 +40,6 @@ Route::middleware(['auth:sanctum', StudentOrDemoRole::class])->as('student.')->g
 });
 
 // Common Student/Auth Routes
-Route::middleware('auth:sanctum')->as('student.')->group(function () {
+Route::middleware(['auth:sanctum', 'single.session'])->as('student.')->group(function () {
     Route::get('/certificates/{certificate}/download', [CertificateController::class, 'download'])->name('certificates.download');
 });

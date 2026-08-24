@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Certificate\BulkDownloadRequest;
+use App\Http\Resources\CertificateResource;
 use App\Models\Certificate;
 use App\Models\ExamAttempt;
 use Illuminate\Http\Request;
@@ -29,7 +30,7 @@ class CertificateController extends Controller
             ->latest()
             ->get();
 
-        return response()->json($certificates);
+        return CertificateResource::collection($certificates);
     }
 
     /**
@@ -185,7 +186,7 @@ class CertificateController extends Controller
 
             return response()->json([
                 'message'         => 'Certificate created successfully.',
-                'certificate'     => $certificate,
+                'certificate'     => new CertificateResource($certificate),
                 'attempt_status'  => $attempt->status,
             ]);
         } catch (\Exception $e) {
@@ -224,7 +225,7 @@ class CertificateController extends Controller
             $query->whereDate('issue_date', '<=', $request->date_to);
         }
 
-        return response()->json($query->latest()->paginate(20));
+        return CertificateResource::collection($query->latest()->paginate(20));
     }
 
     /**
