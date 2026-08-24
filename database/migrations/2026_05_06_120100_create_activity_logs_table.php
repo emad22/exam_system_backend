@@ -9,6 +9,8 @@ return new class extends Migration
     public function up(): void
     {
         // Duplicate migration, handled by 2026_05_06_100000_create_activity_logs_table.php
+
+        return;
     }
 
     /**
