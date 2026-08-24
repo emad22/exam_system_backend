@@ -7,7 +7,7 @@ use App\Models\Exam;
 use App\Models\Question;
 use App\Models\QuestionOption;
 use App\Models\Skill;
-use Illuminate\Http\Request;
+use App\Http\Requests\ExamImport\ImportFolderRequest;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
@@ -17,16 +17,12 @@ class ExamImportController extends Controller
      * Import full exam from a folder structure.
      * Expected path: exam1/listening/level1.txt
      */
-    public function importFolder(Request $request)
+    public function importFolder(ImportFolderRequest $request)
     {
-        $request->validate([
-            'files' => 'required|array',
-            'files.*' => 'required|file',
-            'paths' => 'required|array',
-        ]);
+        $validated = $request->validated();
 
-        $files = $request->file('files');
-        $paths = $request->input('paths');
+        $files = $validated['files'] ?? [];
+        $paths = $validated['paths'] ?? [];
 
         if (count($files) !== count($paths)) {
             return response()->json(['message' => 'Files and paths count mismatch.'], 422);

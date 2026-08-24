@@ -3,22 +3,37 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Level;
-use App\Models\Passage;
+use App\Http\Requests\Admin\Question\StoreQuestionRequest;
+use App\Http\Requests\Admin\Question\UpdateQuestionRequest;
+use App\Http\Requests\Admin\Question\BulkUpdateQuestionLevelRequest;
+use App\Http\Requests\Admin\Question\UploadQuestionMediaRequest;
+use App\Http\Resources\QuestionResource;
 use App\Models\Question;
+use App\Models\Passage;
 use App\Models\Skill;
+use App\Services\QuestionAdminService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Storage;
+
 
 class QuestionController extends Controller
 {
+    public function __construct(private readonly QuestionAdminService $adminService) {}
+
     /**
-     * Get all questions with skill info
+     * Get all questions with skill info.
      */
     public function index(Request $request)
     {
-        $query = Question::with(['skill', 'options', 'passage', 'level', 'exam:id,title', 'creator:id,first_name,last_name', 'updater:id,first_name,last_name']);
+        $this->authorize('viewAny', Question::class);
+
+        $query = Question::with([
+            'skill', 'options', 'passage', 'level',
+            'exam:id,title',
+            'creator:id,first_name,last_name',
+            'updater:id,first_name,last_name',
+        ]);
 
         if ($request->has('skill_id') && $request->skill_id !== 'null' && $request->skill_id !== null) {
             $query->where('skill_id', $request->skill_id);
@@ -29,767 +44,182 @@ class QuestionController extends Controller
         }
 
         if ($request->has('level_id') && $request->level_id !== 'null' && $request->level_id !== null) {
-            $query->where('level_id', $request->level_id);
+            $levelVal = $request->level_id;
+            $query->where(function ($q) use ($levelVal) {
+                $q->where('level_id', $levelVal)
+                  ->orWhereHas('level', fn($lq) => $lq->where('level_number', $levelVal));
+            });
+        }
+
+        if ($request->has('level_number') && $request->level_number !== 'null' && $request->level_number !== null) {
+            $levelNum = $request->level_number;
+            $query->whereHas('level', fn($lq) => $lq->where('level_number', $levelNum));
         }
 
         if ($request->boolean('unassigned')) {
             $query->whereNull('exam_id');
         }
 
-        if ($request->boolean('no_paginate')) {
-            return response()->json($query->get());
-        }
+        $query->orderBy('id', 'asc');
 
-        return response()->json($query->get());
+        return QuestionResource::collection($query->get());
     }
 
     /**
-     * Store new Question with Options, Passage handling, and Level mapping.
+     * Store a new batch of questions (with passage and options).
      */
-    public function store(Request $request)
+    public function store(StoreQuestionRequest $request)
     {
-        \Log::info('Question store request', [
-            'exam_id' => $request->exam_id,
-            'skill_id' => $request->skill_id,
-            'all_keys' => array_keys($request->all())
-        ]);
+        $this->authorize('create', Question::class);
+        // \Log::info('Question store request', [
+        //     'exam_id'  => $request->exam_id,
+        //     'skill_id' => $request->skill_id,
+        //     'all_keys' => array_keys($request->all()),
+        // ]);
 
+        // 1. Merge JSON-encoded questions with uploaded files
+        $mergedData = $this->adminService->mergeJsonWithFiles($request);
+        $request->merge(['questions' => $mergedData['questions']]);
 
-        $data = $request->all();
-
-        $questionsJson = $request->input('questions');
-        if (is_string($questionsJson)) {
-            $decodedQuestions = json_decode($questionsJson, true);
-            if (is_array($decodedQuestions)) {
-                $files = $request->file('questions') ?? [];
-                if (is_array($files)) {
-                    foreach ($files as $qIndex => $fileArray) {
-                        if (!isset($decodedQuestions[$qIndex]) || !is_array($fileArray))
-                            continue;
-
-                        // Merge question-level files (q_media_file, q_audio_file, q_image_file)
-                        foreach ($fileArray as $fileKey => $fileValue) {
-                            if ($fileKey === 'options')
-                                continue; // نتجاهل الـ options هنا
-                            $decodedQuestions[$qIndex][$fileKey] = $fileValue;
-                        }
-
-                        // Merge option-level files بدون ما نمسح is_correct أو option_text
-                        if (isset($fileArray['options']) && is_array($fileArray['options'])) {
-                            foreach ($fileArray['options'] as $oIndex => $optFiles) {
-                                if (isset($decodedQuestions[$qIndex]['options'][$oIndex])) {
-                                    // نضيف الـ files للـ option الموجود بدون ما نـ overwrite
-                                    foreach ($optFiles as $optKey => $optValue) {
-                                        $decodedQuestions[$qIndex]['options'][$oIndex][$optKey] = $optValue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                $data['questions'] = $decodedQuestions;
-            }
+        // 2. Points budget check
+        if ($error = $this->adminService->checkPointsBudget( $request->questions, $request->exam_id, $request->skill_id )) 
+        {
+            return response()->json($error, 422);
         }
 
-        $validator = Validator::make($data, [
-            'skill_id' => 'required|exists:skills,id',
-            'exam_id' => 'required|exists:exams,id',
-            'level_id' => 'nullable|integer|min:1|max:9', // optional for writing/speaking (defaults to 1)
-
-            // Passage Logic
-            'passage_mode' => 'required|in:none,existing,new',
-            'passage_id' => 'required_if:passage_mode,existing|exists:passages,id|nullable',
-            'passage_type' => 'required_if:passage_mode,new|in:text,image,audio,video|nullable',
-            'passage_title' => 'nullable|string',
-            'passage_content' => 'nullable|string',
-            'passage_questions_limit' => 'nullable|integer|min:1',
-            'passage_is_random' => 'nullable',
-            'p_media_file' => 'nullable|file|max:20480',
-            'p_audio_file' => 'nullable|file|max:20480',
-            'p_image_file' => 'nullable|file|mimetypes:image/jpeg,image/png,image/gif,image/svg+xml,image/webp|max:10240',
-            'p_image_width' => 'nullable|numeric',
-            'p_image_height' => 'nullable|numeric',
-
-            // Questions Batch
-            'questions' => 'required|array|min:1',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word,pdf_annotation',
-            'questions.*.content' => 'nullable|string',
-            'questions.*.instructions' => 'nullable|string',
-            'questions.*.general_instructions' => 'nullable|string',
-            'questions.*.points' => 'required|integer|min:1',
-            'questions.*.sort_order' => 'nullable|integer',
-            'questions.*.image_width' => 'nullable|numeric',
-            'questions.*.image_height' => 'nullable|numeric',
-            'questions.*.options' => 'nullable|array',
-        ]);
-
-        if ($validator->fails()) {
-            \Illuminate\Support\Facades\Log::error('Question Store Validation Failed', [
-                'errors' => $validator->errors()->toArray(),
-                'input' => $request->all()
-            ]);
-            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
+        // 3. Options logic check
+        if ($error = $this->adminService->validateOptionsLogic($request->questions)) {
+            return response()->json($error, 422);
         }
 
-        $validated = $validator->validated();
-        // Replace request questions with decoded ones for the rest of the logic
-        $request->merge(['questions' => $validated['questions']]);
-
-        // --- Points-budget check for writing/speaking (productive skills) ---
-        $allQuestions = $validated['questions'] ?? [];
-        $skill = Skill::find($validated['skill_id']);
-        $isProductive = false;
-        if ($skill) {
-            $code = strtoupper($skill->short_code ?? '');
-            $name = strtolower($skill->name ?? '');
-            $isProductive = in_array($code, ['W', 'S', 'WR', 'SP', 'WRIT', 'SPEAK', 'WRITING', 'SPEAKING'])
-                || str_contains($name, 'writ') || str_contains($name, 'speak');
-        }
-
-        if ($isProductive) {
-            $maxPoints = DB::table('exam_skill')
-                ->where('exam_id', $validated['exam_id'])
-                ->where('skill_id', $validated['skill_id'])
-                ->value('max_points') ?? 0;
-            if ($maxPoints > 0) {
-                $existing = Question::where('exam_id', $validated['exam_id'])
-                    ->where('skill_id', $validated['skill_id'])
-                    ->sum('points');
-                $newTotal = collect($allQuestions)->sum('points');
-                if (($existing + $newTotal) > $maxPoints) {
-                    $remaining = max(0, $maxPoints - $existing);
-                    return response()->json([
-                        'message' => "Total points exceed the skill cap of {$maxPoints}. Remaining budget: {$remaining} pts.",
-                        'errors' => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
-                    ], 422);
-                }
-            }
-        }
-
-        // Logic check for MCQ/TrueFalse for all questions in the batch
-        foreach ($request->questions as $index => $qData) {
-            // click_word only needs 1 option minimum (each clickable word is an option)
-            $minOptions = $qData['type'] === 'click_word' ? 1 : 2;
-
-            if (in_array($qData['type'], ['mcq', 'true_false', 'drag_drop', 'word_selection', 'click_word', 'fill_blank', 'matching', 'ordering', 'highlight', 'listening'])) {
-                if (!isset($qData['options']) || count($qData['options']) < $minOptions) {
-                    return response()->json(['message' => "Options are required for question #" . ($index + 1)], 422);
-                }
-                $hasCorrect = collect($qData['options'])->contains('is_correct', true);
-                if (!$hasCorrect) {
-                    return response()->json(['message' => "You must select a correct answer for question #" . ($index + 1)], 422);
-                }
-            }
-        }
-
+        // 4. Persist
         return DB::transaction(function () use ($request) {
-            $passageId = null;
-
-            // 1. Handle Passage (Shared for the whole batch)
-            if ($request->passage_mode === 'existing') {
-                $passageId = $request->passage_id;
-            } elseif ($request->passage_mode === 'new') {
-                $pMediaPath = null;
-                $pAudioPath = null;
-                $pImagePath = null;
-                if ($request->hasFile('p_media_file')) {
-                    $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
-                }
-                if ($request->hasFile('p_audio_file')) {
-                    $pAudioPath = $request->file('p_audio_file')->store('passages/audio', 'public');
-                }
-                if ($request->hasFile('p_image_file')) {
-                    $pImagePath = $request->file('p_image_file')->store('passages/images', 'public');
-                }
-
-                $passage = Passage::create([
-                    'type' => $request->passage_type,
-                    'title' => $request->passage_title,
-                    'content' => $request->passage_content,
-                    'general_instructions' => $request->input('passage_general_instructions'),
-                    'media_path' => $pMediaPath,
-                    'audio_path' => $pAudioPath,
-                    'image_path' => $pImagePath,
-                    'image_width' => $request->p_image_width,
-                    'image_height' => $request->p_image_height,
-                    'questions_limit' => $request->passage_questions_limit,
-                    'is_random' => $request->boolean('passage_is_random'),
-                ]);
-                $passageId = $passage->id;
-            }
-
-            // 2. Map Slider Level to Level ID (or dynamically create it if missing)
-            $level = Level::firstOrCreate(
-                [
-                    'skill_id' => $request->skill_id,
-                    'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
-                ],
-                [
-                    'name' => 'Level ' . ($request->level_id ?? 1),
-                    'min_score' => 0,
-                    'max_score' => 100,
-                    'default_standalone_quantity' => 0,
-                    'default_passage_quantity' => 0,
-                    'default_question_count' => 0
-                ]
-            );
-            $actualLevelId = $level->id;
-
-            $createdQuestions = [];
-
-            // 3. Process each question in the batch
-            foreach ($request->questions as $index => $qData) {
-                $qMediaPath = null;
-                $qAudioPath = null;
-                $qImagePath = null;
-                $qPdfPath = null;
-
-                $fileKey = "questions.{$index}.q_media_file";
-                if ($request->hasFile($fileKey)) {
-                    $qMediaPath = $request->file($fileKey)->store('questions', 'public');
-                }
-
-                $audioKey = "questions.{$index}.q_audio_file";
-                if ($request->hasFile($audioKey)) {
-                    $qAudioPath = $request->file($audioKey)->store('questions/audio', 'public');
-                }
-
-                $imageKey = "questions.{$index}.q_image_file";
-                if ($request->hasFile($imageKey)) {
-                    $qImagePath = $request->file($imageKey)->store('questions/images', 'public');
-                }
-
-                $pdfKey = "questions.{$index}.q_pdf_file";
-                if ($request->hasFile($pdfKey)) {
-                    $qPdfPath = $request->file($pdfKey)->store('questions/pdfs', 'public');
-                } elseif ($qMediaPath && str_ends_with(strtolower($qMediaPath), '.pdf')) {
-                    $qPdfPath = $qMediaPath;
-                }
-
-                $question = Question::create([
-                    'skill_id' => $request->skill_id,
-                    'exam_id' => $request->exam_id,
-                    'level_id' => $actualLevelId,
-                    'passage_id' => $passageId,
-                    'type' => $qData['type'],
-                    'instructions' => $qData['instructions'] ?? null,
-                    'general_instructions' => $qData['general_instructions'] ?? null,
-                    'content' => $qData['content'] ?? '',
-                    'media_path' => $qMediaPath,
-                    'audio_path' => $qAudioPath,
-                    'image_path' => $qImagePath,
-                    'pdf_path' => $qPdfPath,
-                    'image_width' => $qData['image_width'] ?? null,
-                    'image_height' => $qData['image_height'] ?? null,
-                    'points' => $qData['points'] ?? 1,
-                    'sort_order' => $qData['sort_order'] ?? 0,
-                    'min_words' => $qData['min_words'] ?? null,
-                    'max_words' => $qData['max_words'] ?? null,
-                    'created_by' => $request->user()?->id,
-                ]);
-
-                // 4. Create Options
-                if (!empty($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'speaking_live', 'upload'])) {
-                    foreach ($qData['options'] as $oIdx => $opt) {
-                        $optImagePath = null;
-                        if (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
-                            $optImagePath = $opt['image']->store('options/images', 'public');
-                        }
-
-                        $optAudioPath = null;
-                        if (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
-                            $optAudioPath = $opt['audio']->store('options/audio', 'public');
-                        }
-
-                        $question->options()->create([
-                            'option_text' => $opt['option_text'] ?? '',
-                            'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                            'sort_order' => ($oIdx + 1) * 10,
-                            'dir' => $opt['dir'] ?? 'ltr',
-                            'image_path' => $optImagePath,
-                            'sound_path' => $optAudioPath,
-                        ]);
-                    }
-                }
-
-                $createdQuestions[] = $question->id;
-            }
+            $passageId = $this->adminService->handlePassageStore($request);
+            $level     = $this->adminService->resolveLevel($request->skill_id, $request->level_id);
+            $ids       = $this->adminService->createBatch($request, $passageId, $level);
 
             return response()->json([
-                'message' => count($createdQuestions) . ' questions and passage created successfully.',
-                'question_ids' => $createdQuestions,
-                'passage_id' => $passageId
+                'message'      => count($ids) . ' questions and passage created successfully.',
+                'question_ids' => $ids,
+                'passage_id'   => $passageId,
             ], 201);
         });
     }
 
     /**
-     * Get a single question with its options and full passage context if available
+     * Get a single question with full context.
      */
     public function show(Question $question)
     {
-        return response()->json($question->load(['options', 'skill', 'passage.questions.options', 'level', 'creator:id,first_name,last_name', 'updater:id,first_name,last_name']));
+        $this->authorize('view', $question);
+        return new QuestionResource(
+            $question->load(['options', 'skill', 'passage.questions.options', 'level', 'creator:id,first_name,last_name', 'updater:id,first_name,last_name'])
+        );
     }
 
     /**
-     * Update Questions (Batch support)
+     * Update a batch of questions (with passage and options).
      */
-    public function update(Request $request, Question $question)
+    public function update(UpdateQuestionRequest $request, Question $question)
     {
-        $data = $request->all();
+        $this->authorize('update', $question);
+        // 1. Merge JSON-encoded questions with uploaded files
+        $mergedData = $this->adminService->mergeJsonWithFiles($request);
+        $request->merge(['questions' => $mergedData['questions']]);
 
-        $questionsJson = $request->input('questions');
-        if (is_string($questionsJson)) {
-            $decodedQuestions = json_decode($questionsJson, true);
-            if (is_array($decodedQuestions)) {
-                $files = $request->file('questions') ?? [];
-                if (is_array($files)) {
-                    foreach ($files as $qIndex => $fileArray) {
-                        if (!isset($decodedQuestions[$qIndex]) || !is_array($fileArray))
-                            continue;
-
-                        // Merge question-level files (q_media_file, q_audio_file, q_image_file)
-                        foreach ($fileArray as $fileKey => $fileValue) {
-                            if ($fileKey === 'options')
-                                continue; // نتجاهل الـ options هنا
-                            $decodedQuestions[$qIndex][$fileKey] = $fileValue;
-                        }
-
-                        // Merge option-level files بدون ما نمسح is_correct أو option_text
-                        if (isset($fileArray['options']) && is_array($fileArray['options'])) {
-                            foreach ($fileArray['options'] as $oIndex => $optFiles) {
-                                if (isset($decodedQuestions[$qIndex]['options'][$oIndex])) {
-                                    // نضيف الـ files للـ option الموجود بدون ما نـ overwrite
-                                    foreach ($optFiles as $optKey => $optValue) {
-                                        $decodedQuestions[$qIndex]['options'][$oIndex][$optKey] = $optValue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                $data['questions'] = $decodedQuestions;
-            }
+        // 2. Points budget check (exclude the questions being updated)
+        $updatingIds = collect($request->questions)->pluck('id')->filter()->toArray();
+        if ($error = $this->adminService->checkPointsBudget(
+            $request->questions,
+            $request->exam_id,
+            $request->skill_id,
+            $updatingIds
+        )) {
+            return response()->json($error, 422);
         }
 
-        $validator = Validator::make($data, [
-            'skill_id' => 'required|exists:skills,id',
-            'exam_id' => 'required|exists:exams,id',
-            'level_id' => 'nullable|integer|min:1|max:9', // optional for writing/speaking
-
-            // Passage Logic
-            'passage_mode' => 'required|in:none,existing,new',
-            'passage_id' => 'required_if:passage_mode,existing|exists:passages,id|nullable',
-            'passage_type' => 'required_if:passage_mode,new|in:text,image,audio,video|nullable',
-            'passage_title' => 'nullable|string',
-            'passage_content' => 'nullable|string',
-            'passage_questions_limit' => 'nullable|integer|min:1',
-            'passage_is_random' => 'nullable',
-            'p_media_file' => 'nullable|file|max:20480',
-            'p_audio_file' => 'nullable|file|max:20480',
-            'p_image_file' => 'nullable|file|mimetypes:image/jpeg,image/png,image/gif,image/svg+xml,image/webp|max:10240',
-            'p_image_width' => 'nullable|numeric',
-            'p_image_height' => 'nullable|numeric',
-
-            // Questions Batch
-            'questions' => 'required|array|min:1',
-            'questions.*.id' => 'nullable|integer',
-            'questions.*.type' => 'required|in:mcq,true_false,short_answer,writing,speaking,speaking_live,upload,drag_drop,word_selection,fill_blank,matching,ordering,highlight,listening,click_word,pdf_annotation',
-            'questions.*.content' => 'nullable|string',
-            'questions.*.instructions' => 'nullable|string',
-            'questions.*.general_instructions' => 'nullable|string',
-            'questions.*.points' => 'required|integer|min:1',
-            'questions.*.sort_order' => 'nullable|integer',
-            'questions.*.image_width' => 'nullable|numeric',
-            'questions.*.image_height' => 'nullable|numeric',
-            'questions.*.clear_q_image' => 'nullable|boolean',
-            'questions.*.clear_q_audio' => 'nullable|boolean',
-            'questions.*.clear_q_media' => 'nullable|boolean',
-            'questions.*.clear_q_pdf' => 'nullable|boolean',
-            'questions.*.options' => 'nullable|array',
-        ]);
-
-        if ($validator->fails()) {
-            \Illuminate\Support\Facades\Log::error('Question Update Validation Failed', [
-                'errors' => $validator->errors()->toArray(),
-                'input' => $request->all()
-            ]);
-            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
-        }
-
-        $validated = $validator->validated();
-        $request->merge(['questions' => $validated['questions']]);
-
-        // --- Points-budget check for writing/speaking (productive skills) ---
-        $allQuestions = $validated['questions'] ?? [];
-        $skill = Skill::find($validated['skill_id']);
-        $isProductive = false;
-        if ($skill) {
-            $code = strtoupper($skill->short_code ?? '');
-            $name = strtolower($skill->name ?? '');
-            $isProductive = in_array($code, ['W', 'S', 'WR', 'SP', 'WRIT', 'SPEAK', 'WRITING', 'SPEAKING'])
-                || str_contains($name, 'writ') || str_contains($name, 'speak');
-        }
-
-        if ($isProductive) {
-            $maxPoints = DB::table('exam_skill')
-                ->where('exam_id', $validated['exam_id'])
-                ->where('skill_id', $validated['skill_id'])
-                ->value('max_points') ?? 0;
-            if ($maxPoints > 0) {
-                // Exclude the questions that are being updated from the database points sum to avoid double counting
-                $updatingIds = collect($allQuestions)->pluck('id')->filter()->toArray();
-                $existing = Question::where('exam_id', $validated['exam_id'])
-                    ->where('skill_id', $validated['skill_id'])
-                    ->whereNotIn('id', $updatingIds)
-                    ->sum('points');
-                $newTotal = collect($allQuestions)->sum('points');
-                if (($existing + $newTotal) > $maxPoints) {
-                    $remaining = max(0, $maxPoints - $existing);
-                    return response()->json([
-                        'message' => "Total points exceed the skill cap of {$maxPoints}. Remaining budget: {$remaining} pts.",
-                        'errors' => ['points' => ["Cannot exceed the {$maxPoints}pt cap. Remaining: {$remaining} pts."]]
-                    ], 422);
-                }
-            }
-        }
-
+        // 3. Persist
         return DB::transaction(function () use ($request, $question) {
-            $passageId = $question->passage_id;
-
-            // 1. Handle Passage Update
-            if ($request->passage_mode === 'none') {
-                $passageId = null;
-
-            } elseif ($request->passage_mode === 'existing') {
-                $passageId = $request->passage_id;
-
-                if ($passageId) {
-                    $passage = Passage::find($passageId);
-                    if ($passage) {
-                        $pMediaPath = $request->boolean('clear_p_media') ? null : ($request->hasFile('p_media_file') ? $request->file('p_media_file')->store('passages', 'public') : $passage->media_path);
-                        $pAudioPath = $request->boolean('clear_p_audio') ? null : ($request->hasFile('p_audio_file') ? $request->file('p_audio_file')->store('passages/audio', 'public') : $passage->audio_path);
-                        $pImagePath = $request->boolean('clear_p_image') ? null : ($request->hasFile('p_image_file') ? $request->file('p_image_file')->store('passages/images', 'public') : $passage->image_path);
-
-                        $passage->update([
-                            'type' => $request->passage_type ?? $passage->type,
-                            'title' => $request->passage_title ?? $passage->title,
-                            'content' => $request->passage_content ?? $passage->content,
-                            'general_instructions' => $request->has('passage_general_instructions') ? $request->input('passage_general_instructions') : $passage->general_instructions,
-                            'media_path' => $pMediaPath,
-                            'audio_path' => $pAudioPath,
-                            'image_path' => $pImagePath,
-                            'image_width' => $request->has('p_image_width') ? $request->p_image_width : $passage->image_width,
-                            'image_height' => $request->has('p_image_height') ? $request->p_image_height : $passage->image_height,
-                            'questions_limit' => $request->passage_questions_limit ?? $passage->questions_limit,
-                            'is_random' => $request->boolean('passage_is_random'),
-                        ]);
-                    }
-                }
-
-            } elseif ($request->passage_mode === 'new') {
-                $pMediaPath = null;
-                if ($request->hasFile('p_media_file')) {
-                    $pMediaPath = $request->file('p_media_file')->store('passages', 'public');
-                }
-                $passage = Passage::create([
-                    'type' => $request->passage_type,
-                    'title' => $request->passage_title,
-                    'content' => $request->passage_content,
-                    'general_instructions' => $request->input('passage_general_instructions'),
-                    'media_path' => $pMediaPath,
-                    'image_width' => $request->p_image_width,
-                    'image_height' => $request->p_image_height,
-                    'questions_limit' => $request->passage_questions_limit,
-                    'is_random' => $request->boolean('passage_is_random'),
-                ]);
-                $passageId = $passage->id;
-            }
-
-            // 2. Map Level (or dynamically create it if missing)
-            $level = Level::firstOrCreate(
-                [
-                    'skill_id' => $request->skill_id,
-                    'level_number' => $request->level_id ?? 1, // Default to level 1 for writing/speaking
-                ],
-                [
-                    'name' => 'Level ' . ($request->level_id ?? 1),
-                    'min_score' => 0,
-                    'max_score' => 100,
-                    'default_standalone_quantity' => 0,
-                    'default_passage_quantity' => 0,
-                    'default_question_count' => 0
-                ]
-            );
-            $actualLevelId = $level->id;
-
-            // 3. Process Batch if provided, else single update
-            $questionsData = $request->questions ?? [
-                array_merge($request->only(['type', 'content', 'instructions', 'general_instructions', 'points', 'min_words', 'max_words', 'options', 'image_width', 'image_height']), ['id' => $question->id])
-            ];
-
-            // 3.a Remove any questions that were deleted in the UI from this passage
-            if ($passageId) {
-                $incomingIds = collect($questionsData)->pluck('id')->filter()->toArray();
-                $existingIds = Question::where('passage_id', $passageId)->pluck('id')->toArray();
-                $toDelete = array_diff($existingIds, $incomingIds);
-                if (!empty($toDelete)) {
-                    $questionsToDelete = Question::whereIn('id', $toDelete)->get();
-                    foreach ($questionsToDelete as $dq) {
-                        $dq->options()->delete();
-                        $dq->delete();
-                    }
-                }
-            }
-
-            foreach ($questionsData as $index => $qData) {
-                $qMediaPath = null;
-                $qAudioPath = null;
-                $qImagePath = null;
-                $qPdfPath = null;
-                $fileKey = "questions.{$index}.q_media_file";
-                $audioKey = "questions.{$index}.q_audio_file";
-                $imageKey = "questions.{$index}.q_image_file";
-                $pdfKey = "questions.{$index}.q_pdf_file";
-
-                // Single update handling
-                if (count($questionsData) === 1) {
-                    if (!$request->hasFile($fileKey) && $request->hasFile('q_media_file'))
-                        $fileKey = 'q_media_file';
-                    if (!$request->hasFile($audioKey) && $request->hasFile('q_audio_file'))
-                        $audioKey = 'q_audio_file';
-                    if (!$request->hasFile($imageKey) && $request->hasFile('q_image_file'))
-                        $imageKey = 'q_image_file';
-                    if (!$request->hasFile($pdfKey) && $request->hasFile('q_pdf_file'))
-                        $pdfKey = 'q_pdf_file';
-                }
-
-                if ($request->hasFile($fileKey)) {
-                    $qMediaPath = $request->file($fileKey)->store('questions', 'public');
-                }
-                if ($request->hasFile($audioKey)) {
-                    $qAudioPath = $request->file($audioKey)->store('questions/audio', 'public');
-                }
-                if ($request->hasFile($imageKey)) {
-                    $qImagePath = $request->file($imageKey)->store('questions/images', 'public');
-                }
-                if ($request->hasFile($pdfKey)) {
-                    $qPdfPath = $request->file($pdfKey)->store('questions/pdfs', 'public');
-                } elseif ($qMediaPath && str_ends_with(strtolower($qMediaPath), '.pdf')) {
-                    $qPdfPath = $qMediaPath;
-                }
-
-                $qInstance = isset($qData['id']) ? Question::find($qData['id']) : new Question();
-
-                $data = [
-                    'skill_id' => $request->skill_id,
-                    'exam_id' => $request->exam_id,
-                    'level_id' => $actualLevelId,
-                    'passage_id' => $passageId,
-                    'type' => $qData['type'],
-                    'instructions' => $qData['instructions'] ?? null,
-                    'general_instructions' => $qData['general_instructions'] ?? null,
-                    'content' => $qData['content'] ?? '',
-                    'image_width' => array_key_exists('image_width', $qData) ? $qData['image_width'] : null,
-                    'image_height' => array_key_exists('image_height', $qData) ? $qData['image_height'] : null,
-                    'points' => $qData['points'] ?? 1,
-                    'sort_order' => $qData['sort_order'] ?? 0,
-                    'min_words' => $qData['min_words'] ?? null,
-                    'max_words' => $qData['max_words'] ?? null,
-                ];
-
-                // احتفظ بالصور والميديا الموجودة لو مفيش جديد
-                if ($qMediaPath) {
-                    $data['media_path'] = $qMediaPath;
-                } elseif (filter_var($qData['clear_q_media'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-                    $data['media_path'] = null;
-                } elseif ($qInstance->exists) {
-                    $data['media_path'] = $qInstance->media_path; // keep existing
-                }
-
-                if ($qAudioPath) {
-                    $data['audio_path'] = $qAudioPath;
-                } elseif (filter_var($qData['clear_q_audio'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-                    $data['audio_path'] = null;
-                } elseif ($qInstance->exists) {
-                    $data['audio_path'] = $qInstance->audio_path;
-                }
-
-                if ($qImagePath) {
-                    $data['image_path'] = $qImagePath;
-                } elseif (filter_var($qData['clear_q_image'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-                    $data['image_path'] = null;
-                } elseif ($qInstance->exists) {
-                    $data['image_path'] = $qInstance->image_path;
-                }
-
-                if ($qPdfPath) {
-                    $data['pdf_path'] = $qPdfPath;
-                } elseif (filter_var($qData['clear_q_pdf'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-                    $data['pdf_path'] = null;
-                } elseif ($qInstance->exists) {
-                    $data['pdf_path'] = $qInstance->pdf_path;
-                }
-
-                $data['updated_by'] = $request->user()?->id;
-                if (!$qInstance->exists) {
-                    $data['created_by'] = $request->user()?->id;
-                }
-
-                $qInstance->fill($data);
-                $qInstance->save();
-
-                // 4. Update Options
-                if (isset($qData['options']) && !in_array($qData['type'], ['writing', 'speaking', 'speaking_live', 'upload'])) {
-
-                    $incomingIds = collect($qData['options'])->pluck('id')->filter()->toArray();
-
-                    // اجلب الـ options الموجودة قبل الحذف
-                    $existingOptions = $qInstance->options()->get()->keyBy('id');
-
-                    // امسح اللي اتحذف من الـ UI بس
-                    $qInstance->options()->whereNotIn('id', $incomingIds)->delete();
-
-                    foreach ($qData['options'] as $oIdx => $opt) {
-                        // جيب من الـ collection اللي جبناها قبل الحذف
-                        $existingOption = isset($opt['id']) ? $existingOptions->get($opt['id']) : null;
-
-                        if (isset($opt['clear_image']) && $opt['clear_image']) {
-                            $optImagePath = null;
-                        } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
-                            $optImagePath = $opt['image']->store('options/images', 'public');
-                        } else {
-                            $optImagePath = $existingOption?->image_path; // دلوقتي هتلاقي الصورة
-                        }
-
-
-                        if (isset($opt['clear_audio']) && $opt['clear_audio']) {
-                            $optAudioPath = null;
-                        } elseif (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
-                            $optAudioPath = $opt['audio']->store('options/audio', 'public');
-                        } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
-                            // لو رفع صورة جديدة - امسح الصوت القديم
-                            $optAudioPath = null;
-                        } else {
-                            $optAudioPath = $existingOption?->sound_path;
-                        }
-
-                        if ($existingOption) {
-                            $existingOption->update([
-                                'option_text' => $opt['option_text'] ?? '',
-                                'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                                'sort_order' => ($oIdx + 1) * 10,
-                                'dir' => $opt['dir'] ?? 'ltr',
-                                'image_path' => $optImagePath,
-                                'sound_path' => $optAudioPath,
-
-                            ]);
-                        } else {
-                            $qInstance->options()->create([
-                                'option_text' => $opt['option_text'] ?? '',
-                                'is_correct' => filter_var($opt['is_correct'] ?? false, FILTER_VALIDATE_BOOLEAN),
-                                'sort_order' => ($oIdx + 1) * 10,
-                                'dir' => $opt['dir'] ?? 'ltr',
-                                'image_path' => $optImagePath,
-                                'sound_path' => $optAudioPath,
-                            ]);
-                        }
-                    }
-                }
-
-
-
-
-            }
+            $passageId    = $this->adminService->handlePassageUpdate($request, $question);
+            $level        = $this->adminService->resolveLevel($request->skill_id, $request->level_id);
+            $lastInstance = $this->adminService->updateBatch($request, $question, $passageId, $level);
 
             return response()->json([
-                'message' => 'Batch updated successfully.',
-                'question' => $qInstance->fresh(['options', 'passage.questions.options'])
+                'message'  => 'Batch updated successfully.',
+                'question' => new QuestionResource($lastInstance->load(['options', 'skill', 'level'])),
             ]);
         });
     }
 
+    /**
+     * Delete a question (and its entire passage group if applicable).
+     */
     public function destroy(Question $question)
     {
+        $this->authorize('delete', $question);
         return DB::transaction(function () use ($question) {
             if ($question->passage_id) {
-                $passageId = $question->passage_id;
-                // Get all questions in the same passage
+                $passageId        = $question->passage_id;
                 $passageQuestions = Question::where('passage_id', $passageId)->get();
+
                 foreach ($passageQuestions as $pQuestion) {
                     $pQuestion->options()->delete();
                     $pQuestion->delete();
                 }
-                // Delete the passage itself
+
                 $passage = Passage::find($passageId);
-                if ($passage) {
-                    $passage->delete();
-                }
+                $passage?->delete();
             } else {
                 $question->options()->delete();
                 $question->delete();
             }
+
             return response()->json(['message' => 'Question deleted successfully.']);
         });
     }
 
     /**
-     * Get all questions for a specific skill
+     * Get all questions for a specific skill.
      */
     public function indexBySkill(Skill $skill)
     {
-        return response()->json(
+        $this->authorize('viewAny', Question::class);
+        return QuestionResource::collection(
             Question::where('skill_id', $skill->id)
                 ->withCount('options')
+                ->with(['options', 'level'])
                 ->latest()
                 ->get()
         );
     }
 
     /**
-     * Bulk update difficulty level for multiple questions
+     * Bulk update difficulty level for multiple questions.
      */
-    public function bulkUpdateLevel(Request $request)
+    public function bulkUpdateLevel(BulkUpdateQuestionLevelRequest $request)
     {
-        $validated = $request->validate([
-            'question_ids' => 'required|array',
-            'question_ids.*' => 'exists:questions,id',
-            'level_id' => 'required|integer|min:1|max:9',
-        ]);
+        $this->authorize('bulkUpdateLevel', Question::class);
+        $validated = $request->validated();
 
-        // ✅ جيب أول question عشان تعرف الـ skill_id
         $firstQuestion = Question::find($validated['question_ids'][0]);
         if (!$firstQuestion) {
             return response()->json(['message' => 'Questions not found.'], 404);
         }
 
-        // ✅ جيب الـ actual level record بالـ skill_id + level_number
-        $level = Level::firstOrCreate(
-            [
-                'skill_id' => $firstQuestion->skill_id,
-                'level_number' => $validated['level_id'],
-            ],
-            [
-                'name' => 'Level ' . $validated['level_id'],
-                'min_score' => 0,
-                'max_score' => 100,
-                'default_standalone_quantity' => 0,
-                'default_passage_quantity' => 0,
-                'default_question_count' => 0,
-            ]
-        );
+        $level = $this->adminService->resolveLevel($firstQuestion->skill_id, $validated['level_id']);
 
-        // ✅ استخدم الـ actual level ID مش الـ level_number
         Question::whereIn('id', $validated['question_ids'])
             ->update(['level_id' => $level->id]);
 
         return response()->json(['message' => 'Questions updated successfully.']);
     }
+
     /**
-     * Get unique tags for questions belonging to a specific skill
+     * Get unique group tags for questions belonging to a specific skill.
      */
     public function getTagsBySkill(Skill $skill)
     {
+        $this->authorize('viewAny', Question::class);
         $tags = Question::where('skill_id', $skill->id)
             ->whereNotNull('group_tag')
             ->where('group_tag', '!=', '')
@@ -799,122 +229,64 @@ class QuestionController extends Controller
         return response()->json($tags);
     }
 
+    /**
+     * Duplicate a question (and its full passage group if applicable).
+     */
     public function duplicate(Question $question)
     {
-        return DB::transaction(function () use ($question) {
-            // Check if this question is part of a passage
-            if ($question->passage_id) {
-                $passage = $question->passage;
-                if ($passage) {
-                    // Replicate the passage itself
-                    $newPassage = $passage->replicate();
-                    $newPassage->save();
+        $this->authorize('create', Question::class);
+        $newQuestion = $this->adminService->duplicateQuestion($question);
 
-                    $targetNewQuestion = null;
+        $message = $question->passage_id
+            ? 'Passage and all associated questions duplicated successfully.'
+            : 'Question duplicated successfully.';
 
-                    // Get all questions in the same passage
-                    $passageQuestions = Question::where('passage_id', $passage->id)->get();
-                    foreach ($passageQuestions as $pQuestion) {
-                        $newPQuestion = $pQuestion->replicate();
-                        $newPQuestion->passage_id = $newPassage->id;
-                        $newPQuestion->created_by = request()->user()?->id;
-                        $newPQuestion->updated_by = request()->user()?->id;
-                        $newPQuestion->save();
-
-                        // Duplicate options for this question
-                        if ($pQuestion->options()->exists()) {
-                            $pQuestion->options()->each(function ($option) use ($newPQuestion) {
-                                $newPQuestion->options()->create([
-                                    'option_text' => $option->option_text,
-                                    'is_correct' => $option->is_correct,
-                                    'sort_order' => $option->sort_order
-                                ]);
-                            });
-                        }
-
-                        // Track the duplicate of the question that was clicked
-                        if ($pQuestion->id === $question->id) {
-                            $targetNewQuestion = $newPQuestion;
-                        }
-                    }
-
-                    // Fallback to first question in new passage if target wasn't found
-                    if (!$targetNewQuestion) {
-                        $targetNewQuestion = Question::where('passage_id', $newPassage->id)->first();
-                    }
-
-                    return response()->json([
-                        'message' => 'Passage and all associated questions duplicated successfully.',
-                        'question' => $targetNewQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name'])
-                    ], 201);
-                }
-            }
-
-            // Standalone question replication
-            $newQuestion = $question->replicate();
-            $newQuestion->created_by = request()->user()?->id;
-            $newQuestion->updated_by = request()->user()?->id;
-            $newQuestion->save();
-
-            // Duplicate options
-            if ($question->options()->exists()) {
-                $question->options()->each(function ($option) use ($newQuestion) {
-                    $newQuestion->options()->create([
-                        'option_text' => $option->option_text,
-                        'is_correct' => $option->is_correct,
-                        'sort_order' => $option->sort_order,
-                        'dir' => $option->dir ?? 'ltr',
-                        'image_path' => $option->image_path ?? null,
-                    ]);
-                });
-            }
-
-            return response()->json([
-                'message' => 'Question duplicated successfully.',
-                'question' => $newQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name'])
-            ], 201);
-        });
+        return response()->json([
+            'message'  => $message,
+            'question' => new QuestionResource($newQuestion->load(['options', 'skill', 'exam:id,title', 'creator:id,first_name,last_name'])),
+        ], 201);
     }
 
     /**
-     * Get question for preview (same as show, but called from frontend)
+     * Get question for preview (same as show, called from frontend).
      */
     public function preview(Question $question)
     {
-        return response()->json(
+        $this->authorize('view', $question);
+        return new QuestionResource(
             $question->load(['options', 'skill', 'passage.questions.options', 'level', 'exam:id,title', 'creator:id,first_name,last_name'])
         );
     }
 
     /**
-     * Standalone media upload for Exam Constructor
+     * Standalone media upload for the Exam Constructor.
      */
-    public function uploadMedia(Request $request)
+    public function uploadMedia(UploadQuestionMediaRequest $request)
     {
-        $request->validate([
-            'file' => 'required|file|mimes:mp3,wav,ogg,m4a,jpeg,png,jpg,gif,svg,mp4,webm|max:10240',
-        ]);
+        $this->authorize('uploadMedia', Question::class);
+        $validated = $request->validated();
 
         $path = $request->file('file')->store('questions', 'public');
 
         return response()->json([
             'path' => $path,
-            'url' => asset('storage/' . $path)
+            'url'  => asset('storage/' . $path),
         ]);
     }
 
     /**
-     * Stream PDF file for interactive PDF question
+     * Stream a PDF file for interactive PDF questions.
      */
     public function streamPdf(Question $question)
     {
         $path = $question->pdf_path ?? $question->media_path;
-        if (!$path || !\Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
+
+        if (!$path || !Storage::disk('public')->exists($path)) {
             return response()->json(['message' => 'PDF file not found'], 404);
         }
 
-        $file = \Illuminate\Support\Facades\Storage::disk('public')->get($path);
-        $mime = \Illuminate\Support\Facades\Storage::disk('public')->mimeType($path) ?? 'application/pdf';
+        $file = Storage::disk('public')->get($path);
+        $mime = Storage::disk('public')->mimeType($path) ?? 'application/pdf';
 
         return response($file, 200)
             ->header('Content-Type', $mime)

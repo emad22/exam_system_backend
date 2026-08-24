@@ -3,8 +3,9 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\CertificateTemplate\StoreCertificateTemplateRequest;
+use App\Http\Requests\Admin\CertificateTemplate\UpdateCertificateTemplateRequest;
 use App\Models\CertificateTemplate;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 
@@ -15,18 +16,11 @@ class CertificateTemplateController extends Controller
         return response()->json(CertificateTemplate::latest()->paginate(20));
     }
 
-    public function store(Request $request)
+    public function store(StoreCertificateTemplateRequest $request)
     {
         $this->authorize('create', CertificateTemplate::class);
 
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'content_html' => 'required|string',
-            'background_image' => 'nullable|image|max:2048',
-            'is_default' => 'sometimes|boolean',
-            'elements_json' => 'nullable|string',
-            'background_settings' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $data = $request->only(['name', 'content_html', 'is_default']);
         $data['elements_json'] = $request->input('elements_json');
@@ -60,18 +54,11 @@ class CertificateTemplateController extends Controller
         return response()->json($certificate_template);
     }
 
-    public function update(Request $request, CertificateTemplate $certificate_template)
+    public function update(UpdateCertificateTemplateRequest $request, CertificateTemplate $certificate_template)
     {
         $this->authorize('update', $certificate_template);
 
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'content_html' => 'required|string',
-            'background_image' => 'nullable|image|max:2048',
-            'is_default' => 'sometimes|boolean',
-            'elements_json' => 'nullable|string',
-            'background_settings' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $data = $request->only(['name', 'content_html', 'is_default']);
         $data['elements_json'] = $request->input('elements_json');
@@ -122,9 +109,10 @@ class CertificateTemplateController extends Controller
         $this->authorize('view', $certificate_template);
 
         // Dummy data for preview
+        $dateFormat = app(\App\Services\CertificateService::class)->getCertificateDateFormat($certificate_template);
         $placeholders = [
             '{name}' => 'Sample Student Name',
-            '{date}' => now()->format('M d, Y'),
+            '{date}' => app(\App\Services\CertificateService::class)->formatCertificateDate(now(), $dateFormat),
             '{score}' => '82.7',
             '{total_points}' => '745',
             '{cefr}' => 'C1.2',

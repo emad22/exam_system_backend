@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Certificate\BulkDownloadRequest;
+use App\Http\Resources\CertificateResource;
 use App\Models\Certificate;
 use App\Models\ExamAttempt;
 use Illuminate\Http\Request;
@@ -28,7 +30,7 @@ class CertificateController extends Controller
             ->latest()
             ->get();
 
-        return response()->json($certificates);
+        return CertificateResource::collection($certificates);
     }
 
     /**
@@ -110,6 +112,12 @@ class CertificateController extends Controller
             // non-fatal — frontend will fall back to legacy layout
         }
 
+        $template = $certificate->template ?: null;
+        $dateFormat = $service->getCertificateDateFormat($template);
+        $latestFinishedAt = $certificate->attempt->attemptSkills()->whereNotNull('finished_at')->max('finished_at');
+        $overallDateCarbon = $latestFinishedAt ? \Carbon\Carbon::parse($latestFinishedAt) : ($certificate->issue_date ?: now());
+        $overallDate = $service->formatCertificateDate($overallDateCarbon, $dateFormat);
+
         return response()->json([
             'valid' => true,
             'student_name' => $certificate->student->user->first_name . ' ' . $certificate->student->user->last_name,
@@ -118,17 +126,17 @@ class CertificateController extends Controller
             'total_points' => round(($certificate->score / 100) * 900),
             'cefr' => $service->mapToCefr($certificate->score),
             'actfl' => $service->mapToActfl($certificate->score),
-            'issue_date' => $certificate->issue_date->format('M d, Y'),
+            'issue_date' => $overallDate,
             'certificate_number' => $certificate->certificate_number,
             'rendered_html' => $renderedHtml,
-            'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function ($s) use ($service) {
+            'skills' => $certificate->attempt->attemptSkills()->with('skill')->get()->map(function ($s) use ($service, $dateFormat, $overallDateCarbon, $overallDate) {
                 return [
                     'name' => $s->skill->name,
                     'score' => $s->score,
                     'points' => round(($s->score / 100) * 900),
                     'cefr' => $service->mapToCefr($s->score),
                     'actfl' => $service->mapToActfl($s->score),
-                    'date' => $s->finished_at ? $s->finished_at->format('d M. Y') : now()->format('d M. Y')
+                    'date' => $service->formatCertificateDate($s->finished_at ?: $overallDateCarbon, $dateFormat)
                 ];
             })
         ]);
@@ -136,6 +144,10 @@ class CertificateController extends Controller
 
     /**
      * Admin or Partner: Manually create (or regenerate) a certificate for an attempt.
+     *
+     * If the attempt is not yet completed (e.g. still "ongoing" after productive-skill
+     * grading was done without the auto-complete firing), we mark it completed first so
+     * the report page reflects the correct status.
      */
     public function createForAttempt(Request $request, ExamAttempt $attempt)
     {
@@ -154,6 +166,18 @@ class CertificateController extends Controller
         }
 
         try {
+            // Auto-complete the attempt if it was never marked as completed.
+            // This covers edge cases where the student finished all skills but the
+            // status was never updated (e.g. productive skills graded without the
+            // auto-complete firing, or old attempts created before this logic existed).
+            if ($attempt->status !== 'completed') {
+                $attempt->update([
+                    'status'      => 'completed',
+                    'finished_at' => $attempt->finished_at ?? now(),
+                ]);
+                $attempt->refresh();
+            }
+
             $service = app(\App\Services\CertificateService::class);
             $certificate = $service->generate($attempt);
 
@@ -161,8 +185,9 @@ class CertificateController extends Controller
             $certificate->load(['student.user', 'attempt.exam']);
 
             return response()->json([
-                'message' => 'Certificate created successfully.',
-                'certificate' => $certificate,
+                'message'         => 'Certificate created successfully.',
+                'certificate'     => new CertificateResource($certificate),
+                'attempt_status'  => $attempt->status,
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -192,21 +217,25 @@ class CertificateController extends Controller
             });
         }
 
-        return response()->json($query->latest()->paginate(20));
+        if ($request->date_from) {
+            $query->whereDate('issue_date', '>=', $request->date_from);
+        }
+
+        if ($request->date_to) {
+            $query->whereDate('issue_date', '<=', $request->date_to);
+        }
+
+        return CertificateResource::collection($query->latest()->paginate(20));
     }
 
     /**
      * Admin/Partner: Bulk download certificates as ZIP archive.
      */
-    public function bulkDownload(Request $request)
+    public function bulkDownload(BulkDownloadRequest $request)
     {
         $user = $request->user();
 
-        $request->validate([
-            'certificate_ids' => 'nullable|array',
-            'certificate_ids.*' => 'integer|exists:certificates,id',
-            'partner_id' => 'nullable|integer|exists:partners,id',
-        ]);
+        $validated = $request->validated();
 
         $query = Certificate::with(['student.user', 'attempt.exam']);
 

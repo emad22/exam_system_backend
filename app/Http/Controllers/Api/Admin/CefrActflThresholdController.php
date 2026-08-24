@@ -185,5 +185,6 @@ class CefrActflThresholdController extends Controller
     private function clearCache(): void
     {
         Cache::forget('cefr_actfl_thresholds');
+        Cache::forget('cefr_actfl_thresholds_v2');
     }
 }

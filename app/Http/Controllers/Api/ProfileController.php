@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Profile\UpdateProfileRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
@@ -13,26 +14,11 @@ class ProfileController extends Controller
     /**
      * Update user profile
      */
-    public function update(Request $request)
+    public function update(UpdateProfileRequest $request)
     {
         $user = $request->user();
 
-        $validated = $request->validate([
-
-            'first_name' => 'nullable|string|max:255',
-            'last_name' => 'nullable|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'birth_date' => 'nullable|date',
-            'gender' => 'nullable|in:male,female,other',
-            'address' => 'nullable|string|max:500',
-            'city' => 'nullable|string|max:255',
-            'state' => 'nullable|string|max:255',
-            'country' => 'nullable|string|max:255',
-            'religion' => 'nullable|string|max:255',
-            'occupation' => 'nullable|string|max:255',
-            'avatar' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'password' => ['nullable', 'confirmed', Password::min(6)],
-        ]);
+        $validated = $request->validated();
 
         $data = $request->only([
             'first_name',

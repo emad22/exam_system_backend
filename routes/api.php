@@ -54,7 +54,7 @@ Route::prefix('v1')->as('v1.')->group(function () {
     Route::post('/webhook/wordpress/student-registration', [WordPressWebhookController::class, 'register'])->name('webhooks.wordpress');
 
     // Legacy / Global Admin Tools
-    Route::middleware(['auth:sanctum', AdminRole::class])->group(function () {
+    Route::middleware(['auth:sanctum', 'single.session', AdminRole::class])->group(function () {
         Route::post('/questions/import', [QuestionImportController::class, 'import'])->name('admin.questions.legacy-import');
     });
 });

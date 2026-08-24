@@ -43,38 +43,34 @@ class AttemptService
 
     public function updateOverallScore(ExamAttempt $attempt, int $skillId, float $currentSkillScore): void
     {
-
-        $coreKeywords = ['listen', 'read', 'struct'];
+        $coreKeywords = ['listen', 'read', 'struct', 'grammar'];
         $coreSkillIds = \App\Models\Skill::where(function ($query) use ($coreKeywords) {
             foreach ($coreKeywords as $word) {
                 $query->orWhereRaw('LOWER(name) LIKE ?', ['%' . strtolower($word) . '%']);
             }
         })->pluck('id')->toArray();
 
-        $coreScores = $attempt->attemptSkills()
+        $coreScores = [];
+        $existingSkills = $attempt->attemptSkills()
             ->whereIn('skill_id', $coreSkillIds)
-            ->where('skill_id', '!=', $skillId)
-            ->pluck('score')
-            ->toArray();
+            ->get();
 
-        $coreScores[] = $currentSkillScore;
-        $count = count($coreScores);
-
-
-        $currentPosition = $attempt->current_position;
-        $skillIdsCount = count($currentPosition['skill_ids'] ?? []);
-        if ($skillIdsCount === 0) {
-            $skillIdsCount = $attempt->exam ? $attempt->exam->skills()->count() : 1;
+        foreach ($existingSkills as $attemptSkill) {
+            $coreScores[$attemptSkill->skill_id] = (float) $attemptSkill->score;
         }
-        $skillIdsCount = max($skillIdsCount, 1);
 
+        $currentSkill = \App\Models\Skill::find($skillId);
+        $isCurrentSkillCore = $currentSkill && preg_match('/(listen|read|struct|grammar)/i', $currentSkill->name ?? '');
 
-        $overall = $count > 0
-            ? round(array_sum($coreScores) / $skillIdsCount, 2)
+        if ($isCurrentSkillCore) {
+            $coreScores[$skillId] = (float) $currentSkillScore;
+        }
+
+        $overall = !empty($coreScores)
+            ? round(array_sum($coreScores) / count($coreScores), 2)
             : 0;
 
         $attempt->update(['overall_score' => $overall]);
-
     }
 
 

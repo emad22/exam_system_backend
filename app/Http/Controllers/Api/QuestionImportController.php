@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Question;
 use App\Models\QuestionOption;
 use App\Models\Skill;
+use App\Http\Requests\QuestionImport\ImportFolderRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -80,18 +81,12 @@ class QuestionImportController extends Controller
      * Import full Exams from a folder structure.
      * Expected path: exam1/listening/level1.txt
      */
-    public function importFolder(Request $request)
+    public function importFolder(ImportFolderRequest $request)
     {
-        $request->validate([
-            'files' => 'required|array',
-            'files.*.examName' => 'required|string',
-            'files.*.skillName' => 'required|string',
-            'files.*.fileName' => 'required|string',
-            'files.*.content' => 'present|string|nullable',
-        ]);
+        $validated = $request->validated();
 
-        $fileDataArray = $request->input('files');
-        $categoryId = $request->input('exam_category_id');
+        $fileDataArray = $validated['files'] ?? [];
+        $categoryId = $validated['exam_category_id'] ?? null;
 
         DB::beginTransaction();
 

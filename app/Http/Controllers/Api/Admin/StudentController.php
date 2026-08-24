@@ -3,368 +3,133 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Student\BatchImportStudentRequest;
+use App\Http\Requests\Admin\Student\BulkUpdateStudentSkillsRequest;
+use App\Http\Requests\Admin\Student\BulkDestroyStudentRequest;
+use App\Http\Requests\Admin\Student\StoreStudentRequest;
+use App\Http\Requests\Admin\Student\UpdateStudentRequest;
+use App\Http\Requests\Admin\Student\ImportSkillsExcelRequest;
+use App\Http\Resources\StudentResource;
 use App\Models\ExamAttempt;
-use App\Models\ExamAttemptLevel;
-use App\Models\ExamAttemptSkill;
 use App\Models\Level;
 use App\Models\Question;
+use App\Models\Skill;
 use App\Models\Student;
 use App\Models\StudentAnswer;
-use App\Models\StudentExamConfig;
 use App\Models\User;
-use App\Models\Package;
-use App\Models\Skill;
+use App\Services\StudentService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\StudentsImport;
 use App\Exports\StudentSkillsExport;
 use App\Imports\StudentSkillsImport;
-use Illuminate\Support\Facades\DB;
 
 class StudentController extends Controller
 {
+    public function __construct(private readonly StudentService $studentService) {}
+
     /**
-     * Get all students with their basic stats
+     * Get all students with their basic stats.
      */
     public function index(Request $request)
     {
-        $students = Student::with(['user', 'package', 'attempts'])->withCount('attempts')->paginate(30);
-        return response()->json($students);
+        $this->authorize('viewAny', Student::class);
+
+        $query = Student::with([
+            'user',
+            'package',
+            'attempts' => function ($q) {
+                $q->select('id', 'student_id', 'exam_id', 'status', 'overall_score', 'started_at', 'finished_at', 'created_at')
+                  ->with([
+                      'attemptSkills' => function ($sq) {
+                          $sq->select('id', 'exam_attempt_id', 'skill_id', 'status', 'score', 'started_at', 'finished_at')
+                             ->with('skill:id,name,short_code');
+                      }
+                  ])
+                  ->latest();
+            }
+        ])
+            ->withCount([
+                'attempts',
+                'attempts as completed_attempts_count' => function ($q) {
+                    $q->where('status', 'completed');
+                },
+                'attempts as in_progress_attempts_count' => function ($q) {
+                    $q->whereIn('status', ['in_progress', 'active', 'paused']);
+                }
+            ])
+            ->orderBy('id', 'desc');
+
+        if ($request->filled('partner_id')) {
+            $query->where('partner_id', $request->partner_id);
+        }
+
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('id', $search)
+                  ->orWhere('student_code', 'like', "%{$search}%")
+                  ->orWhere('institution_code', 'like', "%{$search}%")
+                  ->orWhereHas('user', function ($uq) use ($search) {
+                      $uq->where('id', $search)
+                         ->orWhere('first_name', 'like', "%{$search}%")
+                         ->orWhere('last_name', 'like', "%{$search}%")
+                         ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'like', "%{$search}%")
+                         ->orWhere('username', 'like', "%{$search}%")
+                         ->orWhere('email', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        if ($request->filled('from_date')) {
+            $fromDate = $request->from_date;
+            $query->where(function ($q) use ($fromDate) {
+                $q->whereDate('registration_date', '>=', $fromDate)
+                  ->orWhere(function ($sub) use ($fromDate) {
+                      $sub->whereNull('registration_date')
+                          ->whereDate('created_at', '>=', $fromDate);
+                  });
+            });
+        }
+
+        if ($request->filled('to_date')) {
+            $toDate = $request->to_date;
+            $query->where(function ($q) use ($toDate) {
+                $q->whereDate('registration_date', '<=', $toDate)
+                  ->orWhere(function ($sub) use ($toDate) {
+                      $sub->whereNull('registration_date')
+                          ->whereDate('created_at', '<=', $toDate);
+                  });
+            });
+        }
+
+        $perPage  = (int) $request->input('per_page', 500);
+        $students = $query->paginate($perPage);
+
+        return StudentResource::collection($students);
     }
 
     /**
-     * Store new student (Phase 5)
+     * Store a new student.
      */
-    public function store(Request $request)
+    public function store(StoreStudentRequest $request)
     {
-        if ($request->has('student_code') && trim((string) $request->input('student_code')) === '') {
-            $request->merge(['student_code' => null]);
-        }
-
-        // dd($request->all());
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'nullable|string|email|max:255',
-            'phone' => 'nullable|string|max:20',
-            'gender' => 'nullable|in:male,female,other',
-            'birth_date' => 'nullable|date',
-            'address' => 'nullable|string|max:255',
-            'city' => 'nullable|string|max:255',
-            'country' => 'nullable|string|max:255',
-            'religion' => 'nullable|string|max:255',
-            'occupation' => 'nullable|string|max:255',
-
-            'student_code' => 'nullable|string|max:50|unique:students',
-            'come_from' => 'nullable|string|max:255',
-            'student_type' => 'nullable|string|max:50',
-            'year_of_arabic' => 'nullable|integer',
-            'is_continue' => 'sometimes|boolean',
-            'allows_retry' => 'sometimes|boolean',
-            'is_demo' => 'sometimes|boolean',
-            'is_demo_proctored' => 'sometimes|boolean',
-            'bypass_identity_verification' => 'sometimes|boolean',
-            'exam_id' => 'nullable|exists:exams,id',
-            'exam_category_id' => 'nullable|exists:exam_categories,id',
-            'assigned_skills' => 'nullable|array',
-            'assigned_skills.*' => 'nullable',
-            'package_id' => 'nullable|exists:packages,id',
-            'partner_id' => 'nullable|exists:partners,id',
-            'username' => 'required|string|max:255|unique:users',
-            'password' => 'required|string|min:6',
-        ]);
-
-        $assignedSkills = [];
-        if (!empty($validated['assigned_skills'])) {
-            $assignedSkills = Skill::whereIn('id', $validated['assigned_skills'])
-                ->orWhereIn('short_code', $validated['assigned_skills'])
-                ->pluck('short_code')
-                ->map(fn($code) => strtoupper($code))
-                ->unique()
-                ->toArray();
-        }
-
-        // 1. Create Identity (User)
-        $user = User::create([
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'username' => $validated['username'],
-            'email' => $validated['email'],
-            'phone' => $validated['phone'] ?? null,
-            'gender' => $validated['gender'] ?? null,
-            'birth_date' => !empty($validated['birth_date']) ? \Carbon\Carbon::parse($validated['birth_date'])->toDateString() : null,
-            'address' => $validated['address'] ?? null,
-            'city' => $validated['city'] ?? null,
-            'country' => $validated['country'] ?? null,
-            'religion' => $validated['religion'] ?? null,
-            'occupation' => $validated['occupation'] ?? null,
-            'password' => Hash::make($validated['password']),
-            'role' => 'student',
-        ]);
-
-        // 2. Fetch Package Skills if assigned_skills not provided
-        if (empty($assignedSkills) && !empty($validated['package_id'])) {
-            $package = Package::find($validated['package_id']);
-            $assignedSkills = $package ? ($package->skills ?? []) : [];
-        }
-
-        // 3. Resolve Category if missing
-        $examCategoryId = $validated['exam_category_id'] ?? null;
-        if (!$examCategoryId && !empty($validated['package_id'])) {
-            $package = Package::with(['exam'])->find($validated['package_id']);
-            if ($package && $package->exam) {
-                $examCategoryId = $package->exam->exam_category_id;
-            }
-        }
-
-        if (!$examCategoryId) {
-            $examCategoryId = \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null;
-        }
-
-        // 4. Create Profile (Student)
-        $student = Student::create([
-            'user_id' => $user->id,
-            'student_code' => $validated['student_code'] ?? null,
-            'come_from' => $validated['come_from'] ?? null,
-            'student_type' => $validated['student_type'] ?? null,
-            'year_of_arabic' => $validated['year_of_arabic'] ?? null,
-            'is_continue' => $validated['is_continue'] ?? false,
-            'allows_retry' => $validated['allows_retry'] ?? false,
-            'is_demo' => $validated['is_demo'] ?? false,
-            'is_demo_proctored' => $validated['is_demo_proctored'] ?? false,
-            'bypass_identity_verification' => $validated['bypass_identity_verification'] ?? false,
-            'package_id' => $validated['package_id'] ?? null,
-            'exam_category_id' => $examCategoryId,
-            'assigned_skills' => $assignedSkills,
-            'partner_id' => $validated['partner_id'] ?? null,
-            'registration_source' => 'manual',
-            'registration_date' => now(),
-        ]);
-
-        // 4. Automated Exam Enrollment & Skill Filtering
-        Student::assignDefaultExam($student, $validated['exam_id'] ?? null);
+        $this->authorize('create', Student::class);
+        $student = $this->studentService->createStudent($request->validated());
 
         return response()->json([
             'message' => 'Student account created and Exam assigned successfully.',
-            'student' => $student->load(['user', 'package', 'configs.exam'])
+            'student' => new StudentResource($student),
         ], 201);
     }
 
     /**
-     * Update student details (Phase 7 - Modal)
-     */
-    public function update(Request $request, Student $student)
-    {
-        if ($request->has('student_code') && trim((string) $request->input('student_code')) === '') {
-            $request->merge(['student_code' => null]);
-        }
-
-        $validated = $request->validate([
-            'first_name' => 'sometimes|required|string|max:255',
-            'last_name' => 'sometimes|required|string|max:255',
-            'email' => 'sometimes|nullable|email',
-            'phone' => 'sometimes|nullable|string|max:20',
-            'gender' => 'sometimes|nullable|in:male,female,other',
-            'birth_date' => 'sometimes|nullable|date',
-            'address' => 'sometimes|nullable|string|max:255',
-            'city' => 'sometimes|nullable|string|max:255',
-            'country' => 'sometimes|nullable|string|max:255',
-            'religion' => 'sometimes|nullable|string|max:255',
-            'occupation' => 'sometimes|nullable|string|max:255',
-            'student_code' => 'sometimes|nullable|string|max:50|unique:students,student_code,' . $student->id,
-            'come_from' => 'sometimes|nullable|string|max:255',
-            'student_type' => 'sometimes|nullable|string|max:50',
-            'year_of_arabic' => 'sometimes|nullable|integer',
-            'is_continue' => 'sometimes|nullable|boolean',
-            'allows_retry' => 'sometimes|boolean',
-            'is_active' => 'sometimes|boolean',
-            'is_demo' => 'sometimes|boolean',
-            'is_demo_proctored' => 'sometimes|boolean',
-            'bypass_identity_verification' => 'sometimes|boolean',
-            'package_id' => 'sometimes|nullable|exists:packages,id',
-            'exam_category_id' => 'sometimes|required|exists:exam_categories,id',
-            'assigned_skills' => 'sometimes|array',
-            'assigned_skills.*' => 'nullable',
-            'partner_id' => 'sometimes|nullable|exists:partners,id',
-            'username' => 'sometimes|required|string|max:255|unique:users,username,' . ($student->user_id ?? 0),
-            'password' => 'sometimes|nullable|string|min:6',
-        ]);
-
-        if (isset($validated['assigned_skills'])) {
-            $validated['assigned_skills'] = Skill::whereIn('id', $validated['assigned_skills'])
-                ->orWhereIn('short_code', $validated['assigned_skills'])
-                ->pluck('short_code')
-                ->map(fn($code) => strtoupper($code))
-                ->unique()
-                ->toArray();
-        }
-
-        // 1. Update Profile (Student)
-        $studentUpdate = $request->only([
-            'package_id',
-            'exam_category_id',
-            'student_type',
-            'student_code',
-            'come_from',
-            'year_of_arabic',
-            'is_continue',
-            'allows_retry',
-            'is_demo',
-            'is_demo_proctored',
-            'bypass_identity_verification',
-            'partner_id'
-        ]);
-
-        if (isset($validated['assigned_skills'])) {
-            $studentUpdate['assigned_skills'] = $validated['assigned_skills'];
-        }
-
-        $student->update($studentUpdate);
-
-        // Recalculate default exam/configs after updating package or assigned skills
-        // This ensures the exam tied to the student's package is available in their configs.
-        Student::assignDefaultExam($student);
-
-        // NOTE: Removed automatic package reconciliation from student update.
-        // The system will no longer change `package_id` based on `assigned_skills` during an admin edit.
-
-        // Re-sync student's active exam attempts if skills or package changed
-        if (isset($validated['assigned_skills']) || isset($validated['package_id'])) {
-            // Find all attempts for this student
-            $attempts = ExamAttempt::where('student_id', $student->id)->get();
-
-            // Get the list of allowed skills based on the updated student profile
-            $examService = app(\App\Services\ExamService::class);
-
-            foreach ($attempts as $attempt) {
-                // Get allowed skill names/identifiers
-                $allowedSkillIdentifiers = $examService->getAllowedSkills($student);
-                $exam = $attempt->exam;
-                if ($exam) {
-                    $assignedSkills = [];
-                    foreach ($exam->skills as $skill) {
-                        if ($examService->skillMatchesIdentifiers($skill, $allowedSkillIdentifiers)) {
-                            $assignedSkills[] = $skill;
-                        }
-                    }
-
-                    // Sort skills by standard order map
-                    $getOrder = function ($name) {
-                        $name = strtolower($name);
-                        if (str_contains($name, 'listening'))
-                            return 1;
-                        if (str_contains($name, 'reading'))
-                            return 2;
-                        if (str_contains($name, 'structure') || str_contains($name, 'grammar') || str_contains($name, 'gram'))
-                            return 3;
-                        if (str_contains($name, 'writing') || str_contains($name, 'writting') || str_contains($name, 'writ'))
-                            return 4;
-                        if (str_contains($name, 'speaking') || str_contains($name, 'speak'))
-                            return 5;
-                        return 99;
-                    };
-
-                    usort($assignedSkills, function ($a, $b) use ($getOrder) {
-                        return $getOrder($a->name) - $getOrder($b->name);
-                    });
-
-                    $assignedSkillIds = array_map(fn($s) => $s->id, $assignedSkills);
-
-                    // Re-calculate completed skills inside the attempt
-                    $completedSkillIds = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
-                        ->whereIn('status', ['completed', 'failed', 'skipped'])
-                        ->pluck('skill_id')
-                        ->toArray();
-
-                    $hasUncompletedSkills = false;
-                    foreach ($assignedSkillIds as $sId) {
-                        if (!in_array($sId, $completedSkillIds)) {
-                            $hasUncompletedSkills = true;
-                            break;
-                        }
-                    }
-
-                    // If there are uncompleted skills, reopen the attempt!
-                    $status = $attempt->status;
-                    if ($hasUncompletedSkills) {
-                        $status = 'ongoing';
-                    }
-
-                    $pos = $attempt->current_position ?? [];
-                    $pos['skill_ids'] = $assignedSkillIds;
-
-                    // If the current index is out of bounds or empty, set to first uncompleted skill or 0
-                    if (empty($pos['skill_ids'])) {
-                        $pos['current_skill_index'] = 0;
-                    } elseif (!isset($pos['current_skill_index']) || $pos['current_skill_index'] >= count($pos['skill_ids'])) {
-                        // Find first uncompleted skill index
-                        $foundIndex = 0;
-                        foreach ($pos['skill_ids'] as $idx => $sId) {
-                            if (!in_array($sId, $completedSkillIds)) {
-                                $foundIndex = $idx;
-                                break;
-                            }
-                        }
-                        $pos['current_skill_index'] = $foundIndex;
-                    }
-
-                    $attempt->update([
-                        'status' => $status,
-                        'current_position' => $pos
-                    ]);
-                }
-            }
-        }
-
-        // 2. Update Identity (User)
-        if ($student->user_id) {
-            $user = User::find($student->user_id);
-            if ($user) {
-                $userUpdate = $request->only([
-                    'first_name',
-                    'last_name',
-                    'email',
-                    'phone',
-                    'gender',
-                    'address',
-                    'city',
-                    'country',
-                    'religion',
-                    'occupation',
-                    'username',
-                    'is_active'
-                ]);
-
-                if (!empty($validated['birth_date'])) {
-                    $userUpdate['birth_date'] = \Carbon\Carbon::parse($validated['birth_date'])->toDateString();
-                }
-
-                if (isset($validated['username'])) {
-                    $userUpdate['username'] = $validated['username'];
-                }
-
-                if (!empty($validated['password'])) {
-                    $userUpdate['password'] = Hash::make($validated['password']);
-                }
-
-                if (!empty($userUpdate)) {
-                    $user->update($userUpdate);
-                }
-            }
-        }
-
-        return response()->json([
-            'message' => 'Student and User profile updated successfully.',
-            'student' => $student->load(['user', 'package'])
-        ]);
-    }
-
-    /**
-     * Display a specific student.
+     * Display a specific student with full attempt details.
      */
     public function show(Student $student)
     {
+        $this->authorize('view', $student);
         $student->load([
             'user',
             'package',
@@ -374,20 +139,14 @@ class StudentController extends Controller
             'attempts.attemptSkills.skill',
             'attempts.lastSeenQuestion.skill',
             'attempts.lastSeenQuestion.options',
-            'attempts.attemptLevels' => function ($q) {
-                $q->orderBy('created_at', 'asc');
-            }
+            'attempts.attemptLevels' => fn($q) => $q->orderBy('created_at', 'asc'),
         ]);
 
-        // Fetch all skills once to avoid N+1 in the loops below
         $skillLookup = Skill::all()->keyBy('id');
-
-        // Fetch level names and numbers for mapping
-        $allLevels = Level::all();
-        $levelMap = $allLevels->where('skill_id', 1)->pluck('name', 'level_number')->toArray();
+        $allLevels   = Level::all();
+        $levelMap    = $allLevels->where('skill_id', 1)->pluck('name', 'level_number')->toArray();
         $levelLookup = $allLevels->keyBy('id');
 
-        // Batch fetch all answers for all attempts to avoid N+1
         $attemptIds = $student->attempts->pluck('id');
         $allAnswers = StudentAnswer::whereIn('exam_attempt_id', $attemptIds)
             ->with(['question.options'])
@@ -396,35 +155,35 @@ class StudentController extends Controller
             ->groupBy('exam_attempt_id');
 
         $student->attempts->each(function ($attempt) use ($levelMap, $levelLookup, $skillLookup, $allAnswers) {
-            $total = $attempt->attemptSkills->sum('score');
-            $count = $attempt->attemptSkills->count();
-            $attempt->total_score = $total;
-            $attempt->max_possible = $count * 900;
-            $attempt->score_display = $count > 0 ? "$total / " . ($count * 900) : "0 / 0";
+            $total   = $attempt->attemptSkills->sum('score');
+            $count   = $attempt->attemptSkills->count();
+            $attempt->total_score    = $total;
+            $attempt->max_possible   = $count * 900;
+            $attempt->score_display  = $count > 0 ? "$total / " . ($count * 900) : "0 / 0";
 
             $attemptAnswers = $allAnswers->get($attempt->id, collect());
 
-            // Map attempt skills
             $attempt->attemptSkills->each(function ($as) use ($levelMap, $levelLookup, $attemptAnswers) {
-                $displayLevel = $as->status === 'completed'
+                $displayLevel  = $as->status === 'completed'
                     ? $as->max_level_reached
                     : max($as->max_level_reached - 1, 1);
                 $as->level_name = $levelMap[$displayLevel] ?? "Level {$displayLevel}";
 
-                // Find the last answer for THIS specific skill from pre-fetched answers
                 $lastAns = $attemptAnswers->first(fn($ans) => ($ans->question?->skill_id ?? null) == $as->skill_id);
 
                 if ($lastAns && $as->status !== 'completed') {
                     $q = $lastAns->question;
-                    if (!$q) return; // guard against deleted question
-                    $correctOpt = $q->options->where('is_correct', true)->first();
-                    $displayContent = strip_tags($q->content ?? '');
+                    if (!$q) return;
+
+                    $correctOpt      = $q->options->where('is_correct', true)->first();
+                    $displayContent  = strip_tags($q->content ?? '');
                     if (empty($displayContent)) {
                         $displayContent = $q->instructions ?? 'Audio/Media Question';
                     }
 
                     $levelRecord = $levelLookup->get($q->level_id);
                     $matchedOpt  = $lastAns->option_id ? $q->options->firstWhere('id', $lastAns->option_id) : null;
+
                     $as->termination_point = [
                         'question_id'    => $q->id,
                         'level_number'   => $levelRecord ? $levelRecord->level_number : '?',
@@ -437,23 +196,23 @@ class StudentController extends Controller
                 }
             });
 
-            // Outcome text
             if ($attempt->status === 'ongoing') {
                 $attempt->outcome_text = 'In Progress';
             } else {
-                $attempt->outcome_text = $attempt->placement_level ? ($levelMap[$attempt->placement_level] ?? "Level {$attempt->placement_level}") : "Completed";
+                $attempt->outcome_text = $attempt->placement_level
+                    ? ($levelMap[$attempt->placement_level] ?? "Level {$attempt->placement_level}")
+                    : 'Completed';
             }
 
-            // Last activity logic
             $lastSeenQ = $attempt->lastSeenQuestion;
             if ($lastSeenQ) {
-                $correctOption = $lastSeenQ->options->where('is_correct', true)->first();
+                $correctOption    = $lastSeenQ->options->where('is_correct', true)->first();
                 $studentAnsRecord = $attemptAnswers->firstWhere('question_id', $lastSeenQ->id);
 
                 $studentChoice = 'No Answer Provided';
                 if ($studentAnsRecord) {
                     if ($studentAnsRecord->option_id) {
-                        $opt = $lastSeenQ->options->firstWhere('id', $studentAnsRecord->option_id);
+                        $opt           = $lastSeenQ->options->firstWhere('id', $studentAnsRecord->option_id);
                         $studentChoice = $opt ? strip_tags($opt->option_text) : 'Unknown Option';
                     } elseif ($studentAnsRecord->text_answer) {
                         $studentChoice = $studentAnsRecord->text_answer;
@@ -474,112 +233,103 @@ class StudentController extends Controller
                     'correct_answer' => $correctOption ? strip_tags($correctOption->option_text ?? '') : 'N/A',
                     'student_answer' => $studentChoice,
                     'question_id'    => $lastSeenQ->id,
-                    'time'           => $attempt->updated_at->diffForHumans()
+                    'time'           => $attempt->updated_at->diffForHumans(),
                 ];
             } else {
                 $pos = $attempt->current_position;
                 if ($pos && isset($pos['skill_ids'][$pos['current_skill_index']])) {
                     $skillId = $pos['skill_ids'][$pos['current_skill_index']];
-                    $skill = $skillLookup->get($skillId);
+                    $skill   = $skillLookup->get($skillId);
                     $attempt->last_activity = [
-                        'skill_name' => $skill ? $skill->name : 'Unknown',
-                        'level_number' => $pos['current_level'] ?? 1,
-                        'level_name' => $levelMap[$pos['current_level'] ?? 1] ?? "Level 1",
+                        'skill_name'    => $skill ? $skill->name : 'Unknown',
+                        'level_number'  => $pos['current_level'] ?? 1,
+                        'level_name'    => $levelMap[$pos['current_level'] ?? 1] ?? 'Level 1',
                         'question_text' => 'Session Initialized',
-                        'question_id' => null
+                        'question_id'   => null,
                     ];
                 }
             }
 
-            // Recent performance
-            $attempt->recent_answers = $attemptAnswers->take(5)->map(function ($ans) {
-                return [
-                    'question_text' => strip_tags($ans->question?->content ?? $ans->question?->instructions ?? 'Question'),
-                    'is_correct'    => (bool) $ans->is_correct,
-                    'time'          => $ans->created_at?->format('H:i:s') ?? '',
-                ];
-            });
+            $attempt->recent_answers = $attemptAnswers->take(5)->map(fn($ans) => [
+                'question_text' => strip_tags($ans->question?->content ?? $ans->question?->instructions ?? 'Question'),
+                'is_correct'    => (bool) $ans->is_correct,
+                'time'          => $ans->created_at?->format('H:i:s') ?? '',
+            ]);
         });
 
-        return response()->json($student);
+        return new StudentResource($student);
     }
 
     /**
-     * Remove a student (deletes user identity).
+     * Update student details.
+     */
+    public function update(UpdateStudentRequest $request, Student $student)
+    {
+        $this->authorize('update', $student);
+        $updated = $this->studentService->updateStudent(
+            $student,
+            $request->validated(),
+            array_keys($request->all())
+        );
+
+        return response()->json([
+            'message' => 'Student and User profile updated successfully.',
+            'student' => new StudentResource($updated),
+        ]);
+    }
+
+    /**
+     * Remove a student (and their user identity).
      */
     public function destroy(Student $student)
     {
-        $userId = $student->user_id;
-        // Delete the student profile first
-        $student->delete();
+        $this->authorize('delete', $student);
+        $this->studentService->deleteStudent($student);
 
-        // Then explicitly delete the associated user to ensure both are removed
-        if ($userId) {
-            User::destroy($userId);
-        }
         return response()->json(['message' => 'Student record deleted successfully.']);
     }
 
     /**
      * Remove multiple students.
      */
-    public function bulkDestroy(Request $request)
+    public function bulkDestroy(BulkDestroyStudentRequest $request)
     {
-        $request->validate([
-            'ids' => 'required|array',
-            'ids.*' => 'integer|exists:students,id',
-        ]);
-
-        $students = Student::whereIn('id', $request->ids)->get();
-        $userIds = [];
-
-        foreach ($students as $student) {
-            if ($student->user_id) {
-                $userIds[] = $student->user_id;
-            }
-            $student->delete();
-        }
-
-        if (!empty($userIds)) {
-            User::destroy($userIds);
-        }
+        $this->authorize('bulkDelete', Student::class);
+        $this->studentService->bulkDeleteStudents($request->validated('ids'));
 
         return response()->json(['message' => 'Selected student records deleted successfully.']);
     }
 
     /**
-     * Batch import students from Excel (Phase 6)
+     * Batch import students from Excel.
      */
-    public function batchImport(Request $request)
+    public function batchImport(BatchImportStudentRequest $request)
     {
-        $request->validate([
-            'file' => 'required|file|max:10240', // 10MB max, flexible mime check
-            'partner_id' => 'nullable',
-            'package_id' => 'nullable|exists:packages,id',
-            'assigned_skills' => 'nullable' // JSON encoded or array
-        ]);
+        $this->authorize('import', Student::class);
+        $validated = $request->validated();
 
         try {
-            $assignedSkills = $request->input('assigned_skills');
+            $assignedSkills = $validated['assigned_skills'] ?? null;
             if (is_string($assignedSkills)) {
                 $assignedSkills = json_decode($assignedSkills, true);
             }
 
             Excel::import(
                 new StudentsImport(
-                    $request->input('partner_id'),
-                    $request->input('package_id'),
-                    $assignedSkills
+                    $validated['partner_id'] ?? null,
+                    $validated['package_id'] ?? null,
+                    $assignedSkills,
+                    $validated['exam_category_id'] ?? null
                 ),
                 $request->file('file')
             );
+
             return response()->json(['message' => 'Students imported successfully.']);
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
-            $failures = $e->failures();
-            $errors = [];
-            foreach ($failures as $failure) {
-                $errors[] = "Row {$failure->row()}: " . implode(', ', $failure->errors());
-            }
+            $errors = collect($e->failures())->map(
+                fn($f) => "Row {$f->row()}: " . implode(', ', $f->errors())
+            )->toArray();
+
             return response()->json(['message' => 'Import failed.', 'errors' => $errors], 422);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Import failed: ' . $e->getMessage()], 500);
@@ -587,149 +337,95 @@ class StudentController extends Controller
     }
 
     /**
-     * Batch update assigned skills for multiple students by email.
+     * Batch update assigned skills for multiple students by email/username.
      */
-    public function bulkUpdateSkills(Request $request)
+    public function bulkUpdateSkills(BulkUpdateStudentSkillsRequest $request)
     {
-        $request->validate([
-            'emails' => 'required|array',
-            'emails.*' => 'string',
-            'skills' => 'required|array',
-            'skills.*' => 'nullable',
-        ]);
+        $this->authorize('bulkUpdateSkills', Student::class);
+        $validated = $request->validated();
 
-        // Map IDs or short codes to validated short codes
-        $validShortCodes = Skill::whereIn('id', $request->skills)
-            ->orWhereIn('short_code', $request->skills)
-            ->pluck('short_code')
-            ->map(fn($code) => strtoupper($code))
-            ->unique()
-            ->toArray();
+        $validShortCodes = $this->studentService->resolveSkillCodes($validated['skills']);
 
-        // Get users with matching emails or usernames who are students
-        $users = User::where(function ($q) use ($request) {
+        $users        = User::where(function ($q) use ($request) {
             $q->whereIn('email', $request->emails)
-                ->orWhereIn('username', $request->emails);
+              ->orWhereIn('username', $request->emails);
         })->whereHas('student')->with('student')->get();
+
         $updatedCount = 0;
 
         foreach ($users as $user) {
             $student = $user->student;
-            if ($student) {
-                // Update assigned skills
-                $student->update(['assigned_skills' => $validShortCodes]);
+            if (!$student) continue;
 
-                // Re-evaluate default exam so their configs (want_reading, want_writing etc) match
-                StudentExamConfig::where('student_id', $student->id)->delete();
-                Student::assignDefaultExam($student);
+            $student->update(['assigned_skills' => $validShortCodes]);
 
-                // Sync package based on new skills
-                $student->syncPackageWithSkills();
+            // Re-evaluate default exam configs
+            \App\Models\StudentExamConfig::where('student_id', $student->id)->delete();
+            Student::assignDefaultExam($student);
+            $student->syncPackageWithSkills();
 
-                $updatedCount++;
-            }
+            $updatedCount++;
         }
 
         return response()->json([
-            'message' => "Successfully updated skills for {$updatedCount} student(s).",
-            'updated_count' => $updatedCount
+            'message'       => "Successfully updated skills for {$updatedCount} student(s).",
+            'updated_count' => $updatedCount,
         ]);
     }
 
     /**
-     * Download Standard CSV Template
+     * Download standard CSV template for student import.
      */
     public function downloadTemplate()
     {
+        $this->authorize('viewAny', Student::class);
+
+        // Columns handled by the form UI (not needed in Excel):
+        // package_id, exam_category_id, want_*, assigned_skills
         $headers = [
-            'first_name',
-            'last_name',
-            'username',
-            'email',
-            'phone',
-            'gender',
-            'birth_date',
-            'address',
-            'city',
-            'country',
-            'religion',
-            'occupation',
-            'student_code',
-            'come_from',
-            'student_type',
-            'year_of_arabic',
-            'is_continue',
-            'package_id',
-            'exam_category_id',
-            'password',
-            'want_listening',
-            'want_reading',
-            'want_grammar',
-            'want_writing',
-            'want_speaking'
+            'first_name', 'last_name', 'username','password', 'email', 'phone', 'gender',
+             'address', 'city', 'country', 
+            'id_number', 'institution_code', 
+            
         ];
 
         $callback = function () use ($headers) {
             $file = fopen('php://output', 'w');
             fputcsv($file, $headers);
-
-            // Add a sample row
+            // Example row
             fputcsv($file, [
-                'John',
-                'Doe',
-                'johndoe123',
-                'john.doe@example.com',
-                '123456789',
-                'male',
-                '2005-05-15',
-                '123 Street',
-                'Cairo',
-                'Egypt',
-                'None',
-                'Student',
-                'STU-101',
-                'Direct',
-                'Standard',
-                '2024',
-                '0',
-                '1',
-                '1',
-                'pass123',
-                '1',
-                '1',
-                '1',
-                '0',
-                '0' // Skills: L, R, G active; W, S inactive
+                'John', 'Doe', 'johndoe123', 'pass123', 'john.doe@example.com', '0123456789',
+                'male',  '123 Street', 'Cairo', 'Egypt', 
+                '11223344', 'INST-456' 
             ]);
-
             fclose($file);
         };
 
         return response()->stream($callback, 200, [
-            "Content-type" => "text/csv",
-            "Content-Disposition" => "attachment; filename=student_import_template.csv",
-            "Pragma" => "no-cache",
-            "Cache-Control" => "must-revalidate, post-check=0, pre-check=0",
-            "Expires" => "0"
+            'Content-type'        => 'text/csv',
+            'Content-Disposition' => 'attachment; filename=student_import_template.csv',
+            'Pragma'              => 'no-cache',
+            'Cache-Control'       => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires'             => '0',
         ]);
     }
 
     /**
-     * Download Excel template for bulk skills assignment
+     * Download Excel template for bulk skills assignment.
      */
     public function exportSkillsExcel()
     {
+        $this->authorize('viewAny', Student::class);
         return Excel::download(new StudentSkillsExport, 'students_skills_template.xlsx');
     }
 
     /**
-     * Import Excel file for bulk skills assignment
+     * Import Excel file for bulk skills assignment.
      */
-    public function importSkillsExcel(Request $request)
+    public function importSkillsExcel(ImportSkillsExcelRequest $request)
     {
-        $request->validate([
-            'file' => 'required|mimes:xlsx,xls,csv'
-        ]);
+        $this->authorize('import', Student::class);
+        $validated = $request->validated();
 
         try {
             DB::beginTransaction();
@@ -748,40 +444,30 @@ class StudentController extends Controller
      */
     public function resetExamAttempts(Request $request, Student $student)
     {
+        $this->authorize('resetAttempts', $student);
         try {
-            DB::beginTransaction();
+            $this->studentService->resetExamAttempts($student);
 
-            // 1. Find all attempts
-            $attempts = ExamAttempt::where('student_id', $student->id)->get();
-
-            foreach ($attempts as $attempt) {
-                StudentAnswer::where('exam_attempt_id', $attempt->id)->delete();
-                ExamAttemptLevel::where('exam_attempt_id', $attempt->id)->delete();
-                ExamAttemptSkill::where('exam_attempt_id', $attempt->id)->delete();
-                $attempt->delete();
-            }
-
-            DB::commit();
             return response()->json(['message' => 'Candidate progress has been successfully reset. They can now retake the assessment.']);
         } catch (\Exception $e) {
-            DB::rollBack();
             return response()->json(['error' => 'Failed to reset candidate progress: ' . $e->getMessage()], 500);
         }
     }
 
     /**
-     * Toggle the bypass_identity_verification status for a student.
+     * Toggle the bypass_identity_verification flag for a student.
      */
     public function toggleBypassIdentityVerification(Request $request, Student $student)
     {
+        $this->authorize('toggleBypass', $student);
         try {
             $student->update([
-                'bypass_identity_verification' => !$student->bypass_identity_verification
+                'bypass_identity_verification' => !$student->bypass_identity_verification,
             ]);
 
             return response()->json([
-                'message' => 'Candidate identity verification bypass status updated successfully.',
-                'bypass_identity_verification' => $student->bypass_identity_verification
+                'message'                       => 'Candidate identity verification bypass status updated successfully.',
+                'bypass_identity_verification'  => $student->bypass_identity_verification,
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to update candidate bypass status: ' . $e->getMessage()], 500);

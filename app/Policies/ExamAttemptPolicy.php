@@ -21,17 +21,17 @@ class ExamAttemptPolicy
      */
     public function view(User $user, ExamAttempt $examAttempt): bool
     {
-        if ($user->role === 'admin' || $user->role === 'teacher') {
+        if (in_array($user->role, ['admin', 'teacher', 'supervisor'])) {
             return true;
         }
 
         // Check if it belongs to the student profile
-        if ($user->student && $examAttempt->student_id === $user->student->id) {
+        if ($user->student && (int) $examAttempt->student_id === (int) $user->student->id) {
             return true;
         }
 
-        // Check if it belongs to the demo user ID
-        if ($examAttempt->user_id === $user->id) {
+        // Check if it belongs to the user ID (for demo or direct user link)
+        if ($examAttempt->user_id && (int) $examAttempt->user_id === (int) $user->id) {
             return true;
         }
 
@@ -43,15 +43,6 @@ class ExamAttemptPolicy
      */
     public function update(User $user, ExamAttempt $examAttempt): bool
     {
-        // For students, they can only update their own ongoing attempts
-        if ($user->role === 'admin' || $user->role === 'teacher') {
-            return true;
-        }
-
-        if ($examAttempt->status !== 'ongoing') {
-            return false;
-        }
-
         return $this->view($user, $examAttempt);
     }
 

@@ -42,33 +42,34 @@ class CefrActflThresholdSeeder extends Seeder
         ];
 
         // ── PRODUCTIVE (Writing / Speaking) ─────────────────────────────────
-        // CEFR — min_score is percentage 0-100
+        // CEFR — min_score is on /900 scale
         $productiveCefr = [
-            ['min_score' => 90, 'level_label' => 'C1.2'],
-            ['min_score' => 80, 'level_label' => 'C1.1'],
-            ['min_score' => 74, 'level_label' => 'B2.2'],
-            ['min_score' => 67, 'level_label' => 'B2.1'],
-            ['min_score' => 60, 'level_label' => 'B1.2'],
-            ['min_score' => 51, 'level_label' => 'B1.1'],
-            ['min_score' => 41, 'level_label' => 'A2.2'],
-            ['min_score' => 31, 'level_label' => 'A2.1'],
-            ['min_score' => 21, 'level_label' => 'A1.2'],
-            ['min_score' =>  0, 'level_label' => 'A1.1'],
+            ['min_score' => 801, 'level_label' => 'C2'],
+            ['min_score' => 701, 'level_label' => 'C1.2'],
+            ['min_score' => 668, 'level_label' => 'C1.1'],
+            ['min_score' => 634, 'level_label' => 'B2.2'],
+            ['min_score' => 601, 'level_label' => 'B2.1'],
+            ['min_score' => 501, 'level_label' => 'B1.2'],
+            ['min_score' => 401, 'level_label' => 'B1.1'],
+            ['min_score' => 301, 'level_label' => 'A2.2'],
+            ['min_score' => 201, 'level_label' => 'A2.1'],
+            ['min_score' => 101, 'level_label' => 'A1.2'],
+            ['min_score' =>   0, 'level_label' => 'A1.1'],
         ];
 
-        // ACTFL — min_score is percentage 0-100
+        // ACTFL — min_score is on /900 scale
         $productiveActfl = [
-            ['min_score' => 90, 'level_label' => 'Superior'],
-            ['min_score' => 80, 'level_label' => 'Advanced High'],
-            ['min_score' => 74, 'level_label' => 'Advanced Mid+'],
-            ['min_score' => 67, 'level_label' => 'Advanced Mid'],
-            ['min_score' => 60, 'level_label' => 'Advanced Low'],
-            ['min_score' => 51, 'level_label' => 'Intermediate High'],
-            ['min_score' => 41, 'level_label' => 'Intermediate Mid'],
-            ['min_score' => 31, 'level_label' => 'Intermediate Low'],
-            ['min_score' => 21, 'level_label' => 'Novice High'],
-            ['min_score' => 11, 'level_label' => 'Novice Mid'],
-            ['min_score' =>  0, 'level_label' => 'Novice Low'],
+            ['min_score' => 801, 'level_label' => 'Superior'],
+            ['min_score' => 701, 'level_label' => 'Advanced High'],
+            ['min_score' => 668, 'level_label' => 'Advanced Mid+'],
+            ['min_score' => 634, 'level_label' => 'Advanced Mid'],
+            ['min_score' => 601, 'level_label' => 'Advanced Low'],
+            ['min_score' => 501, 'level_label' => 'Intermediate High'],
+            ['min_score' => 401, 'level_label' => 'Intermediate Mid'],
+            ['min_score' => 301, 'level_label' => 'Intermediate Low'],
+            ['min_score' => 201, 'level_label' => 'Novice High'],
+            ['min_score' => 101, 'level_label' => 'Novice Mid'],
+            ['min_score' =>   0, 'level_label' => 'Novice Low'],
         ];
 
         $order = 0;

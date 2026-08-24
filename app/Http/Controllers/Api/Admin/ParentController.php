@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Parent\ViewResultsRequest;
 use App\Models\ExamAttempt;
 use App\Models\Student;
 use Illuminate\Http\Request;
@@ -12,13 +13,11 @@ class ParentController extends Controller
     /**
      * Parent logs in with unique code to see student results
      */
-    public function viewResults(Request $request)
+    public function viewResults(ViewResultsRequest $request)
     {
-        $request->validate([
-            'parent_code' => 'required|string|exists:students,parent_code'
-        ]);
+        $validated = $request->validated();
 
-        $student = Student::where('parent_code', $request->parent_code)->firstOrFail();
+        $student = Student::where('parent_code', $validated['parent_code'])->firstOrFail();
 
         $attempts = ExamAttempt::with(['exam'])
             ->where('student_id', $student->id)

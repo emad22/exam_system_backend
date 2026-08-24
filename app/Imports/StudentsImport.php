@@ -23,20 +23,23 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
     protected $partnerId;
     protected $packageId;
     protected $globalSkills;
+    protected $examCategoryId;
 
-    public function __construct($partnerId = null, $packageId = null, $globalSkills = null)
+    public function __construct($partnerId = null, $packageId = null, $globalSkills = null, $examCategoryId = null)
     {
-        $this->partnerId = $partnerId;
-        $this->packageId = $packageId;
-        $this->globalSkills = is_array($globalSkills) ? $globalSkills : null;
+        $this->partnerId      = $partnerId;
+        $this->packageId      = $packageId;
+        $this->globalSkills   = is_array($globalSkills) ? $globalSkills : null;
+        $this->examCategoryId = $examCategoryId;
     }
+
     public function onRow(Row $row)
     {
         $data = $row->toArray();
 
         // Email is the unique identifier for identities
         if (empty($data['email']) || User::where('email', $data['email'])->exists()) {
-            return; 
+            return;
         }
 
         DB::transaction(function () use ($data) {
@@ -44,79 +47,70 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
             $password = $data['password'] ?? Str::random(10);
             $user = User::create([
                 'first_name' => $data['first_name'] ?? '',
-                'last_name' => $data['last_name'] ?? '',
-                'username' => $data['username'] ,
-                'email' => $data['email'],
-                'phone' => $data['phone'] ?? null,
-                'gender' => $data['gender'] ?? null,
+                'last_name'  => $data['last_name'] ?? '',
+                'username'   => $data['username'],
+                'email'      => $data['email'],
+                'phone'      => $data['phone'] ?? null,
+                'gender'     => $data['gender'] ?? null,
                 'birth_date' => $data['birth_date'] ?? null,
-                'address' => $data['address'] ?? null,
-                'city' => $data['city'] ?? null,
-                'country' => $data['country'] ?? null,
-                'religion' => $data['religion'] ?? null,
+                'address'    => $data['address'] ?? null,
+                'city'       => $data['city'] ?? null,
+                'country'    => $data['country'] ?? null,
+                'religion'   => $data['religion'] ?? null,
                 'occupation' => $data['occupation'] ?? null,
-                'password' => Hash::make($password),
-                'is_active' => $this->parseBoolean($data['is_active'] ?? true),
-                'role' => 'student',
+                'password'   => Hash::make($password),
+                'is_active'  => $this->parseBoolean($data['is_active'] ?? true),
+                'role'       => 'student',
             ]);
 
-            // 2. Fetch Skills (Granular Override vs Package Default)
+            // 2. Resolve assigned skills
+            // Priority: form global skills > form package > excel row package
             $assignedSkills = [];
-            
-            // Check for explicit skill flags in Excel
-            $skillFlags = [
-                'want_listening' => 'Listening',
-                'want_reading'   => 'Reading',
-                'want_grammar'   => 'Structure',
-                'want_writing'   => 'Writing',
-                'want_speaking'  => 'Speaking'
-            ];
-
-            $explicitSkills = [];
-            foreach ($skillFlags as $col => $skillName) {
-                if (isset($data[$col]) && $this->parseBoolean($data[$col])) {
-                    $skill = \App\Models\Skill::where('name', 'LIKE', "%{$skillName}%")->first();
-                    if ($skill) {
-                        $explicitSkills[] = strtoupper($skill->short_code);
-                    }
-                }
-            }
 
             if (!empty($this->globalSkills)) {
+                // Skills override selected manually in the form
                 $assignedSkills = $this->globalSkills;
             } elseif (!empty($this->packageId)) {
-                $package = Package::find($this->packageId);
+                // Package selected in the form
+                $package        = Package::find($this->packageId);
                 $assignedSkills = $package ? ($package->skills ?? []) : [];
-            } elseif (!empty($explicitSkills)) {
-                $assignedSkills = $explicitSkills;
             } elseif (!empty($data['package_id'])) {
-                $package = Package::find($data['package_id']);
+                // Package specified in the Excel row (fallback)
+                $package        = Package::find($data['package_id']);
                 $assignedSkills = $package ? ($package->skills ?? []) : [];
             }
 
-            // 3. Create Profile (Student)
-            $studentCode = isset($data['student_code']) ? trim((string)$data['student_code']) : '';
+            // 3. Resolve exam_category_id
+            // Priority: form category > Excel row category > first active category
+            $examCategoryId = $this->examCategoryId
+                ?? ($data['exam_category_id'] ?? null)
+                ?? (\App\Models\ExamCategory::where('is_active', true)->first()->id ?? null);
+
+            // 4. Create Profile (Student)
+            $rawCode = $data['student_code'] ?? $data['id_number'] ?? null;
+            $studentCode = $rawCode !== null ? trim((string) $rawCode) : '';
             if ($studentCode === '') {
                 $studentCode = null;
             }
 
             $student = Student::create([
-                'user_id' => $user->id,
-                'student_code' => $studentCode,
-                'partner_id' => $this->partnerId,
-                'come_from' => $data['come_from'] ?? null,
-                'student_type' => $data['student_type'] ?? null,
-                'year_of_arabic' => $data['year_of_arabic'] ?? null,
-                'is_continue' => isset($data['is_continue']) ? (bool)$data['is_continue'] : false,
-                'allows_retry' => isset($data['allows_retry']) ? $this->parseBoolean($data['allows_retry']) : false,
-                'package_id' => $this->packageId ?? $data['package_id'] ?? null,
-                'exam_category_id' => $data['exam_category_id'] ?? (\App\Models\ExamCategory::where('is_active', true)->first()->id ?? null),
-                'assigned_skills' => $assignedSkills,
+                'user_id'             => $user->id,
+                'student_code'        => $studentCode,
+                'institution_code'    => isset($data['institution_code']) ? (trim((string) $data['institution_code']) ?: null) : null,
+                'partner_id'          => $this->partnerId,
+                'come_from'           => $data['come_from'] ?? null,
+                'student_type'        => $data['student_type'] ?? null,
+                'year_of_arabic'      => $data['year_of_arabic'] ?? null,
+                'is_continue'         => isset($data['is_continue']) ? (bool) $data['is_continue'] : false,
+                'allows_retry'        => isset($data['allows_retry']) ? $this->parseBoolean($data['allows_retry']) : false,
+                'package_id'          => $this->packageId ?? ($data['package_id'] ?? null),
+                'exam_category_id'    => $examCategoryId,
+                'assigned_skills'     => $assignedSkills,
                 'registration_source' => 'batch',
-                'registration_date' => now(),
+                'registration_date'   => now(),
             ]);
 
-            // 4. Automated Exam Enrollment & Skill Filtering
+            // 5. Automated Exam Enrollment & Skill Filtering
             Student::assignDefaultExam($student, null);
         });
     }
@@ -124,11 +118,11 @@ class StudentsImport implements OnEachRow, WithHeadingRow, WithValidation
     public function rules(): array
     {
         return [
-            'email' => 'required|email|unique:users,email',
-            'username' => 'nullable|string|unique:users,username',
-            'first_name' => 'required|string',
-            'last_name' => 'required|string',
-            'exam_category_id' => 'nullable|exists:exam_categories,id',
+            'email'            => 'required|email|unique:users,email',
+            'username'         => 'nullable|string|unique:users,username',
+            'first_name'       => 'required|string',
+            'last_name'        => 'required|string',
+            'institution_code' => 'nullable|string|max:100',
         ];
     }
 

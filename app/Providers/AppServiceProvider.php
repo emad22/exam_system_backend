@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 
@@ -20,7 +21,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
         Schema::defaultStringLength(191);
+
+        // Disable the default {data: [...]} wrapper on all API Resources.
+        // This keeps responses consistent with what the frontend expects (res.data directly).
+        JsonResource::withoutWrapping();
     }
 }

@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Exam;
 use App\Models\Skill;
-use Illuminate\Http\Request;
+use App\Http\Requests\Admin\Exam\StoreExamRequest;
+use App\Http\Requests\Admin\Exam\UpdateExamRequest;
+use App\Http\Resources\ExamResource;
 use Illuminate\Support\Facades\DB;
 
 class ExamController extends Controller
@@ -15,6 +17,7 @@ class ExamController extends Controller
      */
     public function index()
     {
+        $this->authorize('viewAny', Exam::class);
         $exams = Exam::with(['language', 'category', 'skills'])
             ->withCount(['attempts', 'questions', 'skills'])
             ->latest()
@@ -33,41 +36,16 @@ class ExamController extends Controller
             $exam->breakdown = $breakdowns->get($exam->id, collect());
         });
 
-        return response()->json($exams);
+        return ExamResource::collection($exams);
     }
 
     /**
-     * Store new Exam (Phase 5)
-     */
-    /**
      * Store new Exam
      */
-    public function store(Request $request)
+    public function store(StoreExamRequest $request)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'exam_category_id' => 'required|exists:exam_categories,id',
-            'language_id' => 'nullable|exists:languages,id',
-            'passing_score' => 'required|numeric|min:0|max:100',
-            'timer_type' => 'nullable|string',
-            'time_limit' => 'nullable|integer',
-
-            'skills' => 'required|array|min:1',
-            'skills.*.skill_id' => 'required|exists:skills,id',
-            'skills.*.duration' => 'required|integer|min:1',
-            'skills.*.is_optional' => 'boolean',
-            'skills.*.max_points' => 'nullable|integer|min:0',
-            'skills.*.rules' => 'nullable|array',
-            'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
-            'skills.*.rules.*.quantity' => 'required|integer|min:0',
-            'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.randomize' => 'boolean',
-
-            'question_ids' => 'nullable|array', // List of questions assigned directly
-            'question_ids.*' => 'exists:questions,id'
-        ]);
+        $this->authorize('create', Exam::class);
+        $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request) {
             $exam = Exam::create([
@@ -108,7 +86,7 @@ class ExamController extends Controller
 
             return response()->json([
                 'message' => 'Exam created successfully.',
-                'exam' => $exam->load(['skills', 'questions'])
+                'exam'    => new ExamResource($exam->load(['skills', 'questions']))
             ], 201);
         });
     }
@@ -118,38 +96,17 @@ class ExamController extends Controller
      */
     public function show(Exam $exam)
     {
-        return response()->json($exam->load(['skills', 'questionRules', 'language', 'category', 'questions.options', 'questions.level', 'questions.passage']));
+        $this->authorize('view', $exam);
+        return new ExamResource($exam->load(['skills', 'questionRules', 'language', 'category', 'questions.options', 'questions.level', 'questions.passage']));
     }
 
     /**
      * Update an existing exam
      */
-    public function update(Request $request, Exam $exam)
+    public function update(UpdateExamRequest $request, Exam $exam)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'exam_category_id' => 'required|exists:exam_categories,id',
-            'language_id' => 'nullable|exists:languages,id',
-            'passing_score' => 'required|numeric|min:0|max:100',
-            'timer_type' => 'nullable|string',
-            'time_limit' => 'nullable|integer',
-
-            'skills' => 'required|array|min:1',
-            'skills.*.skill_id' => 'required|exists:skills,id',
-            'skills.*.duration' => 'required|integer|min:1',
-            'skills.*.is_optional' => 'boolean',
-            'skills.*.max_points' => 'nullable|integer|min:0',
-            'skills.*.rules' => 'nullable|array',
-            'skills.*.rules.*.level_id' => 'required|integer|min:1|max:9',
-            'skills.*.rules.*.quantity' => 'required|integer|min:0',
-            'skills.*.rules.*.standalone_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.passage_quantity' => 'nullable|integer|min:0',
-            'skills.*.rules.*.randomize' => 'boolean',
-
-            'question_ids' => 'nullable|array',
-            'question_ids.*' => 'exists:questions,id'
-        ]);
+        $this->authorize('update', $exam);
+        $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request, $exam) {
             $exam->update([
@@ -209,7 +166,7 @@ class ExamController extends Controller
 
             return response()->json([
                 'message' => 'Exam updated successfully.',
-                'exam' => $exam->load(['skills', 'questions'])
+                'exam'    => new ExamResource($exam->load(['skills', 'questions']))
             ]);
         });
     }
@@ -219,6 +176,7 @@ class ExamController extends Controller
      */
     public function destroy(Exam $exam)
     {
+        $this->authorize('delete', $exam);
         return DB::transaction(function () use ($exam) {
             // Unassign questions and detach skills
             $exam->questions()->update(['exam_id' => null]);
@@ -240,6 +198,7 @@ class ExamController extends Controller
      */
     public function setDefault(Exam $exam)
     {
+        $this->authorize('setDefault', $exam);
         // 1. Capture the ID of the old default for this same category
         $oldDefaultId = Exam::where('exam_category_id', $exam->exam_category_id)
             ->where('is_default', true)

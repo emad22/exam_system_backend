@@ -12,11 +12,13 @@ class PackageController extends Controller
      */
     public function index()
     {
+        $this->authorize('viewAny', Package::class);
         return response()->json(Package::with('exam')->orderBy('skills_count')->get());
     }
 
     public function store(\Illuminate\Http\Request $request)
     {
+        $this->authorize('create', Package::class);
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'skills_count' => 'required|integer|min:1|max:5',
@@ -47,11 +49,13 @@ class PackageController extends Controller
      */
     public function show(Package $package)
     {
+        $this->authorize('view', $package);
         return response()->json($package);
     }
 
     public function update(\Illuminate\Http\Request $request, Package $package)
     {
+        $this->authorize('update', $package);
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'skills_count' => 'required|integer|min:1|max:5',
@@ -82,6 +86,7 @@ class PackageController extends Controller
      */
     public function destroy(Package $package)
     {
+        $this->authorize('delete', $package);
         $package->delete();
         return response()->json(null, 204);
     }

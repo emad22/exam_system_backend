@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Passage\StorePassageRequest;
+use App\Http\Requests\Admin\Passage\UpdatePassageRequest;
 use App\Models\Passage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class PassageController extends Controller
 {
@@ -13,6 +16,7 @@ class PassageController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Passage::class);
         $query = Passage::query();
 
         if ($request->has('search')) {
@@ -38,16 +42,10 @@ class PassageController extends Controller
     /**
      * Store a newly created passage in storage.
      */
-    public function store(Request $request)
+    public function store(StorePassageRequest $request)
     {
-        $validated = $request->validate([
-            'type' => 'required|in:text,image,audio,video',
-            'title' => 'nullable|string|max:255',
-            'content' => 'required_if:type,text|nullable|string',
-            'media_path' => 'nullable|string',
-            'questions_limit' => 'nullable|integer',
-            'is_random' => 'nullable|boolean'
-        ]);
+        $this->authorize('create', Passage::class);
+        $validated = $request->validated();
 
         $passage = Passage::create($validated);
 
@@ -62,22 +60,17 @@ class PassageController extends Controller
      */
     public function show(Passage $passage)
     {
+        $this->authorize('view', $passage);
         return response()->json($passage->load('questions'));
     }
 
     /**
      * Update the specified passage in storage.
      */
-    public function update(Request $request, Passage $passage)
+    public function update(UpdatePassageRequest $request, Passage $passage)
     {
-        $validated = $request->validate([
-            'type' => 'nullable|in:text,image,audio,video',
-            'title' => 'nullable|string|max:255',
-            'content' => 'nullable|string',
-            'media_path' => 'nullable|string',
-            'questions_limit' => 'nullable|integer',
-            'is_random' => 'nullable|boolean'
-        ]);
+        $this->authorize('update', $passage);
+        $validated = $request->validated();
 
         $passage->update($validated);
 
@@ -92,6 +85,7 @@ class PassageController extends Controller
      */
     public function destroy(Passage $passage)
     {
+        $this->authorize('delete', $passage);
         $passage->delete();
         return response()->json(['message' => 'Passage deleted successfully']);
     }

@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('certificates', function (Blueprint $table) {
-            $table->boolean('is_visible_to_student')->default(false)->after('file_path');
+            $table->boolean('is_visible_to_student')->default(true)->after('file_path');
         });
     }
 

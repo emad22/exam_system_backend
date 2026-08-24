@@ -5,50 +5,44 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
 use App\Http\Resources\ActivityLogResource;
-use Illuminate\Http\Request;
+use App\Http\Requests\Admin\ActivityLog\IndexRequest;
+use App\Http\Requests\Admin\ActivityLog\BulkDestroyRequest;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
 class ActivityLogController extends Controller
 {
     use AuthorizesRequests;
 
-    public function index(Request $request)
+    public function index(IndexRequest $request)
     {
-        $request->validate([
-            'user_id' => 'nullable|exists:users,id',
-            'action' => 'nullable|string',
-            'model_type' => 'nullable|string',
-            'date_from' => 'nullable|date',
-            'date_to' => 'nullable|date|after_or_equal:date_from',
-            'search' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $query = ActivityLog::with('user')->latest();
 
-        if ($request->filled('user_id')) {
-            $query->where('user_id', $request->user_id);
+        if ($validated['user_id'] ?? null) {
+            $query->where('user_id', $validated['user_id']);
         }
 
-        if ($request->filled('action')) {
-            $query->where('action', $request->action);
+        if ($validated['action'] ?? null) {
+            $query->where('action', $validated['action']);
         }
 
-        if ($request->filled('model_type')) {
-            $query->where('model_type', $request->model_type);
+        if ($validated['model_type'] ?? null) {
+            $query->where('model_type', $validated['model_type']);
         }
 
-        if ($request->filled('date_from')) {
-            $query->whereDate('created_at', '>=', $request->date_from);
+        if ($validated['date_from'] ?? null) {
+            $query->whereDate('created_at', '>=', $validated['date_from']);
         }
 
-        if ($request->filled('date_to')) {
-            $query->whereDate('created_at', '<=', $request->date_to);
+        if ($validated['date_to'] ?? null) {
+            $query->whereDate('created_at', '<=', $validated['date_to']);
         }
 
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('action', 'like', "%{$request->search}%")
-                  ->orWhere('description', 'like', "%{$request->search}%");
+        if ($validated['search'] ?? null) {
+            $query->where(function ($q) use ($validated) {
+                $q->where('action', 'like', "%{$validated['search']}%")
+                  ->orWhere('description', 'like', "%{$validated['search']}%");
             });
         }
 
@@ -74,14 +68,11 @@ class ActivityLogController extends Controller
         return response()->json(['message' => 'Log deleted successfully']);
     }
 
-    public function bulkDestroy(Request $request)
+    public function bulkDestroy(BulkDestroyRequest $request)
     {
-        $request->validate([
-            'ids' => 'required|array',
-            'ids.*' => 'exists:activity_logs,id'
-        ]);
+        $validated = $request->validated();
 
-        if (count($request->ids) > 1000) {
+        if (count($validated['ids']) > 1000) {
             return response()->json(['message' => 'Too many records'], 422);
         }
 
@@ -89,7 +80,7 @@ class ActivityLogController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        ActivityLog::whereIn('id', $request->ids)->delete();
+        ActivityLog::whereIn('id', $validated['ids'])->delete();
         return response()->json(['message' => 'Logs deleted successfully']);
     }
 }

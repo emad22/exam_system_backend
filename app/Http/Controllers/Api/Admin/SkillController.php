@@ -10,6 +10,9 @@ use App\Models\ExamQuestionRule;
 use App\Models\Question;
 use App\Models\QuestionOption;
 use App\Models\Level;
+use App\Http\Requests\Admin\Skill\StoreSkillRequest;
+use App\Http\Requests\Admin\Skill\UpdateSkillRequest;
+use App\Http\Requests\Admin\Skill\BulkUpdateLevelsRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -20,21 +23,17 @@ class SkillController extends Controller
      */
     public function index()
     {
+        $this->authorize('viewAny', Skill::class);
         return response()->json(Skill::withCount(['questions', 'levels'])->orderBy('name')->get());
     }
 
     /**
      * Store new Skill
      */
-    public function store(Request $request)
+    public function store(StoreSkillRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255|unique:skills',
-            'short_code' => 'nullable|string|max:10|unique:skills',
-            'description' => 'nullable|string',
-            'icon' => 'nullable|string',
-            'levels_count' => 'nullable|integer|min:0|max:100',
-        ]);
+        $this->authorize('create', Skill::class);
+        $validated = $request->validated();
 
         $skill = Skill::create($validated);
 
@@ -66,15 +65,10 @@ class SkillController extends Controller
     /**
      * Update existing Skill
      */
-    public function update(Request $request, Skill $skill)
+    public function update(UpdateSkillRequest $request, Skill $skill)
     {
-        $validated = $request->validate([
-            'name' => 'sometimes|required|string|max:255|unique:skills,name,' . $skill->id,
-            'short_code' => 'sometimes|nullable|string|max:10|unique:skills,short_code,' . $skill->id,
-            'description' => 'sometimes|nullable|string',
-            'icon' => 'sometimes|nullable|string',
-            'levels_count' => 'sometimes|integer|min:0|max:100',
-        ]);
+        $this->authorize('update', $skill);
+        $validated = $request->validated();
 
         if (array_key_exists('levels_count', $validated)) {
             $newLevelsCount = (int)$validated['levels_count'];
@@ -132,6 +126,7 @@ class SkillController extends Controller
      */
     public function destroy(Request $request, Skill $skill)
     {
+        $this->authorize('delete', $skill);
         DB::beginTransaction();
         try {
             // Delete related questions and rules
@@ -167,6 +162,7 @@ class SkillController extends Controller
      */
     public function getSkillsWithLevels()
     {
+        $this->authorize('viewAny', Skill::class);
         return response()->json(Skill::with('levels')->get());
     }
 
@@ -175,25 +171,17 @@ class SkillController extends Controller
      */
     public function getSkillWithLevels(Skill $skill)
     {
+        $this->authorize('view', $skill);
         return response()->json($skill->load('levels'));
     }
 
     /**
      * Bulk update/create levels for a skill
      */
-    public function bulkUpdateLevels(Request $request, Skill $skill)
+    public function bulkUpdateLevels(BulkUpdateLevelsRequest $request, Skill $skill)
     {
-        $validated = $request->validate([
-            'levels' => 'required|array',
-            'levels.*.id' => 'nullable|exists:levels,id',
-            'levels.*.name' => 'required|string|max:255',
-            'levels.*.level_number' => 'required|integer',
-            'levels.*.min_score' => 'required|integer',
-            'levels.*.max_score' => 'required|integer',
-            'levels.*.pass_threshold' => 'required|integer|min:0|max:100',
-            'levels.*.instructions' => 'nullable|string',
-            'levels.*.default_question_count' => 'nullable|integer|min:0',
-        ]);
+        $this->authorize('bulkUpdateLevels', Skill::class);
+        $validated = $request->validated();
 
         DB::beginTransaction();
         try {
