@@ -101,7 +101,7 @@ class WordPressWebhookController extends Controller
                 'registration_date' => now(),
             ]);
             //adding ArabAcademy as partner...................................................................................................
-            $arabAcademyPartner = \App\Models\Partner::where('partner_name', 'ArabAcademy')->first();
+            $arabAcademyPartner = \App\Models\Partner::where('id', 1)->first();
             if ($arabAcademyPartner) {
                 if (is_null($student->partner_id)) {
                     $student->partner_id = $arabAcademyPartner->id;
