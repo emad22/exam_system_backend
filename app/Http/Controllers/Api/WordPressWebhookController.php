@@ -27,11 +27,11 @@ class WordPressWebhookController extends Controller
             return response()->json(['message' => 'Unauthorized source'], 401);
         }
 
-            
+
         return DB::transaction(function () use ($validated) {
             // 1. Fetch Package for auto-skill assignment (Try WP ID first, then internal ID)
             $package = Package::where('wp_package_id', $validated['package_id'])->first();
-          
+
             if (!$package) {
                 $package = Package::find($validated['package_id']);
             }
@@ -44,24 +44,25 @@ class WordPressWebhookController extends Controller
             $categoryId = $validated['exam_category_id'] ?? null;
             if (!$categoryId && !empty($validated['exam_type'])) {
                 $category = \App\Models\ExamCategory::where('slug', $validated['exam_type'])->first();
-                if ($category) $categoryId = $category->id;
+                if ($category)
+                    $categoryId = $category->id;
             }
-            
+
             // Final fallback to first active category
             if (!$categoryId) {
                 $categoryId = \App\Models\ExamCategory::where('is_active', true)->first()->id ?? null;
             }
 
-          $base = str_replace('-', '', Str::slug($validated['first_name']));
+            $base = str_replace('-', '', Str::slug($validated['first_name']));
 
             do {
-                $username = $base . random_int(1000,9999);
-            } while (User::where('username',$username)->exists());
-            
-            $password = $base.'@' . random_int(10000,99999);
-          //  dd("************** ".$password);
+                $username = $base . random_int(1000, 9999);
+            } while (User::where('username', $username)->exists());
+
+            $password = $base . '@' . random_int(10000, 99999);
+            //  dd("************** ".$password);
             $user = User::create([
-               // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
+                // 'name' => $validated['first_name'] . ' ' . $validated['last_name'],
                 'first_name' => $validated['first_name'],
                 'last_name' => $validated['last_name'],
                 'username' => $validated['username'] ?? ('wp_' . $validated['wp_user_id'] . '_' . Str::random(5)),
