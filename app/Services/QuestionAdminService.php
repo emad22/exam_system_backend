@@ -595,18 +595,18 @@ class QuestionAdminService
     /** Resolve image/audio paths for an updated option, respecting clear flags. */
     private function resolveOptionFilesForUpdate(array $opt, $existingOption): array
     {
-        if (!empty($opt['clear_image'])) {
-            $optImagePath = null;
-        } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
+        if (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
             $optImagePath = $opt['image']->store('options/images', 'public');
+        } elseif (!empty($opt['clear_image'])) {
+            $optImagePath = null;
         } else {
             $optImagePath = $existingOption?->image_path;
         }
 
-        if (!empty($opt['clear_audio'])) {
-            $optAudioPath = null;
-        } elseif (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
+        if (isset($opt['audio']) && $opt['audio'] instanceof \Illuminate\Http\UploadedFile) {
             $optAudioPath = $opt['audio']->store('options/audio', 'public');
+        } elseif (!empty($opt['clear_audio'])) {
+            $optAudioPath = null;
         } elseif (isset($opt['image']) && $opt['image'] instanceof \Illuminate\Http\UploadedFile) {
             // New image replaces old audio
             $optAudioPath = null;

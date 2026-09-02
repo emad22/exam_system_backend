@@ -39,21 +39,35 @@ class PartnerController extends Controller
         $this->authorize('create', Partner::class);
         $validated = $request->validated();
 
+        $firstName = $validated['first_name'] ?? $request->input('first_name') ?? $request->input('fName_contact') ?? 'Partner';
+        $lastName  = $validated['last_name']  ?? $request->input('last_name')  ?? $request->input('lName_contact') ?? 'Admin';
+        $email     = $validated['email'] ?? $request->input('email');
+        $phone     = $validated['phone'] ?? $request->input('phone');
+        $password  = !empty($validated['password']) ? bcrypt($validated['password']) : bcrypt('Partner@123456');
+
         $user = User::create([
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'email' => $validated['email'],
-            'role' => 'partner', 
-            'country' => $validated['country'],
+            'first_name' => $firstName,
+            'last_name'  => $lastName,
+            'email'      => $email,
+            'phone'      => $phone,
+            'password'   => $password,
+            'role'       => 'partner', 
+            'country'    => $validated['country'] ?? $request->input('country'),
+            'is_active'  => $request->has('is_active') ? (bool)$request->input('is_active') : true,
         ]);
+
+        $proctoringMode = $request->input('proctoring_mode', 'none');
+        $proctoringRequired = in_array($proctoringMode, ['full', 'identity_only'], true);
 
         // 2) Create Partner
         $partner = Partner::create([
-            'user_id' => $user->id,
-            'partner_name' => $validated['partner_name'],
-            'website' => $validated['website'],
-            'note' => $validated['note'],
-            'r_date' => $validated['r_date'],                   
+            'user_id'             => $user->id,
+            'partner_name'        => $validated['partner_name'] ?? $request->input('partner_name'),
+            'website'             => $validated['website'] ?? $request->input('website'),
+            'note'                => $validated['note'] ?? $request->input('note'),
+            'r_date'              => $validated['r_date'] ?? now()->toDateString(),
+            'proctoring_mode'     => $proctoringMode,
+            'proctoring_required' => $proctoringRequired,
         ]);
 
         return response()->json([

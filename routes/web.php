@@ -16,14 +16,12 @@ $storageHandler = function ($path) {
         abort(404);
     }
 
-    $file = File::get($fullPath);
-    $type = File::mimeType($fullPath);
-
-    return Response::make($file, 200)
-        ->header("Content-Type", $type)
-        ->header("Access-Control-Allow-Origin", "*")
-        ->header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
-        ->header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    return response()->file($fullPath, [
+        'Access-Control-Allow-Origin' => '*',
+        'Access-Control-Allow-Methods' => 'GET, OPTIONS, HEAD',
+        'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Range',
+        'Access-Control-Expose-Headers' => 'Content-Range, Content-Length, Accept-Ranges',
+    ]);
 };
 
 // الراوت لو السيرفر بيبعت /storage مباشرة

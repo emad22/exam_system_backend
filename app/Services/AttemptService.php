@@ -63,12 +63,14 @@ class AttemptService
         $isCurrentSkillCore = $currentSkill && preg_match('/(listen|read|struct|grammar)/i', $currentSkill->name ?? '');
 
         if ($isCurrentSkillCore) {
-            $coreScores[$skillId] = (float) $currentSkillScore;
+            $coreScores[$skillId] = min(100.0, max(0.0, (float) $currentSkillScore));
         }
 
         $overall = !empty($coreScores)
             ? round(array_sum($coreScores) / count($coreScores), 2)
             : 0;
+
+        $overall = min(100.0, max(0.0, (float) $overall));
 
         $attempt->update(['overall_score' => $overall]);
     }
@@ -80,6 +82,7 @@ class AttemptService
      */
     public function logLevelResult(ExamAttempt $attempt, int $skillId, Level $level, float $score, float $passThreshold): void
     {
+        $safeScore = min(100.0, max(0.0, $score));
         ExamAttemptLevel::updateOrCreate(
             [
                 'exam_attempt_id' => $attempt->id,
@@ -87,8 +90,8 @@ class AttemptService
                 'level_number' => $level->level_number,
             ],
             [
-                'score' => $score,
-                'status' => $score >= $passThreshold ? 'passed' : 'failed',
+                'score' => $safeScore,
+                'status' => $safeScore >= $passThreshold ? 'passed' : 'failed',
             ]
         );
     }

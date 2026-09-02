@@ -25,33 +25,104 @@ class ProductiveSkillsController extends Controller
      */
     public function index(Request $request)
     {
-        $query = ExamAttempt::whereHas('answers', function ($q) {
-            $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation']))
-              ->where('is_manual_graded', false);
-        })->with(['student.user', 'exam']);
+        $status = $request->input('status', 'pending'); // 'pending' | 'graded' | 'all'
 
-        if ($request->has('exam_id')) {
+        $query = ExamAttempt::whereHas('answers', function ($q) use ($status) {
+            $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation']));
+            if ($status === 'pending') {
+                $q->where('is_manual_graded', false);
+            } elseif ($status === 'graded') {
+                $q->where('is_manual_graded', true);
+            }
+        })->with(['student.user', 'student.partner', 'exam']);
+
+        if ($request->filled('exam_id')) {
             $query->where('exam_id', $request->exam_id);
         }
 
-        $attempts = $query->orderBy('updated_at', 'desc')->paginate(20);
+        if ($request->filled('partner_id')) {
+            $partnerId = $request->partner_id;
+            $query->whereHas('student', function ($sq) use ($partnerId) {
+                $sq->where('partner_id', $partnerId);
+            });
+        }
 
-        // Attach pending counts per attempt
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('id', $search)
+                  ->orWhereHas('student', function ($sq) use ($search) {
+                      $sq->where('student_code', 'like', "%{$search}%")
+                         ->orWhere('institution_code', 'like', "%{$search}%")
+                         ->orWhereHas('user', function ($uq) use ($search) {
+                             $uq->where('first_name', 'like', "%{$search}%")
+                                ->orWhere('last_name', 'like', "%{$search}%")
+                                ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'like', "%{$search}%")
+                                ->orWhere('username', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                         });
+                  })
+                  ->orWhereHas('exam', function ($eq) use ($search) {
+                      $eq->where('title', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $request->date_to);
+        }
+
+        $perPage = (int) $request->input('per_page', 20);
+        $attempts = $query->orderBy('updated_at', 'desc')->paginate($perPage);
+
+        // Attach pending & graded counts per attempt
         $attempts->getCollection()->transform(function ($attempt) {
             $answers = StudentAnswer::where('exam_attempt_id', $attempt->id)
                 ->whereHas('question', fn($q) => $q->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation']))
-                ->where('is_manual_graded', false)
-                ->with('question:id,type')
+                ->with(['question.skill'])
                 ->get();
 
-            $attempt->pending_writing = $answers->filter(fn($a) => $a->question->type === 'writing')->count();
-            $attempt->pending_speaking = $answers->filter(fn($a) => in_array($a->question->type, ['speaking', 'speaking_live']))->count();
-            $attempt->total_pending   = $answers->count();
+            $writingAnswers  = $answers->filter(fn($a) => in_array($a->question->type, ['writing', 'pdf_annotation']));
+            $speakingAnswers = $answers->filter(fn($a) => in_array($a->question->type, ['speaking', 'speaking_live']));
+
+            $attempt->pending_writing    = $writingAnswers->where('is_manual_graded', false)->count();
+            $attempt->graded_writing     = $writingAnswers->where('is_manual_graded', true)->count();
+            $attempt->total_writing      = $writingAnswers->count();
+            $attempt->has_writing        = $attempt->total_writing > 0;
+            $attempt->is_writing_graded  = $attempt->has_writing && $attempt->pending_writing === 0;
+
+            $attempt->pending_speaking   = $speakingAnswers->where('is_manual_graded', false)->count();
+            $attempt->graded_speaking    = $speakingAnswers->where('is_manual_graded', true)->count();
+            $attempt->total_speaking     = $speakingAnswers->count();
+            $attempt->has_speaking       = $attempt->total_speaking > 0;
+            $attempt->is_speaking_graded = $attempt->has_speaking && $attempt->pending_speaking === 0;
+
+            $attempt->total_pending      = $answers->where('is_manual_graded', false)->count();
+            $attempt->total_graded       = $answers->where('is_manual_graded', true)->count();
+            $attempt->total_tasks        = $answers->count();
+            $attempt->is_fully_graded    = $attempt->total_pending === 0 && $attempt->total_tasks > 0;
+            $attempt->is_partially_graded= $attempt->total_graded > 0 && $attempt->total_pending > 0;
 
             return $attempt;
         });
 
-        return response()->json($attempts);
+        // Global counts for tabs
+        $baseManualQuery = fn() => ExamAttempt::whereHas('answers', fn($q) => $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation'])));
+
+        $summary = [
+            'pending_count' => (clone $baseManualQuery())->whereHas('answers', fn($q) => $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation']))->where('is_manual_graded', false))->count(),
+            'graded_count'  => (clone $baseManualQuery())->whereHas('answers', fn($q) => $q->whereHas('question', fn($q2) => $q2->whereIn('type', ['writing', 'speaking', 'speaking_live', 'pdf_annotation']))->where('is_manual_graded', true))->count(),
+            'all_count'     => $baseManualQuery()->count(),
+        ];
+
+        return response()->json([
+            'attempts' => $attempts,
+            'summary'  => $summary,
+        ]);
     }
 
     /**
@@ -332,6 +403,7 @@ class ProductiveSkillsController extends Controller
         $scorePercent = $totalPossible > 0
             ? round(($totalEarned / $totalPossible) * 100, 2)
             : 0;
+        $scorePercent = min(100.0, max(0.0, (float) $scorePercent));
 
         // ── 3. Determine pass/fail using the level's pass_threshold ────────
         // Productive skills live in a single level — grab it (or default to 70)
@@ -389,12 +461,14 @@ class ProductiveSkillsController extends Controller
         $coreScores = ExamAttemptSkill::where('exam_attempt_id', $attempt->id)
             ->whereIn('skill_id', $coreSkillIds)
             ->pluck('score')
-            ->map(fn ($s) => (float) $s)
+            ->map(fn ($s) => min(100.0, max(0.0, (float) $s)))
             ->toArray();
 
         $overall = count($coreScores) > 0
             ? round(array_sum($coreScores) / count($coreScores), 2)
             : 0;
+
+        $overall = min(100.0, max(0.0, (float) $overall));
 
         $attempt->update(['overall_score' => $overall]);
     }

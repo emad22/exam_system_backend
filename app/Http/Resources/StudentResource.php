@@ -46,6 +46,7 @@ class StudentResource extends JsonResource
 
             // Relations — only included when loaded
             'user'    => $this->whenLoaded('user', fn() => new UserResource($this->user)),
+            'partner' => $this->whenLoaded('partner', fn() => new PartnerResource($this->partner)),
             'package' => $this->whenLoaded('package', fn() => [
                 'id'   => $this->package->id,
                 'name' => $this->package->name,

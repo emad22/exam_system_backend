@@ -10,6 +10,7 @@ use App\Models\ExamAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 
 class CertificateController extends Controller
@@ -207,13 +208,23 @@ class CertificateController extends Controller
             });
         }
 
-        if ($request->search) {
-            $query->where(function ($q) use ($request) {
-                $q->whereHas('student.user', function ($sq) use ($request) {
-                    $sq->where('first_name', 'like', "%{$request->search}%")
-                        ->orWhere('last_name', 'like', "%{$request->search}%")
-                        ->orWhere('username', 'like', "%{$request->search}%");
-                })->orWhere('certificate_number', 'like', "%{$request->search}%");
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('certificate_number', 'like', "%{$search}%")
+                    ->orWhere('verification_code', 'like', "%{$search}%")
+                    ->orWhereHas('student', function ($sq) use ($search) {
+                        $sq->where('id', $search)
+                            ->orWhere('student_code', 'like', "%{$search}%")
+                            ->orWhere('institution_code', 'like', "%{$search}%")
+                            ->orWhereHas('user', function ($uq) use ($search) {
+                                $uq->where('first_name', 'like', "%{$search}%")
+                                    ->orWhere('last_name', 'like', "%{$search}%")
+                                    ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'like', "%{$search}%")
+                                    ->orWhere('username', 'like', "%{$search}%")
+                                    ->orWhere('email', 'like', "%{$search}%");
+                            });
+                    });
             });
         }
 
@@ -225,7 +236,8 @@ class CertificateController extends Controller
             $query->whereDate('issue_date', '<=', $request->date_to);
         }
 
-        return CertificateResource::collection($query->latest()->paginate(20));
+        $perPage = (int) $request->input('per_page', 20);
+        return CertificateResource::collection($query->latest()->paginate($perPage));
     }
 
     /**
@@ -363,17 +375,28 @@ class CertificateController extends Controller
                 $q->where('partner_id', $partner->id);
             });
 
-        if ($request->search) {
-            $query->where(function ($outer) use ($request) {
-                $outer->whereHas('student.user', function ($q) use ($request) {
-                    $q->where('first_name', 'like', "%{$request->search}%")
-                        ->orWhere('last_name', 'like', "%{$request->search}%")
-                        ->orWhere('username', 'like', "%{$request->search}%");
-                })->orWhere('certificate_number', 'like', "%{$request->search}%");
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('certificate_number', 'like', "%{$search}%")
+                    ->orWhere('verification_code', 'like', "%{$search}%")
+                    ->orWhereHas('student', function ($sq) use ($search) {
+                        $sq->where('id', $search)
+                            ->orWhere('student_code', 'like', "%{$search}%")
+                            ->orWhere('institution_code', 'like', "%{$search}%")
+                            ->orWhereHas('user', function ($uq) use ($search) {
+                                $uq->where('first_name', 'like', "%{$search}%")
+                                    ->orWhere('last_name', 'like', "%{$search}%")
+                                    ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'like', "%{$search}%")
+                                    ->orWhere('username', 'like', "%{$search}%")
+                                    ->orWhere('email', 'like', "%{$search}%");
+                            });
+                    });
             });
         }
 
-        return response()->json($query->latest()->paginate(20));
+        $perPage = (int) $request->input('per_page', 20);
+        return CertificateResource::collection($query->latest()->paginate($perPage));
     }
 
 

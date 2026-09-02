@@ -14,16 +14,20 @@ class StorePartnerRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'first_name' => 'sometimes|required|string|max:255',
-            'last_name' => 'sometimes|required|string|max:255',
-            'email' => 'sometimes|nullable|email',
+            'first_name' => 'sometimes|nullable|string|max:255',
+            'last_name' => 'sometimes|nullable|string|max:255',
+            'fName_contact' => 'sometimes|nullable|string|max:255',
+            'lName_contact' => 'sometimes|nullable|string|max:255',
+            'email' => 'required|email|unique:users,email',
             'phone' => 'sometimes|nullable|string|max:20',
-            'password' => 'required|min:6',
-            'partner_name' => 'required|string',
-            'website' => 'sometimes|nullable|string',
+            'password' => 'sometimes|nullable|min:6',
+            'partner_name' => 'required|string|max:255',
+            'website' => 'sometimes|nullable|string|max:255',
             'country' => 'nullable|string|max:255',
             'note' => 'nullable|string',
             'r_date' => 'nullable|string',
+            'is_active' => 'nullable',
+            'proctoring_mode' => 'nullable|string|in:none,full,identity_only',
         ];
     }
 }
